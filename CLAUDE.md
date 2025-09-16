@@ -473,6 +473,57 @@ check_sdc_ports() {
 
 **중요**: 이 포트 매핑 정보는 프로젝트의 안정적인 운영을 위해 항상 최신 상태로 유지되어야 합니다.
 
+## 🔗 GitHub Repository 관리
+
+### Repository 정보
+- **GitHub Repository**: https://github.com/ptyoung65/sdc_i
+- **Owner**: ptyoung65
+- **Repository Name**: sdc_i
+- **Default Branch**: main
+
+### Git 설정 정보
+```bash
+# Remote origin 설정
+git remote add origin https://github.com/ptyoung65/sdc_i.git
+
+# 또는 토큰을 포함한 설정 (보안상 실제 사용시에만)
+git remote add origin https://ghp_TOKEN@github.com/ptyoung65/sdc_i.git
+```
+
+### 일반적인 Git 명령어
+```bash
+# 현재 상태 확인
+git status
+
+# 변경사항 추가
+git add .
+
+# 커밋
+git commit -m "커밋 메시지"
+
+# GitHub에 push
+git push origin main
+
+# 최신 변경사항 pull
+git pull origin main
+```
+
+### GitHub Token 관리
+- **보안 주의**: GitHub Personal Access Token은 보안이 중요하므로 직접 코드에 포함하지 않음
+- **환경변수 사용 권장**: `GITHUB_TOKEN` 환경변수로 관리
+- **토큰 권한**: Repository 읽기/쓰기 권한 필요
+
+### 자동화 스크립트 예시
+```bash
+#!/bin/bash
+# quick_commit_push.sh
+git add .
+git commit -m "Update: $(date '+%Y-%m-%d %H:%M:%S')"
+git push origin main
+```
+
+**중요**: GitHub Token과 같은 민감한 정보는 환경변수나 별도 설정 파일로 관리하고, 절대 코드에 직접 포함하지 않도록 주의하세요.
+
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
