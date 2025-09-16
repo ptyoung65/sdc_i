@@ -1,0 +1,92 @@
+2025 DevSecOps User Conference 실전적용과 혁신사례
+
+KFTC 협업사례 with Mattermost
+발표자 윤상문 부부장, 제갈준영 계장
+발표사 금융결제원(smyoon33@kftc.or.kr) (junyoung@kftc.or.kr)
+
+KFTC 소개
+자금결제와 정보유통을 원활하게 하여 건전한 금융거래의 유지·발전을 도모하고, 금융회사 이용자의 편의를 제고하는 등 금융산업 발전에 기여할 목적으로 설립된 지급결제 전문기관입니다.
+
+주요 현황:
+• 직원 수: 115명
+• 핵심 인프라: 39개 지급결제시스템
+• 설립 연혁: 경성수형교환소(1910) → 금융결제원(1986~)
+
+Tech Profile 분석
+조직 구성: 57.8% IT 인력
+• 공채, 순환근무, IT기획·개발·운영·정보보호
+• IT Division 또는 개별 비즈니스 조직 등
+• C/S to Cloud Native, Legacy to Modern PL, Waterfall to Scrum
+• 대규모 시스템 재구축·개선 추진(2022~)
+
+Why Mattermost?
+KFTC는 다양한 협업 SW를 사용하기 시작했습니다(2016~).
+내부 활용 사례를 토대로 사내 본격 도입 및 활용을 시작했습니다(2019~).
+
+주요 도구들:
+- Slack, Confluence, Jira, Trello, GitLab
+- Mattermost, Confluence
+
+폐쇄망 환경의 효과적인 온라인 협업을 위해 Mattermost를 도입했습니다.
+
+Mattermost 통계 (2024.10월 → 2025.7월)
+사용량이 112.7% 증가했습니다.
+
+KFTC DX Workspace Platform
+협업 SW 플랫폼 구성:
+• Mattermost: 실시간 엔터프라이즈 커뮤니케이션 허브
+• Mastodon: 공개 메시지 게시, 타임라인 기반 마이크로 블로깅
+• Confluence: 조직 내 지식·자료 작성 및 공유
+
+활용 사례 1: 협업 커뮤니케이션 허브
+• 업무·프로젝트 관련 커뮤니케이션
+• 이슈 및 자료 교환·공동 검토
+• Enterprise Messenger로 활용
+• 부서·팀 등 조직 내 업무 추진·협의
+• 업무 및 개인 일정, 이벤트 공유
+
+활용 사례 2: 실시간 DevOps 알림 센터
+• DevOps·개발·운영 이벤트 및 이슈 공유와 대응
+• KFTC 내부 프로그램과 연계된 Programmable 메시징 활용
+• 코드 관리·CI/CD 현황 알림
+• 시스템·운영 결과 자동 공유
+• 모니터링·자원 사용 현황 알림
+
+활용 사례 3: 사내 DX 가속 엔진
+• Mattermost Bot 기반의 업무 DX
+• 사내 Bot 프레임워크
+• Bot 마켓플레이스 런칭 및 활용
+
+Bot 개발 지원:
+- Bot 개발을 도와주는 사내 Bot 프레임워크 개발·공유
+- Bot 마켓플레이스 운영
+
+주요 Bot 기능들:
+• 당일 근무일정 안내
+• 당일 부재 현황 안내  
+• 구내식당 메뉴 알림
+• 익명 메시징 제공
+• Confluence 게시글 알림
+• 사내 도서실 대출 연계
+• 모임·약속 잡기
+
+추가 기능들:
+- Boards: 업무·민원 처리 내역의 자동 기록, 캘린더 스타일 정보 공유
+- Playbooks: 다량·반복적인 업무 내역의 수행 관리
+- 사내 오픈소스 라이브러리 현황 분석
+
+향후 계획
+1. Enterprise 도입 추진
+- 사내 중요도와 사용량 증가
+- HA, Backup, Retention, 사용자·권한 관리 등
+
+2. 시스템 연계와 업무 대화 분리
+- 시스템·애플리케이션 연계용 Mattermost
+- 일반 업무 대화·자료 공유용 Mattermost
+
+3. 추가 협업 기능 확장
+- 폐쇄망에서의 GenAI 기능 연계
+- Group Call, Screen Sharing 등
+
+4. 개발 지원 강화
+- Bot·Plugin 개발 관련 Best Practice 지원 필요
