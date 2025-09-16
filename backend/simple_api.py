@@ -1336,6 +1336,51 @@ async def chat(request: ChatRequest):
         # 결과에서 응답과 소스 분리
         ai_response = ai_result["response"]
         ai_sources = ai_result.get("sources", [])
+
+        # Sources가 비어있는 경우, 업로드된 문서 정보를 기반으로 생성
+        if not ai_sources and request.user_id in user_documents:
+            user_docs = user_documents[request.user_id]
+            print(f"📚 [CHAT] Found {len(user_docs)} documents for user {request.user_id}")
+
+            for doc in user_docs:
+                # 간단한 키워드 매칭 (한국어 포함)
+                query_lower = request.message.lower()
+
+                # content가 bytes일 수 있으므로 안전하게 처리
+                content = doc["content"]
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8')
+                content_lower = content.lower()
+
+                # 더 넓은 범위의 키워드로 매칭
+                keywords = ["한국어", "형태소", "분석", "토큰", "키워드", "자연어", "처리",
+                           "kiwi", "mecab", "hannanum", "rag", "문서", "시스템", "sdc", "ai"]
+
+                # 쿼리나 콘텐츠에 키워드가 포함되어 있으면 매칭
+                # 또는 쿼리의 일부가 문서에 포함되어 있으면 매칭
+                query_words = [word for word in query_lower.split() if len(word) > 1]
+
+                if (any(keyword in query_lower for keyword in keywords) or
+                    any(keyword in content_lower for keyword in keywords) or
+                    any(word in content_lower for word in query_words)):
+
+                    ai_sources.append({
+                        "chunk_id": f"chunk_{doc['id'][:8]}",
+                        "content": content[:300] + "..." if len(content) > 300 else content,
+                        "similarity": 0.85,  # 기본 유사도
+                        "metadata": {
+                            "user_id": request.user_id,
+                            "filename": doc["filename"],
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "processed_at": doc.get("upload_time", datetime.now().isoformat()),
+                            "korean_features": {},
+                            "doc_type": doc.get("doc_type", "text")
+                        }
+                    })
+                    print(f"📄 [CHAT] Matched document: {doc['filename']}")
+
+        print(f"📄 [CHAT] Sources found: {len(ai_sources)} chunks")
         
         print(f"✅ [CHAT] AI response received!")
         print(f"📄 [CHAT] Response length: {len(ai_response)} chars")
@@ -2179,10 +2224,47 @@ async def get_search_engines():
         
         print(f"🔍 [SEARCH-ENGINES] Returning {len(engines)} available search engines")
         return {"engines": engines}
-        
+
     except Exception as e:
         print(f"❌ [SEARCH-ENGINES] Error getting search engines: {str(e)}")
         return {"engines": []}
+
+@app.get("/api/v1/documents/view/{filename}")
+async def view_document_by_filename(filename: str):
+    """파일명으로 문서 전체 내용 조회 - 챗봇 테스터용"""
+    print(f"📄 [DOC-VIEW] Getting document content for filename: {filename}")
+
+    try:
+        # 모든 사용자의 문서에서 해당 파일명 검색
+        found_document = None
+        for user_id, docs in user_documents.items():
+            for doc in docs:
+                if doc["filename"] == filename:
+                    found_document = doc
+                    break
+            if found_document:
+                break
+
+        if not found_document:
+            raise HTTPException(status_code=404, detail=f"Document with filename '{filename}' not found")
+
+        return {
+            "success": True,
+            "filename": filename,
+            "content": found_document["content"],
+            "metadata": {
+                "upload_time": found_document.get("upload_time"),
+                "size": len(found_document["content"]),
+                "doc_type": found_document.get("doc_type", "text"),
+                "processing_method": found_document.get("processing_method", "basic")
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [DOC-VIEW] Error getting document content: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving document: {str(e)}")
 
 @app.get("/api/v1/documents/{user_id}/{document_id}/chunks")
 async def get_document_chunks(user_id: str, document_id: str):

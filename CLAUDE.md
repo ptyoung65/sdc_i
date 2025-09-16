@@ -42,6 +42,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 이 원칙을 위반하는 모든 작업은 **즉시 중단**하고 오프라인 캐시 방식으로 대체해야 합니다.
 
+## 🔄 제4원칙: Mock 테스트 후 원복 필수 (Mock Test Reversion Principle)
+
+**핵심 원칙**: 테스트 목적으로 Mock 데이터나 임시 코드를 사용한 후에는 **반드시 실제 구현으로 원복**해야 합니다.
+
+### Mock 테스트 규칙
+1. **테스트 중 Mock 사용**:
+   - 기능 검증을 위한 임시 Mock 데이터 허용
+   - 테스트 완료 후 즉시 원복 필수
+   - Mock 코드를 프로덕션에 그대로 두는 것 절대 금지
+
+2. **원복 체크리스트**:
+   - Mock 데이터 → 실제 API 응답
+   - 하드코딩된 값 → 동적 값
+   - 테스트용 조건문 → 실제 비즈니스 로직
+   - 임시 콘솔 로그 → 제거 또는 적절한 로깅
+
+3. **위반 시 위험성**:
+   - 프로덕션 환경에서 예상치 못한 동작
+   - 실제 데이터 흐름 차단
+   - 사용자 경험 저하
+   - 시스템 신뢰성 문제
+
+### Mock 테스트 예시
+```javascript
+// ❌ 잘못된 방법: Mock 데이터를 그대로 둠
+sources: [
+  { chunk_id: 'mock-1', content: 'mock content' } // 테스트 후 제거 안함
+]
+
+// ✅ 올바른 방법: 실제 API 응답 사용
+sources: data.sources || [] // 테스트 후 원복 완료
+```
+
+이 원칙을 통해 테스트와 프로덕션 환경의 일관성을 보장합니다.
+
 ## Common Development Commands
 
 This project uses a comprehensive Makefile for development tasks. All commands should be run from the project root.

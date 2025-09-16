@@ -26,11 +26,11 @@ export default function ChatbotTestPage() {
             <TabsTrigger value="history">테스트 히스토리</TabsTrigger>
           </TabsList>
           
-          <TabsContent value="test">
+          <TabsContent value="test" forceMount className={activeTab !== 'test' ? 'hidden' : ''}>
             <ChatbotTester />
           </TabsContent>
-          
-          <TabsContent value="history">
+
+          <TabsContent value="history" forceMount className={activeTab !== 'history' ? 'hidden' : ''}>
             <TestHistory />
           </TabsContent>
         </Tabs>

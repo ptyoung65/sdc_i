@@ -38,12 +38,95 @@ interface ChatTestResult {
   processing_time: number
 }
 
-interface ChunkDetailsModalProps {
-  source: ChatSource | null
+interface DocumentViewerModalProps {
+  filename: string | null
   onClose: () => void
 }
 
-const ChunkDetailsModal: React.FC<ChunkDetailsModalProps> = ({ source, onClose }) => {
+interface ChunkDetailsModalProps {
+  source: ChatSource | null
+  onClose: () => void
+  onViewDocument: (filename: string) => void
+}
+
+const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({ filename, onClose }) => {
+  const [documentContent, setDocumentContent] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  React.useEffect(() => {
+    if (!filename) return
+
+    const fetchDocument = async () => {
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const response = await fetch(`http://localhost:8000/api/v1/documents/view/${encodeURIComponent(filename)}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`문서를 불러올 수 없습니다: ${response.status}`)
+        }
+
+        const data = await response.json()
+        setDocumentContent(data.content || '문서 내용이 없습니다.')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '문서를 불러오는 중 오류가 발생했습니다.')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchDocument()
+  }, [filename])
+
+  if (!filename) return null
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-6xl w-full max-h-[90vh] overflow-hidden m-4">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h2 className="text-xl font-bold">전체 문서 보기</h2>
+            <p className="text-sm text-gray-600">{filename}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={onClose}>
+            닫기
+          </Button>
+        </div>
+
+        <div className="h-[calc(90vh-120px)] overflow-y-auto">
+          {isLoading && (
+            <div className="flex items-center justify-center h-64">
+              <div className="text-gray-500">문서를 불러오는 중...</div>
+            </div>
+          )}
+
+          {error && (
+            <div className="flex items-center justify-center h-64">
+              <div className="text-red-500">❌ {error}</div>
+            </div>
+          )}
+
+          {!isLoading && !error && (
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed">
+                {documentContent}
+              </pre>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const ChunkDetailsModal: React.FC<ChunkDetailsModalProps> = ({ source, onClose, onViewDocument }) => {
   if (!source) return null
 
   return (
@@ -93,6 +176,23 @@ const ChunkDetailsModal: React.FC<ChunkDetailsModalProps> = ({ source, onClose }
           </div>
 
           <div>
+            <h3 className="font-semibold text-sm text-gray-600 mb-2">문서 링크</h3>
+            <div className="flex gap-2 mb-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onViewDocument(source.metadata.filename)}
+                className="flex items-center gap-2"
+              >
+                🔗 전체 문서 보기
+              </Button>
+              <Badge variant="secondary" className="text-xs">
+                📄 {source.metadata.doc_type || 'text'}
+              </Badge>
+            </div>
+          </div>
+
+          <div>
             <h3 className="font-semibold text-sm text-gray-600 mb-2">메타데이터</h3>
             <div className="bg-gray-50 p-4 rounded-lg">
               <pre className="text-xs overflow-x-auto">
@@ -111,6 +211,7 @@ const ChatbotTester: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false)
   const [testResult, setTestResult] = useState<ChatTestResult | null>(null)
   const [selectedChunk, setSelectedChunk] = useState<ChatSource | null>(null)
+  const [selectedDocument, setSelectedDocument] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [maxChunks, setMaxChunks] = useState(5)
   const [similarityThreshold, setSimilarityThreshold] = useState(0.1)
@@ -123,13 +224,13 @@ const ChatbotTester: React.FC = () => {
     const startTime = performance.now()
     
     try {
-      const response = await fetch('http://localhost:8008/query', {
+      const response = await fetch('http://localhost:8000/api/v1/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          query: query,
+          message: query,
           user_id: 'admin_test',
           max_chunks: maxChunks,
           similarity_threshold: similarityThreshold
@@ -143,24 +244,38 @@ const ChatbotTester: React.FC = () => {
       const data = await response.json()
       const endTime = performance.now()
       const processingTime = (endTime - startTime) / 1000 // Convert to seconds
-      
+
+      // Transform backend response to match expected format
+      const transformedData: ChatTestResult = {
+        query: query,
+        response: data.response || '',
+        sources: data.sources || [],
+        korean_analysis: data.korean_analysis || {
+          original_query: query,
+          processed_query: query,
+          tokenized: [],
+          keywords: []
+        },
+        processing_time: processingTime
+      }
+
       // Map ChatSource to ChunkDetail format for history storage
-      const historyChunks: ChunkDetail[] = data.sources.map((source: ChatSource) => ({
-        chunk_id: source.chunk_id,
-        content: source.content,
-        similarity: source.similarity,
-        metadata: source.metadata,
-        korean_features: source.metadata.korean_features || {}
+      const historyChunks: ChunkDetail[] = (transformedData.sources || []).map((source: ChatSource) => ({
+        chunk_id: source.chunk_id || 'unknown',
+        content: source.content || 'No content',
+        similarity: source.similarity || 0,
+        metadata: source.metadata || {},
+        korean_features: (source.metadata && source.metadata.korean_features) || {}
       }))
 
       // Save to test history
       try {
         const savedResult = TestHistoryStorage.saveTestResult({
-          query: data.query,
-          response: data.response,
+          query: transformedData.query,
+          response: transformedData.response,
           sources: historyChunks,
-          korean_analysis: data.korean_analysis,
-          processing_time: data.processing_time || processingTime,
+          korean_analysis: transformedData.korean_analysis,
+          processing_time: transformedData.processing_time || processingTime,
           similarity_threshold: similarityThreshold,
           max_chunks: maxChunks,
           status: 'success'
@@ -170,7 +285,7 @@ const ChatbotTester: React.FC = () => {
         console.error('Failed to save test result to history:', historyError)
       }
 
-      setTestResult(data)
+      setTestResult(transformedData)
     } catch (err) {
       const endTime = performance.now()
       const processingTime = (endTime - startTime) / 1000
@@ -204,6 +319,15 @@ const ChatbotTester: React.FC = () => {
 
   const handleChunkClick = (source: ChatSource) => {
     setSelectedChunk(source)
+  }
+
+  const handleViewDocument = (filename: string) => {
+    setSelectedDocument(filename)
+    setSelectedChunk(null) // Close chunk modal when opening document viewer
+  }
+
+  const handleCloseDocumentViewer = () => {
+    setSelectedDocument(null)
   }
 
   return (
@@ -320,9 +444,22 @@ const ChatbotTester: React.FC = () => {
                             상세보기
                           </Button>
                         </div>
-                        <p className="text-sm text-gray-600 mb-1">
-                          📄 {source.metadata.filename} ({source.metadata.chunk_index + 1}/{source.metadata.total_chunks})
-                        </p>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm text-gray-600">
+                            📄 {source.metadata.filename} ({source.metadata.chunk_index + 1}/{source.metadata.total_chunks})
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleViewDocument(source.metadata.filename)
+                            }}
+                            className="text-xs h-6 px-2"
+                          >
+                            🔗 전체보기
+                          </Button>
+                        </div>
                         <p className="text-sm line-clamp-3">
                           {source.content.substring(0, 200)}...
                         </p>
@@ -380,9 +517,15 @@ const ChatbotTester: React.FC = () => {
         </Card>
       )}
 
-      <ChunkDetailsModal 
-        source={selectedChunk} 
-        onClose={() => setSelectedChunk(null)} 
+      <ChunkDetailsModal
+        source={selectedChunk}
+        onClose={() => setSelectedChunk(null)}
+        onViewDocument={handleViewDocument}
+      />
+
+      <DocumentViewerModal
+        filename={selectedDocument}
+        onClose={handleCloseDocumentViewer}
       />
     </div>
   )
