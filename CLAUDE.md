@@ -559,6 +559,73 @@ git push origin main
 
 **중요**: GitHub Token과 같은 민감한 정보는 환경변수나 별도 설정 파일로 관리하고, 절대 코드에 직접 포함하지 않도록 주의하세요.
 
+## 🔧 VSCode 기반 웹 개발 환경 (VSCode Web Development Environment)
+
+### 개발 환경 구성 완료 (2025-01-15)
+**Status**: COMPLETE - 프로그램 개발자용 VSCode 웹 UI 및 Podman 컨테이너 환경 구축 완료
+
+**구현된 기능**:
+
+#### 1. VSCode Web Server 환경 ✅
+- **VSCode Server Container**: `dev-environment/Containerfile.vscode-server`
+- **Web IDE 접속**: http://localhost:8080 (password: sdc_dev_2025)
+- **통합 개발 환경**: 프론트엔드, 백엔드, 데이터베이스 모두 웹 브라우저에서 개발 가능
+
+#### 2. 개발자 전용 어드민 인터페이스 ✅
+- **별도 포트**: 3005 (http://localhost:3005)
+- **서비스 모니터링**: 모든 개발 서비스 상태 실시간 확인
+- **컨테이너 관리**: Podman 컨테이너 시작/중지 제어
+- **개발 도구 링크**: VSCode, PgAdmin, Redis Insight 등 원클릭 접속
+
+#### 3. Podman 기반 개발 컨테이너 환경 ✅
+- **docker-compose.dev.yml**: 완전한 개발 환경 오케스트레이션
+- **PostgreSQL Dev**: localhost:5433 (사용자: sdc_dev_user, 비밀번호: sdc_dev_pass_2025)
+- **Redis Dev**: localhost:6380
+- **PgAdmin**: localhost:5050 (dev@sdc.local / sdc_dev_2025)
+- **Redis Insight**: localhost:8001
+
+#### 4. 개발 환경 관리 스크립트 ✅
+- **dev-start.sh**: 전체 개발 환경 시작
+- **dev-stop.sh**: 개발 환경 종료
+- **start-developer-admin.sh**: 개발자 어드민 인터페이스만 시작
+
+### 포트 할당 (개발 환경)
+| 서비스 | 포트 | 용도 | 접속 URL |
+|--------|------|------|----------|
+| VSCode Server | 8080 | 웹 기반 IDE | http://localhost:8080 |
+| Developer Admin | 3005 | 개발자 관리 인터페이스 | http://localhost:3005 |
+| Frontend Dev | 3000 | Next.js 개발 서버 | http://localhost:3000 |
+| Backend API | 8000 | FastAPI 개발 서버 | http://localhost:8000 |
+| Admin Panel | 3003 | 기존 관리자 패널 | http://localhost:3003 |
+| PostgreSQL Dev | 5433 | 개발용 DB | localhost:5433 |
+| Redis Dev | 6380 | 개발용 캐시 | localhost:6380 |
+| PgAdmin | 5050 | DB 관리 도구 | http://localhost:5050 |
+| Redis Insight | 8001 | Redis 관리 도구 | http://localhost:8001 |
+
+### 사용 방법
+```bash
+# 전체 개발 환경 시작 (VSCode + 모든 서비스)
+./dev-start.sh
+
+# 개발자 관리 인터페이스만 시작
+./start-developer-admin.sh
+
+# 개발 환경 종료
+./dev-stop.sh
+
+# 서비스 상태 확인
+podman-compose -f docker-compose.dev.yml logs -f
+```
+
+### 개발 환경 특징
+- **완전 웹 기반**: 모든 개발 도구를 웹 브라우저에서 접근 가능
+- **컨테이너화**: 일관된 개발 환경 제공
+- **실시간 모니터링**: 모든 서비스 상태를 개발자 어드민에서 확인
+- **원클릭 접속**: 필요한 도구들에 바로 접근 가능
+- **분리된 DB**: 프로덕션과 완전히 분리된 개발용 데이터베이스
+
+**Important**: 이 개발 환경은 프로그램 개발자의 생산성을 위해 최적화되었으며, VSCode Server를 통해 완전한 웹 기반 개발 경험을 제공합니다.
+
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.

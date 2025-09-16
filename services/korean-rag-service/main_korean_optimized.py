@@ -22,7 +22,7 @@ import uvicorn
 import httpx
 
 # 한국어 처리 및 벡터화 (기존 backend 모듈 활용)
-sys.path.append('/home/ptyoung/work/sdc_i/backend')
+sys.path.append('/home/qportal-dev/바탕화면/sdc_i/backend')
 from services.korean_embeddings import KoreanEmbeddingService, KoreanTextProcessor
 
 logger = logging.getLogger(__name__)
