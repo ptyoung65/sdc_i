@@ -1,0 +1,62 @@
+# 완전 오프라인 Docling 컨테이너 - Air-gap 환경용
+# 모든 AI 모델이 사전에 다운로드되어 포함된 버전
+FROM docker.io/legendofmk/docling-cpu-api:latest
+
+# root로 전환하여 필요한 도구들 설치
+USER root
+
+# bash, vi, 기타 유용한 도구들 설치
+RUN apt-get update && apt-get install -y \
+    bash \
+    vim \
+    nano \
+    curl \
+    wget \
+    unzip \
+    htop \
+    tree \
+    less \
+    && rm -rf /var/lib/apt/lists/*
+
+# 환경 변수 설정
+ENV PYTHONPATH=/app
+ENV ARTIFACTS_PATH=/home/appuser/.EasyOCR
+
+# appuser로 전환
+USER appuser
+
+# 작업 디렉토리 설정
+WORKDIR /app
+
+# 모든 EasyOCR 모델들을 사전 다운로드
+# Air-gap 환경에서 완전 오프라인 작동을 위해 필요한 모든 모델들을 미리 다운로드
+
+# EasyOCR 모델 다운로드 스크립트 복사 및 실행
+COPY --chown=appuser:appuser download_all_models_offline.sh /tmp/download_models.sh
+RUN chmod +x /tmp/download_models.sh && /tmp/download_models.sh
+
+# Hugging Face 모델 캐시 설정 (Docling이 사용하는 모델들)
+ENV HF_HOME=/home/appuser/.cache/huggingface
+ENV TRANSFORMERS_CACHE=/home/appuser/.cache/huggingface/transformers
+ENV HF_DATASETS_CACHE=/home/appuser/.cache/huggingface/datasets
+
+# Docling에서 사용하는 주요 모델들 사전 다운로드
+RUN python -c "
+import os
+os.makedirs('/home/appuser/.cache/huggingface/transformers', exist_ok=True)
+os.makedirs('/home/appuser/.cache/huggingface/datasets', exist_ok=True)
+print('Hugging Face cache directories created')
+"
+
+# 추가적으로 필요한 Python 패키지들이 있다면 설치
+# (Air-gap 환경에서는 이미 베이스 이미지에 모든 것이 포함되어 있어야 함)
+
+# 포트 노출
+EXPOSE 5000 8000
+
+# 헬스체크 추가
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# 시작 명령
+CMD ["/app/src/start.sh"]

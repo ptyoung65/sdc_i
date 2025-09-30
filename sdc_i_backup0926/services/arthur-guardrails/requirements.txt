@@ -1,0 +1,19 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic<2.5.0,>=2.4.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+httpx==0.25.2
+python-json-logger==2.0.7
+redis==5.0.1
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.23
+
+# Lightweight guardrails implementation
+# Using basic packages instead of heavy guardrails-ai
+transformers>=4.30.0
+scikit-learn>=1.3.0
+
+# 한국어 처리 (simplified)
+# konlpy==0.6.0  # Commented out due to heavy dependencies
+# kss==4.5.4     # Commented out due to conflicts
