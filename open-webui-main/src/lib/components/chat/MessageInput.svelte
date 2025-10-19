@@ -1049,7 +1049,8 @@
 							class="w-full flex flex-col gap-1.5"
 							on:submit|preventDefault={() => {
 								// check if selectedModels support image input
-								dispatch('submit', prompt);
+								const promptCopy = prompt;
+								dispatch('submit', { prompt: promptCopy });
 							}}
 						>
 							<div
@@ -1282,7 +1283,8 @@
 																	if (enterPressed) {
 																		e.preventDefault();
 																		if (prompt !== '' || files.length > 0) {
-																			dispatch('submit', prompt);
+																			const promptCopy = prompt;
+																				dispatch('submit', { prompt: promptCopy });
 																		}
 																	}
 																}

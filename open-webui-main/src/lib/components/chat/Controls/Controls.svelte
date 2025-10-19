@@ -181,11 +181,15 @@
 								type="checkbox"
 								checked={selectedCategories.some(c => c.id === category.id)}
 								on:change={(e) => {
+									console.log('📋 Controls.svelte - 체크박스 변경:', category.id, e.target.checked);
 									if (e.target.checked) {
 										selectedCategories = [...selectedCategories, category];
 									} else {
 										selectedCategories = selectedCategories.filter(c => c.id !== category.id);
 									}
+									console.log('📋 Controls.svelte - 업데이트된 selectedCategories:', selectedCategories);
+									// 명시적으로 이벤트 dispatch
+									dispatch('categoriesChanged', { selectedCategories });
 								}}
 							/>
 							<div class="flex-1">

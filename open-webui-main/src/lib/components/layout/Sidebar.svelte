@@ -62,6 +62,7 @@
 	import Sidebar from '../icons/Sidebar.svelte';
 	import PinnedModelList from './Sidebar/PinnedModelList.svelte';
 	import Note from '../icons/Note.svelte';
+	import Database from '../icons/Database.svelte';
 	import { slide } from 'svelte/transition';
 
 	const BREAKPOINT = 768;
@@ -678,6 +679,30 @@
 					</div>
 				{/if}
 
+			{#if $user?.role === 'admin' || $user?.permissions?.workspace?.knowledge}
+				<div class="">
+					<Tooltip content={$i18n.t('Knowledge')} placement="right">
+						<a
+							class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+							href="/workspace/knowledge"
+							on:click={async (e) => {
+								e.stopImmediatePropagation();
+								e.preventDefault();
+
+								goto('/workspace/knowledge');
+								itemClickHandler();
+							}}
+							draggable="false"
+							aria-label={$i18n.t('Knowledge')}
+						>
+							<div class=" self-center flex items-center justify-center size-9">
+								<Database className="size-4.5" />
+							</div>
+						</a>
+					</Tooltip>
+				</div>
+			{/if}
+
 				{#if $user?.role === 'admin' || $user?.permissions?.workspace?.models || $user?.permissions?.workspace?.knowledge || $user?.permissions?.workspace?.prompts || $user?.permissions?.workspace?.tools}
 					<div class="">
 						<Tooltip content={$i18n.t('Workspace')} placement="right">
@@ -754,7 +779,7 @@
 		bind:this={navElement}
 		id="sidebar"
 		class="h-screen max-h-[100dvh] min-h-screen select-none {$showSidebar
-			? 'bg-gray-50 dark:bg-gray-950 z-50'
+			? 'bg-gradient-to-br from-gray-50 via-gray-100/30 to-gray-50 dark:from-gray-950 dark:via-gray-900/50 dark:to-gray-950 z-50 shadow-xl border-r border-gray-200/50 dark:border-gray-800/50'
 			: ' bg-transparent z-0 '} {$isApp
 			? `ml-[4.5rem] md:ml-0 `
 			: ' transition-all duration-300 '} shrink-0 text-gray-900 dark:text-gray-200 text-sm fixed top-0 left-0 overflow-x-hidden
@@ -768,25 +793,11 @@
 				: 'invisible'}"
 		>
 			<div
-				class="sidebar px-2 pt-2 pb-1.5 flex justify-between space-x-1 text-gray-600 dark:text-gray-400 sticky top-0 z-10 -mb-3"
+				class="sidebar px-2 pt-2 pb-1.5 flex justify-between space-x-1 text-gray-600 dark:text-gray-400 sticky top-0 z-10 -mb-3 bg-gradient-to-b from-white/80 via-gray-50/50 to-transparent dark:from-gray-900/80 dark:via-gray-950/50 dark:to-transparent backdrop-blur-sm"
 			>
-				<a
-					class="flex items-center rounded-xl size-8.5 h-full justify-center hover:bg-gray-100/50 dark:hover:bg-gray-850/50 transition no-drag-region"
-					href="/"
-					draggable="false"
-					on:click={newChatHandler}
-				>
-					<img
-						crossorigin="anonymous"
-						src="{WEBUI_BASE_URL}/static/favicon.png"
-						class="sidebar-new-chat-icon size-6 rounded-full"
-						alt=""
-					/>
-				</a>
-
 				<a href="/" class="flex flex-1 px-1.5" on:click={newChatHandler}>
 					<div class=" self-center font-medium text-gray-850 dark:text-white font-primary">
-						Chat Pro
+						ChatPro
 					</div>
 				</a>
 				<Tooltip
@@ -932,7 +943,7 @@
 
 			<div class="px-1.5 pt-1.5 pb-2 sticky bottom-0 z-10 -mt-3 sidebar">
 				<div
-					class=" sidebar-bg-gradient-to-t bg-linear-to-t from-gray-50 dark:from-gray-950 to-transparent from-50% pointer-events-none absolute inset-0 -z-10 -mt-6"
+					class=" sidebar-bg-gradient-to-t bg-linear-to-t from-white/90 via-gray-50/70 dark:from-gray-900/90 dark:via-gray-950/70 to-transparent from-40% pointer-events-none absolute inset-0 -z-10 -mt-6 backdrop-blur-sm"
 				></div>
 				<div class="flex flex-col font-primary">
 					{#if $user !== undefined && $user !== null}
