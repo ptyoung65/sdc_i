@@ -187,7 +187,7 @@
 			]
 		},
 		{
-			id: 'dictionary',
+			id: 'bfdbad3e-1800-4c85-a9a7-e2316449c7db',  // 실제 Knowledge Base UUID
 			name: '용어사전',
 			description: '회사와 업계에서 사용하는 용어를 검색합니다.',
 			samples: [
@@ -1648,6 +1648,7 @@
 
 	const submitPrompt = async (userPrompt, { _raw = false } = {}) => {
 		console.log('submitPrompt', userPrompt, $chatId);
+		console.log('🔍 submitPrompt - selectedCategories:', selectedCategories);
 
 		const _selectedModels = selectedModels.map((modelId) =>
 			$models.map((m) => m.id).includes(modelId) ? modelId : ''
@@ -1713,6 +1714,21 @@
 				['doc', 'text', 'file', 'note', 'chat', 'folder', 'collection'].includes(item.type)
 			)
 		);
+
+		// 선택된 카테고리에서 Knowledge Base 추가
+		if (selectedCategories.length > 0) {
+			selectedCategories.forEach(category => {
+				// Knowledge Base를 collection 타입으로 chatFiles에 추가
+				// category.id는 이미 Knowledge Base UUID입니다
+				chatFiles.push({
+					type: 'collection',
+					id: category.id,
+					name: category.name,
+					collection_name: category.name
+				});
+			});
+		}
+
 		chatFiles = chatFiles.filter(
 			// Remove duplicates
 			(item, index, array) =>
@@ -1924,7 +1940,12 @@
 			.flatMap((message) => message.files);
 
 		// Filter chatFiles to only include files that are in the chatMessageFiles
+		// BUT: Always keep collection type (Knowledge Base) files
 		chatFiles = chatFiles.filter((item) => {
+			// collection 타입(Knowledge Base)은 항상 유지
+			if (item.type === 'collection') {
+				return true;
+			}
 			const fileExists = chatMessageFiles.some((messageFile) => messageFile.id === item.id);
 			return fileExists;
 		});
@@ -2809,6 +2830,10 @@
 					bind:pane={controlPane}
 					bind:selectedCategories
 					{categories}
+					on:categoriesChanged={(e) => {
+						console.log('🎯 Chat.svelte - categoriesChanged 이벤트 수신:', e.detail);
+						selectedCategories = e.detail.selectedCategories;
+					}}
 					chatId={$chatId}
 					modelId={selectedModelIds?.at(0) ?? null}
 					models={selectedModelIds.reduce((a, e, i, arr) => {
