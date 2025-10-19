@@ -159,7 +159,6 @@
 		{
 			id: 'edm',
 			name: 'EDM 검색',
-			icon: '📊',
 			description: '전자문서관리 시스템에서 문서를 검색하고 관리합니다.',
 			samples: [
 				'최근 승인된 계약서 목록을 보여줘',
@@ -170,7 +169,6 @@
 		{
 			id: 'guide',
 			name: '회사생활가이드',
-			icon: '📖',
 			description: '회사 생활에 필요한 각종 규정과 가이드를 안내합니다.',
 			samples: [
 				'연차 신청 방법을 알려줘',
@@ -181,7 +179,6 @@
 		{
 			id: 'helpdesk',
 			name: 'IT Help Desk',
-			icon: '💻',
 			description: 'IT 관련 문제 해결과 시스템 사용법을 안내합니다.',
 			samples: [
 				'VPN 연결이 안 돼요',
@@ -192,7 +189,6 @@
 		{
 			id: 'dictionary',
 			name: '용어사전',
-			icon: '📚',
 			description: '회사와 업계에서 사용하는 용어를 검색합니다.',
 			samples: [
 				'KPI가 무엇인가요?',
@@ -203,7 +199,6 @@
 		{
 			id: 'etc',
 			name: '기타',
-			icon: '📌',
 			description: '기타 일반적인 업무 지원을 제공합니다.',
 			samples: [
 				'오늘 회의실 예약 현황을 알려줘',
@@ -217,26 +212,40 @@
 
 	// Function to handle model type change
 	const handleModelTypeChange = (newType) => {
+		console.log('[Chat] handleModelTypeChange called, newType:', newType);
+
 		// If switching to external model, show security warning
 		if (newType === 'external' && $modelType !== 'external') {
 			pendingModelType = newType;
 			showSecurityWarning = true;
-		} else {
-			// Direct switch for internal model
+		} else if (newType === 'internal' && $modelType !== 'internal') {
+			// Direct switch to internal model
 			modelType.set(newType);
-			// Restore both sidebars when switching to internal model
-			showControls.set(true);
+			console.log('[Chat] Switched to internal model');
+
+			// Open right sidebar directly (initialize to open state)
+			if (controlPaneComponent && !$mobile) {
+				console.log('[Chat] Initializing right sidebar to open state');
+				controlPaneComponent.openPane();
+			}
 		}
 	};
 
 	// Function to confirm external model switch
-	const confirmExternalModelSwitch = () => {
+	const confirmExternalModelSwitch = async () => {
+		console.log('[Chat] confirmExternalModelSwitch called');
+
+		// Close right sidebar directly (initialize to closed state)
+		if (controlPaneComponent && !$mobile) {
+			console.log('[Chat] Initializing right sidebar to closed state');
+			controlPaneComponent.closePane();
+		}
+
+		// Switch model type
 		modelType.set(pendingModelType);
+		console.log('[Chat] modelType set to:', pendingModelType);
 		showSecurityWarning = false;
 		pendingModelType = null;
-
-		// Close right sidebar (controls) when switching to external model
-		showControls.set(false);
 
 		// Clear chat history when switching to external model
 		history = {
@@ -257,13 +266,6 @@
 		selectedModels = [internalModels[0].id];
 	} else if ($modelType === 'external') {
 		selectedModels = [externalModels[0].id];
-	}
-
-	// Auto control sidebars based on model type
-	$: if ($modelType === 'external') {
-		showControls.set(false);
-	} else if ($modelType === 'internal') {
-		showControls.set(true);
 	}
 
 	let history = {
@@ -661,7 +663,27 @@
 
 		// Initialize model type and sidebars
 		modelType.set('internal');
-		showControls.set(true);
+
+
+		// Open right sidebar for internal model on initial load
+		await tick();
+		if (!$mobile) {
+			console.log('[Chat] Initial load - opening right sidebar by setting showControls');
+			showControls.set(true);
+		}
+
+		// Force sidebar open after settings load (override any saved user preference)
+		const settingsUnsubscribe = settings.subscribe(() => {
+			if (!$mobile && $modelType === 'internal') {
+				console.log('[Chat] Settings loaded - forcing sidebar open');
+				showControls.set(true);
+			}
+		});
+
+		// Cleanup settings subscription after initial load
+		setTimeout(() => {
+			settingsUnsubscribe();
+		}, 5000); // Unsubscribe after 5 seconds (enough time for initial settings load)
 
 		window.addEventListener('message', onMessageHandler);
 		$socket?.on('events', chatEventHandler);
@@ -709,16 +731,24 @@
 		}
 
 		showControlsSubscribe = showControls.subscribe(async (value) => {
-			if (controlPane && !$mobile) {
+			console.log('[Chat] showControls subscription triggered, value:', value);
+			console.log('[Chat] controlPaneComponent:', controlPaneComponent);
+			console.log('[Chat] $mobile:', $mobile);
+
+			if (controlPaneComponent && !$mobile) {
 				try {
 					if (value) {
+						console.log('[Chat] Calling controlPaneComponent.openPane()');
 						controlPaneComponent.openPane();
 					} else {
-						controlPane.collapse();
+						console.log('[Chat] Calling controlPaneComponent.closePane()');
+						controlPaneComponent.closePane();
 					}
 				} catch (e) {
-					// ignore
+					console.error('[Chat] Error in showControls subscription:', e);
 				}
+			} else {
+				console.log('[Chat] Skipping pane operation - controlPaneComponent:', controlPaneComponent, 'mobile:', $mobile);
 			}
 
 			if (!value) {
@@ -1033,7 +1063,7 @@
 			}
 		}
 
-		await showControls.set(false);
+		// showControls.set(false) 제거 - 최초 로딩 시 햄버거 버튼이 보이는 원인
 		await showCallOverlay.set(false);
 		await showOverview.set(false);
 		await showArtifacts.set(false);
@@ -2038,7 +2068,7 @@
 								tags_generation: $settings?.autoTags ?? true
 							}
 						: {}),
-					follow_up_generation: $settings?.autoFollowUps ?? true
+					follow_up_generation: $settings?.autoFollowUps ?? false
 				},
 
 				...(stream && (model.info?.meta?.capabilities?.usage ?? false)
@@ -2491,6 +2521,7 @@
 						{initNewChat}
 						archiveChatHandler={() => {}}
 						{moveChatHandler}
+						{controlPaneComponent}
 						onSaveTempChat={async () => {
 							try {
 								if (!history?.currentId || !Object.keys(history.messages).length) {
@@ -2529,30 +2560,15 @@
 						}}
 					/>
 
-					<!-- 3분할 레이아웃: 상단 헤더 - 중앙 콘텐츠 - 하단 입력 -->
+					<!-- 2분할 레이아웃: 중앙 콘텐츠 - 하단 입력 -->
 					<div class="flex flex-col h-full w-full">
-						<!-- 상단 고정 헤더: 선택된 LLM 모델 표시 -->
-						<div class="flex-shrink-0 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-750 border-b border-gray-200 dark:border-gray-700">
-							<div class="flex items-center gap-2">
-								<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600 dark:text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-									<path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
-								</svg>
-								<span class="text-sm font-semibold text-gray-700 dark:text-gray-200">
-									{#if $modelType === 'internal'}
-										내부 모델: {selectedModels.length > 0 ? selectedModels.join(', ') : 'None'}
-									{:else}
-										외부 모델: {selectedModels.length > 0 ? selectedModels.join(', ') : 'None'}
-									{/if}
-								</span>
-							</div>
-						</div>
 
 						<!-- 중앙 콘텐츠 영역 (flex-1로 남은 공간 차지) -->
 						<div class="flex-1 overflow-hidden relative">
 						{#if ($settings?.landingPageMode === 'chat' && !$selectedFolder) || createMessagesList(history, history.currentId).length > 0}
 							<!-- 채팅 메시지 영역 (스크롤 가능) -->
 							<div
-								class="h-full w-full overflow-y-auto overflow-x-hidden scrollbar-hidden"
+								class="h-full w-full overflow-y-auto overflow-x-hidden scrollbar-hidden flex items-center justify-center"
 								id="messages-container"
 								bind:this={messagesContainerElement}
 								on:scroll={(e) => {
@@ -2561,7 +2577,7 @@
 										messagesContainerElement.clientHeight + 5;
 								}}
 							>
-								<div class="min-h-full w-full flex flex-col pb-4">
+								<div class="min-h-full w-full max-w-5xl flex flex-col pb-4">
 									<Messages
 										chatId={$chatId}
 										bind:history
@@ -2592,11 +2608,11 @@
 
 						{:else}
 							<!-- 초기 화면 (카테고리 선택) -->
-							<div class="h-full w-full overflow-y-auto">
+							<div class="h-full w-full overflow-y-auto flex items-center justify-center">
 								{#if $modelType === 'internal'}
 									<!-- Category boxes for internal model -->
-									<div class="w-full h-full overflow-auto p-6">
-										<div class="max-w-6xl mx-auto">
+									<div class="w-full max-w-6xl p-6">
+										<div class="w-full">
 											<h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6 text-center">
 												무엇을 도와드릴까요?
 											</h2>
@@ -2762,17 +2778,17 @@
 						<!-- Toggle buttons container -->
 						<div class="flex gap-2">
 							<button
-								class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-lg {$modelType === 'internal'
-									? 'bg-blue-600 text-white'
-									: 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'}"
+								class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm {$modelType === 'internal'
+									? 'bg-gray-700 dark:bg-gray-600 text-white'
+									: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-750'}"
 								on:click={() => handleModelTypeChange('internal')}
 							>
 								내부모델
 							</button>
 							<button
-								class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-lg {$modelType === 'external'
-									? 'bg-blue-600 text-white'
-									: 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'}"
+								class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm {$modelType === 'external'
+									? 'bg-gray-700 dark:bg-gray-600 text-white'
+									: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-750'}"
 								on:click={() => handleModelTypeChange('external')}
 							>
 								외부모델

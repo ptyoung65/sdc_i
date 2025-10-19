@@ -193,6 +193,7 @@ type Settings = {
 	splitLargeDeltas?: boolean;
 	chatDirection?: 'LTR' | 'RTL' | 'auto';
 	ctrlEnterToSend?: boolean;
+	showDetailedRating?: boolean;
 
 	system?: string;
 	seed?: number;

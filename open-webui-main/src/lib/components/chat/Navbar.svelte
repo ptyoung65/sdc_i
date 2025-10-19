@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { getContext, onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 
 	import {
@@ -53,11 +53,17 @@
 	export let onSaveTempChat: () => {};
 	export let archiveChatHandler: (id: string) => void;
 	export let moveChatHandler: (id: string, folderId: string) => void;
+	export let controlPaneComponent = null;
 
 	let closedBannerIds = [];
 
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
+
+	// 왼쪽 사이드바가 닫혔을 때만 토글 버튼 표시 (내부 모델인 경우에만)
+	$: showLeftSidebarToggle = !$showSidebar && $modelType === 'internal';
+	// 오른쪽 Controls가 닫혔을 때만 토글 버튼 표시 (내부 모델인 경우에만)
+	$: showRightControlsToggle = !$showControls && $modelType === 'internal';
 </script>
 
 <ShareChatModal bind:show={showShareChatModal} chatId={$chatId} />
@@ -71,27 +77,34 @@
 	aria-label="New Chat"
 />
 
-<nav class="sticky top-0 z-30 w-full py-1 -mb-8 flex flex-col items-center drag-region">
+<nav class="sticky top-0 z-30 w-full py-1 -mb-8 flex flex-col items-center drag-region bg-gray-50 dark:bg-gray-800">
 	<div class="flex items-center w-full pl-1.5 pr-1">
 		<div
-			class=" bg-linear-to-b via-40% to-97% from-white via-white to-transparent dark:from-gray-900 dark:via-gray-900 dark:to-transparent pointer-events-none absolute inset-0 -bottom-7 z-[-1]"
+			class=" bg-linear-to-b via-40% to-97% from-gray-50 via-gray-50 to-transparent dark:from-gray-800 dark:via-gray-800 dark:to-transparent pointer-events-none absolute inset-0 -bottom-7 z-[-1]"
 		></div>
 
 		<div class=" flex max-w-full w-full mx-auto px-1.5 md:px-2 pt-0.5 bg-transparent">
 			<div class="flex items-center w-full max-w-full">
-				{#if $mobile && !$showSidebar}
+				<!-- 왼쪽 사이드바 토글 버튼: 사이드바가 닫혔을 때만 표시 (내부 모델일 때만) -->
+				{#if showLeftSidebarToggle}
 					<div
 						class="-translate-x-0.5 mr-1 mt-1 self-start flex flex-none items-center text-gray-600 dark:text-gray-400"
 					>
-						<Tooltip content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}>
+						<Tooltip content={$i18n.t('Open Sidebar')}>
 							<button
-								class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition"
+								class="cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition"
 								on:click={() => {
-									showSidebar.set(!$showSidebar);
+									showSidebar.set(true);
 								}}
+								aria-label="Open Left Sidebar"
 							>
-								<div class=" self-center p-1.5">
-									<Sidebar />
+								<div class="self-center p-1.5">
+									<!-- 햄버거 아이콘 -->
+									<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+										 stroke-width="2" stroke="currentColor" class="size-5">
+										<path stroke-linecap="round" stroke-linejoin="round"
+											  d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/>
+									</svg>
 								</div>
 							</button>
 						</Tooltip>
@@ -103,9 +116,17 @@
 			{$showSidebar ? 'ml-1' : ''}
 			"
 				>
-					{#if showModelSelector}
-						<ModelSelector bind:selectedModels showSetDefault={!shareEnabled} />
-					{/if}
+					<!-- Model selector removed -->
+					<!-- 선택된 LLM 모델 표시 -->
+					<div class="flex items-center gap-2 px-2">
+						<span class="text-sm font-semibold text-gray-700 dark:text-gray-200 truncate">
+							{#if $modelType === 'internal'}
+								내부 모델: {selectedModels.length > 0 ? selectedModels.join(', ') : 'None'}
+							{:else}
+								외부 모델: {selectedModels.length > 0 ? selectedModels.join(', ') : 'None'}
+							{/if}
+						</span>
+					</div>
 				</div>
 
 				<div class="self-start flex flex-none items-center text-gray-600 dark:text-gray-400 {$showControls ? 'pr-16' : 'pr-1'}">
@@ -234,45 +255,32 @@
 						</UserMenu>
 					{/if}
 
-					<!-- 오른쪽 사이드바 햄버거 버튼 (카테고리) -->
-					{#if !$showControls && ($user?.role === 'admin' || ($user?.permissions.chat?.controls ?? true))}
+					<!-- 오른쪽 Controls 토글 버튼: Controls가 닫혔을 때만 표시 (내부 모델일 때만) -->
+					{#if showRightControlsToggle && ($user?.role === 'admin' || ($user?.permissions.chat?.controls ?? true))}
 						<div
 							class="ml-1 mt-1 self-start flex flex-none items-center text-gray-600 dark:text-gray-400"
 						>
-							<Tooltip content={$modelType === 'external' ? '외부모델에서는 카테고리를 사용할 수 없습니다' : '카테고리 선택'}>
+							<Tooltip content="카테고리 열기">
 								<button
-									class="flex rounded-lg transition {$modelType === 'external'
-										? 'cursor-not-allowed opacity-30'
-										: 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-850'}"
-									on:click={async () => {
-										if ($modelType === 'internal') {
-											await showControls.set(true);
-										}
+									class="cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition"
+									on:click={() => {
+										showControls.set(true);
 									}}
-									disabled={$modelType === 'external'}
-									aria-label="Open Category Sidebar"
+									aria-label="Open Controls"
 								>
-									<div class=" self-center p-1.5">
-										<!-- 햄버거 메뉴 아이콘 -->
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke-width="2"
-											stroke="currentColor"
-											class="size-5"
-										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
-											/>
+									<div class="self-center p-1.5">
+										<!-- 햄버거 아이콘 -->
+										<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+											 stroke-width="2" stroke="currentColor" class="size-5">
+											<path stroke-linecap="round" stroke-linejoin="round"
+												  d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/>
 										</svg>
 									</div>
 								</button>
 							</Tooltip>
 						</div>
 					{/if}
+
 				</div>
 			</div>
 		</div>

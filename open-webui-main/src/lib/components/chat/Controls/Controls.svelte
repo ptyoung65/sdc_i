@@ -21,23 +21,68 @@
 	let showValves = false;
 </script>
 
+<style>
+	/* 카테고리 체크박스 커스텀 스타일 */
+	input[type="checkbox"] {
+		-webkit-appearance: none;
+		-moz-appearance: none;
+		appearance: none;
+		width: 1rem;
+		height: 1rem;
+		border: 2px solid #d1d5db;
+		border-radius: 0.25rem;
+		background-color: white;
+		cursor: pointer;
+		position: relative;
+		transition: all 0.2s;
+	}
+
+	:global(.dark) input[type="checkbox"] {
+		background-color: #374151;
+		border-color: #4b5563;
+	}
+
+	input[type="checkbox"]:checked {
+		background-color: #3b82f6;
+		border-color: #3b82f6;
+	}
+
+	input[type="checkbox"]:checked::after {
+		content: '';
+		position: absolute;
+		left: 0.25rem;
+		top: 0.05rem;
+		width: 0.35rem;
+		height: 0.6rem;
+		border: solid white;
+		border-width: 0 2px 2px 0;
+		transform: rotate(45deg);
+	}
+
+	input[type="checkbox"]:hover {
+		border-color: #3b82f6;
+	}
+</style>
+
 <div class=" dark:text-white">
 	<div class=" flex items-center justify-between dark:text-gray-100 mb-2">
 		<div class="flex items-center gap-2">
-			<Tooltip content="카테고리 닫기">
-				<button
-					class="flex rounded-lg transition p-1 {$modelType === 'external'
-						? 'cursor-not-allowed opacity-30'
-						: 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-850'}"
-					on:click={() => {
-						if ($modelType === 'internal') {
-							dispatch('close');
-						}
-					}}
-					disabled={$modelType === 'external'}
-					aria-label="Close Category Sidebar"
-				>
-					<!-- 햄버거 메뉴 아이콘 -->
+			<div class=" text-lg font-medium self-center font-primary">카테고리 선택</div>
+		</div>
+		<!-- 닫기 버튼 -->
+		<Tooltip content={$modelType === 'internal' ? "카테고리 닫기" : "외부 모델 사용 중에는 카테고리 선택이 불가능합니다"}>
+			<button
+				class="cursor-pointer flex rounded-lg transition p-1 {$modelType === 'internal' ? 'hover:bg-gray-100 dark:hover:bg-gray-850' : 'opacity-50 cursor-not-allowed'}"
+				on:click={() => {
+					if ($modelType === 'internal') {
+						dispatch('close');
+					}
+				}}
+				disabled={$modelType !== 'internal'}
+				aria-label="Close Controls"
+			>
+				<div class="self-center p-0.5">
+					<!-- 햄버거 아이콘 -->
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						fill="none"
@@ -52,10 +97,9 @@
 							d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
 						/>
 					</svg>
-				</button>
-			</Tooltip>
-			<div class=" text-lg font-medium self-center font-primary">카테고리 선택</div>
-		</div>
+				</div>
+			</button>
+		</Tooltip>
 	</div>
 
 	{#if $user?.role === 'admin' || ($user?.permissions.chat?.controls ?? true)}
@@ -133,34 +177,17 @@
 				<div class="space-y-2">
 					{#each categories as category}
 						<label class="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors border border-gray-200 dark:border-gray-700">
-							<div class="relative flex items-center justify-center">
-								<input
-									type="checkbox"
-									checked={selectedCategories.some(c => c.id === category.id)}
-									on:change={(e) => {
-										if (e.target.checked) {
-											selectedCategories = [...selectedCategories, category];
-										} else {
-											selectedCategories = selectedCategories.filter(c => c.id !== category.id);
-										}
-									}}
-									class="peer w-6 h-6 rounded border-2 border-gray-400 dark:border-gray-500 appearance-none cursor-pointer transition-all
-										checked:bg-gray-900 checked:dark:bg-white checked:border-gray-900 checked:dark:border-white
-										focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-								/>
-								<svg
-									class="absolute w-4 h-4 text-white dark:text-gray-900 pointer-events-none hidden peer-checked:block"
-									xmlns="http://www.w3.org/2000/svg"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="4"
-									stroke-linecap="round"
-									stroke-linejoin="round"
-								>
-									<polyline points="20 6 9 17 4 12"></polyline>
-								</svg>
-							</div>
+							<input
+								type="checkbox"
+								checked={selectedCategories.some(c => c.id === category.id)}
+								on:change={(e) => {
+									if (e.target.checked) {
+										selectedCategories = [...selectedCategories, category];
+									} else {
+										selectedCategories = selectedCategories.filter(c => c.id !== category.id);
+									}
+								}}
+							/>
 							<div class="flex-1">
 								<div class="text-base font-semibold text-gray-800 dark:text-gray-200">{category.name}</div>
 								<div class="text-xs text-gray-500 dark:text-gray-400">{category.description}</div>
