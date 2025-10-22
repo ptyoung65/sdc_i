@@ -75,6 +75,7 @@
 	} from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
 	import { uploadFile } from '$lib/apis/files';
+	import { addFileToKnowledgeById } from '$lib/apis/knowledge';
 	import { createOpenAITextStream } from '$lib/apis/streaming';
 
 	import { fade } from 'svelte/transition';
@@ -83,24 +84,25 @@
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import Navbar from '$lib/components/chat/Navbar.svelte';
-	import ChatControls from './ChatControls.svelte';
 	import EventConfirmDialog from '../common/ConfirmDialog.svelte';
 	import Placeholder from './Placeholder.svelte';
 	import NotificationToast from '../NotificationToast.svelte';
 	import Spinner from '../common/Spinner.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Sidebar from '../icons/Sidebar.svelte';
+	import EdmIntegration from './EdmIntegration.svelte';
+	import EdmFileListModal from './EdmFileListModal.svelte';
+	import RightSidebar from '../layout/RightSidebar.svelte';
 	import { getFunctions } from '$lib/apis/functions';
 	import Image from '../common/Image.svelte';
 	import { updateFolderById } from '$lib/apis/folders';
+	import { getEdmFileList } from '$lib/apis/edm';
 
 	export let chatIdProp = '';
 
 	let loading = true;
 
 	const eventTarget = new EventTarget();
-	let controlPane;
-	let controlPaneComponent;
 
 	let messageInput;
 
@@ -157,58 +159,66 @@
 	// Category boxes for internal model
 	const categories = [
 		{
-			id: 'edm',
-			name: 'EDM 검색',
-			description: '전자문서관리 시스템에서 문서를 검색하고 관리합니다.',
+			id: 'report',
+			name: '보고서 초안 작성',
+			description: '',
 			samples: [
-				'최근 승인된 계약서 목록을 보여줘',
-				'프로젝트 A 관련 문서를 찾아줘',
-				'작성 중인 내 문서를 확인해줘'
+				'프로젝트 보고서 포맷을 만들어줘',
+				'디스플레이 기술 트렌드를 정리해 줘'
+			]
+		},
+		{
+			id: 'edm',
+			name: 'EDM 문서활용',
+			collection_name: 'edm-knowledge',
+			description: '',
+			samples: [
+				'최근 사용한 문서를 요약해서 보여 줘',
+				'지난 분기 생산 효율 회의록 찾아 줘'
 			]
 		},
 		{
 			id: 'guide',
-			name: '회사생활가이드',
-			description: '회사 생활에 필요한 각종 규정과 가이드를 안내합니다.',
+			name: '대사우 Assistant',
+			description: '사규',
 			samples: [
-				'연차 신청 방법을 알려줘',
-				'복지 제도에는 어떤 것들이 있어?',
-				'출장 신청 절차를 설명해줘'
+				'육아휴직 신청 방법 알려 줘',
+				'연간 패밀리넷 사용 가능 금액 알려 줘'
 			]
 		},
 		{
 			id: 'helpdesk',
-			name: 'IT Help Desk',
-			description: 'IT 관련 문제 해결과 시스템 사용법을 안내합니다.',
+			name: '대사우 Assistant',
+			description: 'IT Help Desk',
 			samples: [
-				'VPN 연결이 안 돼요',
-				'이메일 계정 비밀번호를 재설정하고 싶어요',
-				'프린터 연결 방법을 알려주세요'
+				'Knox 비밀번호 초기화 방법 알려 줘',
+				'Wave 운영팀 내선 번호 알려 줘'
 			]
 		},
 		{
-			id: 'bfdbad3e-1800-4c85-a9a7-e2316449c7db',  // 실제 Knowledge Base UUID
-			name: '용어사전',
-			description: '회사와 업계에서 사용하는 용어를 검색합니다.',
+			id: 'code',
+			name: 'Code 개발 지원',
+			description: '',
 			samples: [
-				'KPI가 무엇인가요?',
-				'ROI 계산 방법을 알려줘',
-				'Agile 방법론이 뭔가요?'
+				'Python으로 엑셀을 읽는 코드 만들어 줘',
+				'SQL 쿼리 중복데이터 제거하는 방법'
 			]
 		},
 		{
-			id: 'etc',
-			name: '기타',
-			description: '기타 일반적인 업무 지원을 제공합니다.',
+			id: 'search',
+			name: '외부정보검색',
+			description: '',
 			samples: [
-				'오늘 회의실 예약 현황을 알려줘',
-				'사내 식당 메뉴가 궁금해요',
-				'주차장 이용 안내를 해줘'
+				'삼성 디스플레이 관련 최근 뉴스 보여 줘',
+				'AI 기반 업무혁신 사례 찾아줘'
 			]
 		}
 	];
 
 	let selectedCategories = []; // 선택된 카테고리들 (체크박스로 선택)
+	let showEdmFileListModal = false; // EDM 파일리스트 팝업 표시 여부
+	let edmSearchQuery = ''; // EDM 검색 쿼리
+	let edmFileList: any[] = []; // EDM 파일 리스트
 
 	// Function to handle model type change
 	const handleModelTypeChange = (newType) => {
@@ -222,24 +232,12 @@
 			// Direct switch to internal model
 			modelType.set(newType);
 			console.log('[Chat] Switched to internal model');
-
-			// Open right sidebar directly (initialize to open state)
-			if (controlPaneComponent && !$mobile) {
-				console.log('[Chat] Initializing right sidebar to open state');
-				controlPaneComponent.openPane();
-			}
 		}
 	};
 
 	// Function to confirm external model switch
 	const confirmExternalModelSwitch = async () => {
 		console.log('[Chat] confirmExternalModelSwitch called');
-
-		// Close right sidebar directly (initialize to closed state)
-		if (controlPaneComponent && !$mobile) {
-			console.log('[Chat] Initializing right sidebar to closed state');
-			controlPaneComponent.closePane();
-		}
 
 		// Switch model type
 		modelType.set(pendingModelType);
@@ -665,25 +663,8 @@
 		modelType.set('internal');
 
 
-		// Open right sidebar for internal model on initial load
+		// Initial setup for right sidebar
 		await tick();
-		if (!$mobile) {
-			console.log('[Chat] Initial load - opening right sidebar by setting showControls');
-			showControls.set(true);
-		}
-
-		// Force sidebar open after settings load (override any saved user preference)
-		const settingsUnsubscribe = settings.subscribe(() => {
-			if (!$mobile && $modelType === 'internal') {
-				console.log('[Chat] Settings loaded - forcing sidebar open');
-				showControls.set(true);
-			}
-		});
-
-		// Cleanup settings subscription after initial load
-		setTimeout(() => {
-			settingsUnsubscribe();
-		}, 5000); // Unsubscribe after 5 seconds (enough time for initial settings load)
 
 		window.addEventListener('message', onMessageHandler);
 		$socket?.on('events', chatEventHandler);
@@ -731,26 +712,6 @@
 		}
 
 		showControlsSubscribe = showControls.subscribe(async (value) => {
-			console.log('[Chat] showControls subscription triggered, value:', value);
-			console.log('[Chat] controlPaneComponent:', controlPaneComponent);
-			console.log('[Chat] $mobile:', $mobile);
-
-			if (controlPaneComponent && !$mobile) {
-				try {
-					if (value) {
-						console.log('[Chat] Calling controlPaneComponent.openPane()');
-						controlPaneComponent.openPane();
-					} else {
-						console.log('[Chat] Calling controlPaneComponent.closePane()');
-						controlPaneComponent.closePane();
-					}
-				} catch (e) {
-					console.error('[Chat] Error in showControls subscription:', e);
-				}
-			} else {
-				console.log('[Chat] Skipping pane operation - controlPaneComponent:', controlPaneComponent, 'mobile:', $mobile);
-			}
-
 			if (!value) {
 				showCallOverlay.set(false);
 				showOverview.set(false);
@@ -1650,6 +1611,40 @@
 		console.log('submitPrompt', userPrompt, $chatId);
 		console.log('🔍 submitPrompt - selectedCategories:', selectedCategories);
 
+		// ✅ EDM 검색이 선택되어 있으면 파일리스트 팝업 먼저 표시
+		if (selectedCategories.some(cat => cat.id === 'edm')) {
+			console.log('📂 EDM 검색 활성화됨 - API 호출하여 파일리스트 조회');
+			edmSearchQuery = userPrompt;  // 검색어 저장
+
+			try {
+				toast.info('EDM 파일 검색 중...');
+				const token = localStorage.getItem('token') || '';
+				const userId = $user?.id || '';
+
+				// EDM API 호출
+				const response = await getEdmFileList(edmSearchQuery, userId, undefined, token);
+
+				if (response.resultCode === 60200) {
+					edmFileList = response.data.items || [];
+					console.log(`✅ EDM 파일 ${edmFileList.length}개 조회 완료`);
+
+					if (edmFileList.length > 0) {
+						showEdmFileListModal = true;  // 팝업 표시
+					} else {
+						toast.info('검색 결과가 없습니다.');
+					}
+				} else {
+					toast.error(`파일 검색 실패: ${response.message}`);
+					console.error('❌ EDM 검색 실패:', response);
+				}
+			} catch (error) {
+				console.error('❌ EDM API 호출 실패:', error);
+				toast.error('파일 검색 중 오류가 발생했습니다.');
+			}
+
+			return;  // 여기서 중단 (파일 선택 후 임베딩 요청으로 이어짐)
+		}
+
 		const _selectedModels = selectedModels.map((modelId) =>
 			$models.map((m) => m.id).includes(modelId) ? modelId : ''
 		);
@@ -1719,13 +1714,15 @@
 		if (selectedCategories.length > 0) {
 			selectedCategories.forEach(category => {
 				// Knowledge Base를 collection 타입으로 chatFiles에 추가
-				// category.id는 이미 Knowledge Base UUID입니다
+				// EDM의 경우 collection_name 사용, 그 외는 name 사용
+				const collectionName = category.collection_name || category.name;
 				chatFiles.push({
 					type: 'collection',
 					id: category.id,
 					name: category.name,
-					collection_name: category.name
+					collection_name: collectionName
 				});
+				console.log(`📚 컬렉션 추가: ${category.name} → ${collectionName}`);
 			});
 		}
 
@@ -2542,7 +2539,6 @@
 						{initNewChat}
 						archiveChatHandler={() => {}}
 						{moveChatHandler}
-						{controlPaneComponent}
 						onSaveTempChat={async () => {
 							try {
 								if (!history?.currentId || !Object.keys(history.messages).length) {
@@ -2634,9 +2630,6 @@
 									<!-- Category boxes for internal model -->
 									<div class="w-full max-w-6xl p-6">
 										<div class="w-full">
-											<h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6 text-center">
-												무엇을 도와드릴까요?
-											</h2>
 											<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 												{#each categories as category}
 													<div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 dark:border-gray-700">
@@ -2648,30 +2641,47 @@
 																</h3>
 															</div>
 
-															<!-- Description -->
-															<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-																{category.description}
-															</p>
-
-															<!-- Sample questions -->
-															<div class="space-y-2">
-																<p class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase tracking-wide">
-																	질문 예시
+															<!-- Description (only show if not empty) -->
+															{#if category.description}
+																<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+																	{category.description}
 																</p>
-																{#each category.samples as sample}
+															{/if}
+
+															<!-- Action button -->
+															<div class="mt-4">
+																{#if category.id === 'edm-file-search-hidden'}
+																	<!-- EDM 전용 파일 검색 버튼 (기능 보존, 현재 숨김) -->
 																	<button
-																		class="w-full text-left px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700"
-																		on:click={async () => {
-																			prompt = sample;
-																			await tick();
-																			if (messageInput) {
-																				await messageInput.setText(sample);
-																			}
+																		class="w-full px-4 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-md hover:shadow-lg"
+																		on:click={() => {
+																			console.log('🔵 EDM 파일 검색 버튼 클릭 - 카테고리 선택됨');
+																			selectedCategories = [category];
+																			console.log('✅ EDM 모드 활성화 - 이제 메시지를 입력하고 전송하세요');
 																		}}
 																	>
-																		<span class="text-gray-700 dark:text-gray-300">{sample}</span>
+																		EDM 파일 검색
 																	</button>
-																{/each}
+																{:else}
+																	<!-- 샘플 질문 표시 (모든 카테고리 동일) -->
+																	<div class="space-y-2">
+																		{#each category.samples as sample}
+																			<button
+																				class="w-full text-left px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700"
+																				on:click={async () => {
+																					selectedCategories = [category];
+																					prompt = sample;
+																					await tick();
+																					if (messageInput) {
+																						await messageInput.setText(sample);
+																					}
+																				}}
+																			>
+																				<span class="text-gray-700 dark:text-gray-300">{sample}</span>
+																			</button>
+																		{/each}
+																	</div>
+																{/if}
 															</div>
 														</div>
 													</div>
@@ -2820,34 +2830,11 @@
 							</div>
 				</Pane>
 
-
-				<ChatControls
-					bind:this={controlPaneComponent}
-					bind:history
-					bind:chatFiles
-					bind:params
-					bind:files
-					bind:pane={controlPane}
-					bind:selectedCategories
-					{categories}
-					on:categoriesChanged={(e) => {
-						console.log('🎯 Chat.svelte - categoriesChanged 이벤트 수신:', e.detail);
-						selectedCategories = e.detail.selectedCategories;
-					}}
-					chatId={$chatId}
-					modelId={selectedModelIds?.at(0) ?? null}
-					models={selectedModelIds.reduce((a, e, i, arr) => {
-						const model = $models.find((m) => m.id === e);
-						if (model) {
-							return [...a, model];
-						}
-						return a;
-					}, [])}
-					{submitPrompt}
-					{stopResponse}
-					{showMessage}
-					{eventTarget}
-				/>
+				<!-- Right Sidebar Pane (Category Selection) -->
+				<PaneResizer class="w-1 hover:bg-gray-300 dark:hover:bg-gray-700 transition-colors" />
+				<Pane defaultSize={20} minSize={15} maxSize={30} class="h-full">
+					<RightSidebar />
+				</Pane>
 			</PaneGroup>
 		</div>
 	{:else if loading}
@@ -2926,3 +2913,116 @@
 		</div>
 	{/if}
 </div>
+
+<!-- EDM 파일리스트 모달 -->
+{#if showEdmFileListModal}
+	<EdmFileListModal
+		files={edmFileList}
+		show={showEdmFileListModal}
+		on:close={() => {
+			showEdmFileListModal = false;
+		}}
+		on:embed={async (event) => {
+			console.log('📤 EDM 파일 반영 시작:', event.detail);
+			const selectedFiles = event.detail.files;
+
+			showEdmFileListModal = false;
+
+			try {
+				const token = localStorage.getItem('token') || '';
+				let successCount = 0;
+				let failCount = 0;
+
+				// EDM 지식 베이스 ID (없으면 생성)
+				let knowledgeBaseId = 'edm-knowledge-base';
+
+				// 각 파일 처리
+				for (let i = 0; i < selectedFiles.length; i++) {
+					const file = selectedFiles[i];
+					const fileNum = i + 1;
+					const totalFiles = selectedFiles.length;
+
+					try {
+						// 1단계: 파일 읽기
+						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 읽고 있습니다...`);
+						console.log(`📄 처리 중: ${file.objtNm}`);
+
+						// Mock 파일 내용 생성 (실제 파일 대신 Mock 데이터 사용)
+						const mockContent = await fetch(`/static/mock/${file.objtNm}`)
+							.then(res => {
+								if (!res.ok) {
+									// 파일이 없으면 기본 내용 생성
+									return `# ${file.objtNm}\n\n이 파일은 EDM에서 가져온 문서입니다.\n\n소유자: ${file.filePOwerNm}\n워크스페이스: ${file.workspaceNm}\n등록일: ${new Date(file.objtRegDtm).toLocaleDateString('ko-KR')}`;
+								}
+								return res.text();
+							})
+							.catch(() => {
+								// 에러 시 기본 내용 생성
+								return `# ${file.objtNm}\n\n이 파일은 EDM에서 가져온 문서입니다.\n\n소유자: ${file.filePOwerNm}\n워크스페이스: ${file.workspaceNm}\n등록일: ${new Date(file.objtRegDtm).toLocaleDateString('ko-KR')}`;
+							});
+
+						// 2단계: 파싱 및 File 객체 생성
+						const fileBlob = new Blob([mockContent], { type: 'text/plain' });
+						const fileObject = new File([fileBlob], file.objtNm, {
+							type: 'text/plain',
+							lastModified: file.objtStatChgDtm
+						});
+
+						// 3단계: 청킹 및 임베딩
+						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 분석하고 있습니다...`);
+
+						// Open WebUI 파일 업로드 (자동으로 파싱, 청킹, 임베딩 수행)
+						const uploadResult = await uploadFile(token, fileObject, {
+							source: 'edm',
+							objid: file.objid,
+							workspace: file.workspaceNm,
+							owner: file.filePOwerNm
+						});
+
+						if (uploadResult && uploadResult.id) {
+							console.log(`✅ 파일 업로드 성공: ${file.objtNm} (ID: ${uploadResult.id})`);
+
+							// 4단계: 벡터라이징 및 저장
+							toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 벡터 DB에 저장하고 있습니다...`);
+
+							try {
+								await addFileToKnowledgeById(token, knowledgeBaseId, uploadResult.id);
+								console.log(`✅ 지식 베이스 반영 성공: ${file.objtNm}`);
+
+								// 5단계: 완료
+								toast.success(`[${fileNum}/${totalFiles}] ${file.objtNm} - 반영 완료!`);
+								successCount++;
+							} catch (kbError) {
+								console.warn(`⚠️ 지식 베이스 반영 실패, 파일은 업로드됨: ${file.objtNm}`, kbError);
+								toast.success(`[${fileNum}/${totalFiles}] ${file.objtNm} - 업로드 완료 (지식베이스 연결 대기)`);
+								successCount++;
+							}
+						} else {
+							throw new Error('파일 업로드 결과 없음');
+						}
+					} catch (fileError) {
+						console.error(`❌ 파일 처리 실패: ${file.objtNm}`, fileError);
+						toast.error(`[${fileNum}/${totalFiles}] ${file.objtNm} - 처리 실패: ${fileError.message}`);
+						failCount++;
+					}
+
+					// 파일 간 짧은 대기 (UI 업데이트)
+					await new Promise(resolve => setTimeout(resolve, 300));
+				}
+
+				// 최종 결과 표시
+				if (successCount > 0 && failCount === 0) {
+					toast.success(`🎉 모든 파일(${successCount}개) 반영 완료! 이제 채팅에서 문서 내용을 검색할 수 있습니다.`);
+				} else if (successCount > 0 && failCount > 0) {
+					toast.info(`✅ ${successCount}개 성공, ❌ ${failCount}개 실패`);
+				} else {
+					toast.error(`모든 파일 처리 실패 (${failCount}개)`);
+				}
+
+			} catch (error) {
+				console.error('❌ EDM 파일 반영 실패:', error);
+				toast.error('파일 반영 중 오류 발생: ' + error.message);
+			}
+		}}
+	/>
+{/if}

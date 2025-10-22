@@ -39,7 +39,9 @@
 		toggleChatPinnedStatusById,
 		getChatById,
 		updateChatFolderIdById,
-		importChat
+		importChat,
+		createNewChat,
+		deleteAllChats
 	} from '$lib/apis/chats';
 	import { createNewFolder, getFolders, updateFolderParentIdById } from '$lib/apis/folders';
 	import { WEBUI_BASE_URL } from '$lib/constants';
@@ -63,6 +65,8 @@
 	import PinnedModelList from './Sidebar/PinnedModelList.svelte';
 	import Note from '../icons/Note.svelte';
 	import Database from '../icons/Database.svelte';
+	import Refresh from '../icons/Refresh.svelte';
+	import XMark from '../icons/XMark.svelte';
 	import { slide } from 'svelte/transition';
 
 	const BREAKPOINT = 768;
@@ -476,11 +480,66 @@
 			await temporaryChatEnabled.set(false);
 		}
 
+		// 첫 화면으로 이동
+		await goto('/');
+
 		setTimeout(() => {
 			if ($mobile) {
 				showSidebar.set(false);
 			}
 		}, 0);
+	};
+
+	// 새로운 채팅 세션 생성 (API 사용)
+	const createNewChatSession = async () => {
+		try {
+			const newChat = {
+				id: uuidv4(),
+				title: $i18n.t('New Chat'),
+				models: [],
+				messages: [],
+				history: { messages: {}, currentId: null },
+				tags: [],
+				timestamp: Math.floor(Date.now() / 1000)
+			};
+
+			await createNewChat(localStorage.token, newChat, null);
+
+			// 채팅 리스트 새로고침
+			await initChatList();
+
+			// 새 채팅으로 이동
+			goto('/');
+			newChatHandler();
+
+			toast.success($i18n.t('New chat session created'));
+		} catch (error) {
+			console.error('Error creating new chat:', error);
+			toast.error($i18n.t('Failed to create new chat session'));
+		}
+	};
+
+	// 전체 채팅 삭제
+	const deleteAllChatsHandler = async () => {
+		const confirmed = confirm($i18n.t('Are you sure you want to delete all chats? This action cannot be undone.'));
+
+		if (!confirmed) return;
+
+		try {
+			await deleteAllChats(localStorage.token);
+
+			// 채팅 리스트 초기화
+			chats.set([]);
+
+			// 홈으로 이동
+			goto('/');
+			newChatHandler();
+
+			toast.success($i18n.t('All chats deleted successfully'));
+		} catch (error) {
+			console.error('Error deleting all chats:', error);
+			toast.error($i18n.t('Failed to delete all chats'));
+		}
 	};
 
 	const itemClickHandler = async () => {
@@ -632,6 +691,48 @@
 								<PencilSquare className="size-4.5" />
 							</div>
 						</a>
+					</Tooltip>
+				</div>
+
+				<!-- 새로운 채팅 세션 생성 버튼 -->
+				<div class="">
+					<Tooltip content="새 채팅 세션" placement="right">
+						<button
+							class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+							on:click={async (e) => {
+								e.stopImmediatePropagation();
+								e.preventDefault();
+
+								await createNewChatSession();
+							}}
+							draggable="false"
+							aria-label="새 채팅 세션"
+						>
+							<div class=" self-center flex items-center justify-center size-9">
+								<Refresh className="size-4.5" />
+							</div>
+						</button>
+					</Tooltip>
+				</div>
+
+				<!-- 전체 채팅 삭제 버튼 -->
+				<div class="">
+					<Tooltip content="전체 삭제" placement="right">
+						<button
+							class=" cursor-pointer flex rounded-xl hover:bg-red-100 dark:hover:bg-red-900/30 transition group text-red-600 dark:text-red-400"
+							on:click={async (e) => {
+								e.stopImmediatePropagation();
+								e.preventDefault();
+
+								await deleteAllChatsHandler();
+							}}
+							draggable="false"
+							aria-label="전체 채팅 삭제"
+						>
+							<div class=" self-center flex items-center justify-center size-9">
+								<XMark className="size-4.5" />
+							</div>
+						</button>
 					</Tooltip>
 				</div>
 
@@ -833,6 +934,40 @@
 					</button>
 				</Tooltip>
 
+				<!-- 새 채팅 세션 버튼 -->
+				<Tooltip content="새 채팅 세션" placement="bottom">
+					<button
+						class="flex rounded-xl size-8.5 justify-center items-center hover:bg-gray-100/50 dark:hover:bg-gray-850/50 transition"
+						on:click={async (e) => {
+							e.stopImmediatePropagation();
+							e.preventDefault();
+							await createNewChatSession();
+						}}
+						aria-label="새 채팅 세션"
+					>
+						<div class="self-center p-1.5">
+							<Refresh className="size-4.5" />
+						</div>
+					</button>
+				</Tooltip>
+
+				<!-- 전체 삭제 버튼 -->
+				<Tooltip content="전체 삭제" placement="bottom">
+					<button
+						class="flex rounded-xl size-8.5 justify-center items-center hover:bg-red-100/50 dark:hover:bg-red-900/30 transition text-red-600 dark:text-red-400"
+						on:click={async (e) => {
+							e.stopImmediatePropagation();
+							e.preventDefault();
+							await deleteAllChatsHandler();
+						}}
+						aria-label="전체 채팅 삭제"
+					>
+						<div class="self-center p-1.5">
+							<XMark className="size-4.5" />
+						</div>
+					</button>
+				</Tooltip>
+
 				<div
 					class="{scrollTop > 0
 						? 'visible'
@@ -875,7 +1010,7 @@
 							{/if}
 
 							<button
-								class="w-full text-left px-2 py-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition group"
+								class="w-full text-left px-2 py-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition group border border-gray-200/50 dark:border-gray-700/50 hover:border-gray-300 dark:hover:border-gray-600"
 								on:click={() => {
 									goto(`/c/${chat.id}`);
 									if ($mobile) {
