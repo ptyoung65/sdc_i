@@ -975,8 +975,8 @@
 				></div>
 			</div>
 
-			<!-- 채팅 히스토리 헤더 - 최상단 고정 -->
-			<div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 sticky top-[60px] z-10">
+			<!-- 채팅 히스토리 헤더 - 상단 헤더 바로 아래 고정 -->
+			<div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 sticky top-[52px] z-10">
 				<div class="flex items-center justify-between">
 					<h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
 						<span>📝</span>
@@ -1037,13 +1037,6 @@
 								</div>
 							</button>
 						{/each}
-
-						{#if $scrollPaginationEnabled && !allChatsLoaded}
-							<div class="w-full flex justify-center py-3 text-xs animate-pulse items-center gap-2">
-								<Spinner className="size-4" />
-								<div>{$i18n.t('Loading...')}</div>
-							</div>
-						{/if}
 					</div>
 				{:else if filteredChats && filteredChats.length === 0 && $chats && $chats.length > 0}
 					<div class="flex-1 flex flex-col items-center justify-center px-4">
