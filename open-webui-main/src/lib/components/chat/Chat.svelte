@@ -94,7 +94,7 @@
 	import EdmIntegration from './EdmIntegration.svelte';
 	import EdmFileListModal from './EdmFileListModal.svelte';
 	import EdmDocumentArea from './EdmDocumentArea.svelte';
-	import RightSidebar, { selectedCategories } from '../layout/RightSidebar.svelte';
+	import RightSidebar, { selectedCategories, getDisplayCategoriesFromIds } from '../layout/RightSidebar.svelte';
 	import { getFunctions } from '$lib/apis/functions';
 	import Image from '../common/Image.svelte';
 	import { updateFolderById } from '$lib/apis/folders';
@@ -132,6 +132,9 @@
 
 	// 카테고리 선택 시 자동 모델 선택 및 ModelSelector disabled 상태
 	let isModelSelectorDisabled = false;
+
+	// 선택된 카테고리 ID를 표시용 카테고리로 변환
+	$: displayCategoriesForUI = getDisplayCategoriesFromIds($selectedCategories);
 
 	// selectedCategories 변경 시 자동으로 모델 선택
 	$: {
@@ -3433,9 +3436,9 @@
 						<!-- Model type toggle buttons (항상 표시) -->
 						<div class="flex justify-between gap-2 px-4 py-2 border-t border-gray-200 dark:border-gray-700">
 						<!-- Selected category display -->
-						{#if $selectedCategories.length > 0}
+						{#if displayCategoriesForUI.length > 0}
 							<div class="flex items-center gap-2 overflow-x-auto scrollbar-hidden flex-1 max-w-[60%]">
-								{#each $selectedCategories as cat}
+								{#each displayCategoriesForUI as cat}
 									<div class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 dark:bg-blue-900/30 rounded-full border border-blue-300 dark:border-blue-700 whitespace-nowrap flex-shrink-0">
 										<span class="text-xs font-medium text-blue-700 dark:text-blue-300">{cat.name}</span>
 									</div>

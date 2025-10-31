@@ -3,23 +3,9 @@
 
 	// 선택된 카테고리를 저장하는 store (모듈 레벨 export)
 	export const selectedCategories = writable<string[]>([]);
-</script>
 
-<script lang="ts">
-	import { slide, fade } from 'svelte/transition';
-	import { showRightSidebar, modelType } from '$lib/stores';
-
-	// 실제 카테고리 목록 (백엔드에서 사용)
-	const actualCategories = [
-		{ id: 'edm', name: 'EDM 검색', color: 'bg-blue-500' },
-		{ id: 'guide', name: '회사생활가이드', color: 'bg-green-500' },
-		{ id: 'helpdesk', name: 'IT Help Desk', color: 'bg-purple-500' },
-		{ id: 'dictionary', name: '용어사전', color: 'bg-orange-500' },
-		{ id: 'etc', name: '기타', color: 'bg-gray-500' }
-	];
-
-	// UI에 표시할 카테고리 (2개로 통합)
-	const displayCategories = [
+	// 표시용 카테고리 정의 (다른 컴포넌트에서도 사용 가능)
+	export const DISPLAY_CATEGORIES = [
 		{
 			id: 'edm',
 			name: 'EDM 문서활용',
@@ -35,6 +21,41 @@
 			actualIds: ['guide', 'helpdesk', 'dictionary', 'etc']
 		}
 	];
+
+	// 선택된 카테고리 ID 배열을 표시용 카테고리 배열로 변환
+	export function getDisplayCategoriesFromIds(categoryIds: string[]) {
+		const displayCats = [];
+
+		// EDM 체크
+		if (categoryIds.includes('edm')) {
+			displayCats.push(DISPLAY_CATEGORIES[0]); // EDM 문서활용
+		}
+
+		// 대사우 Assistant 체크 (guide, helpdesk, dictionary, etc 중 하나라도 있으면)
+		const daesawooIds = ['guide', 'helpdesk', 'dictionary', 'etc'];
+		if (daesawooIds.some(id => categoryIds.includes(id))) {
+			displayCats.push(DISPLAY_CATEGORIES[1]); // 대사우 Assistant
+		}
+
+		return displayCats;
+	}
+</script>
+
+<script lang="ts">
+	import { slide, fade } from 'svelte/transition';
+	import { showRightSidebar, modelType } from '$lib/stores';
+
+	// 실제 카테고리 목록 (백엔드에서 사용)
+	const actualCategories = [
+		{ id: 'edm', name: 'EDM 검색', color: 'bg-blue-500' },
+		{ id: 'guide', name: '회사생활가이드', color: 'bg-green-500' },
+		{ id: 'helpdesk', name: 'IT Help Desk', color: 'bg-purple-500' },
+		{ id: 'dictionary', name: '용어사전', color: 'bg-orange-500' },
+		{ id: 'etc', name: '기타', color: 'bg-gray-500' }
+	];
+
+	// UI에 표시할 카테고리 (모듈에서 export된 것 사용)
+	const displayCategories = DISPLAY_CATEGORIES;
 
 	// $ 문법을 사용한 자동 구독으로 반응성 개선
 	$: selected = $selectedCategories;
