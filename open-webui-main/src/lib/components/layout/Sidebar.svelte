@@ -1009,33 +1009,23 @@
 								</div>
 							{/if}
 
-							<button
-								class="w-full text-left px-2 py-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition group border border-gray-200/50 dark:border-gray-700/50 hover:border-gray-300 dark:hover:border-gray-600"
-								on:click={() => {
-									goto(`/c/${chat.id}`);
+							<ChatItem
+								id={chat.id}
+								title={chat.title}
+								selected={chat.id === $chatId}
+								on:change={async () => {
+									await chats.set(await getChatList(localStorage.token, $currentChatPage));
+									await pinnedChats.set(await getPinnedChatList(localStorage.token));
+								}}
+								on:select={() => {
+									if ($selectedFolder) {
+										selectedFolder.set(null);
+									}
 									if ($mobile) {
 										showSidebar.set(false);
 									}
 								}}
-							>
-								<div class="flex items-start gap-2">
-									<div class="flex-shrink-0 mt-1">
-										<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-gray-400 dark:text-gray-500">
-											<path fill-rule="evenodd" d="M1 8.74c0 .983.713 1.825 1.69 1.943.904.108 1.817.19 2.737.243.363.02.688.231.85.556l1.052 2.103a.75.75 0 0 0 1.342 0l1.052-2.103c.162-.325.487-.535.85-.556.92-.053 1.833-.134 2.738-.243.976-.118 1.689-.96 1.689-1.942V4.259c0-.982-.713-1.824-1.69-1.942a44.45 44.45 0 0 0-10.62 0C1.712 2.435 1 3.277 1 4.26V8.74Z" clip-rule="evenodd" />
-										</svg>
-									</div>
-									<div class="flex-1 min-w-0">
-										<p class="text-sm text-gray-800 dark:text-gray-200 truncate font-medium">
-											{chat.title}
-										</p>
-										{#if chat.updated_at}
-											<p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-												{new Date(chat.updated_at * 1000).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-											</p>
-										{/if}
-									</div>
-								</div>
-							</button>
+							/>
 						{/each}
 					</div>
 				{:else if filteredChats && filteredChats.length === 0 && $chats && $chats.length > 0}
