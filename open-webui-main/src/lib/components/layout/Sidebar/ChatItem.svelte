@@ -433,11 +433,12 @@
 			on:focus={(e) => {}}
 			draggable="false"
 		>
-			<div class=" flex flex-col self-start flex-1 w-full gap-1">
-				<!-- Title -->
-				<div dir="auto" class="text-left self-center overflow-hidden w-full truncate font-medium">
-					{title}
-				</div>
+			<div class=" flex items-center justify-between w-full gap-2">
+				<div class=" flex flex-col self-start flex-1 overflow-hidden gap-1">
+					<!-- Title -->
+					<div dir="auto" class="text-left self-center overflow-hidden w-full truncate font-medium">
+						{title}
+					</div>
 
 				<!-- Chat content preview -->
 				{#if chat?.chat?.messages && chat.chat.messages.length > 0}
@@ -460,79 +461,41 @@
 					</div>
 				{/if}
 			</div>
+
+			<!-- Edit and Delete Buttons -->
+			<div class="flex items-center gap-1 self-start mt-1">
+				<button
+					class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
+					on:click={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						renameHandler();
+					}}
+					type="button"
+					title="Edit"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+						<path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+					</svg>
+				</button>
+
+				<button
+					class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
+					on:click={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						deleteChatHandler(id);
+					}}
+					type="button"
+					title="Delete"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+					</svg>
+				</button>
+			</div>
+		</div>
 		</a>
 	{/if}
 
-	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div
-		id="sidebar-chat-item-menu"
-		class="
-        {id === $chatId || confirmEdit
-			? 'from-gray-100 dark:from-gray-900 selected'
-			: selected
-				? 'from-gray-100 dark:from-gray-950 selected'
-				: 'from-gray-100 dark:from-gray-950'}
-            absolute {className === 'pr-2'
-			? 'right-[8px]'
-			: 'right-1'} top-[4px] py-1 pr-0.5 mr-1.5 pl-5 bg-linear-to-l from-80%
-
-              to-transparent"
-		on:mouseenter={(e) => {
-			mouseOver = true;
-		}}
-		on:mouseleave={(e) => {
-			mouseOver = false;
-		}}
-	>
-		{#if confirmEdit}
-			<div
-				class="flex self-center items-center space-x-1.5 z-10 translate-y-[0.5px] -translate-x-[0.5px]"
-			>
-				<Tooltip content={$i18n.t('Generate')}>
-					<button
-						class=" self-center dark:hover:text-white transition disabled:cursor-not-allowed"
-						id="generate-title-button"
-						disabled={false}
-						on:mouseenter={() => {
-							ignoreBlur = true;
-						}}
-					>
-						<Sparkles strokeWidth="2" />
-					</button>
-				</Tooltip>
-			</div>
-		{:else}
-			<div class=" flex items-center self-center space-x-1.5">
-				<Tooltip content={$i18n.t('Edit')} className="flex items-center">
-					<button
-						class=" self-center dark:hover:text-white transition"
-						on:click={(e) => {
-						e.preventDefault();
-						e.stopPropagation();
-							renameHandler();
-						}}
-						type="button"
-					>
-						<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4">
-							<path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-						</svg>
-					</button>
-				</Tooltip>
-
-				<Tooltip content={$i18n.t('Delete')}>
-					<button
-						class=" self-center dark:hover:text-white transition"
-						on:click={(e) => {
-							e.preventDefault();
-							e.stopPropagation();
-							deleteChatHandler(id);
-						}}
-						type="button"
-					>
-						<GarbageBin strokeWidth="2" />
-					</button>
-				</Tooltip>
-			</div>
-		{/if}
-	</div>
 	</div>
