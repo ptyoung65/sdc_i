@@ -484,7 +484,7 @@
 				on:click={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
-					deleteChatHandler(id);
+					showDeleteConfirm = true;
 				}}
 				type="button"
 				title="Delete"
