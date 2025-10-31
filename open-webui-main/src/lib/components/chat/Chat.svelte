@@ -130,6 +130,48 @@
 	let selectedModelIds = [];
 	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
 
+	// 카테고리 선택 시 자동 모델 선택 및 ModelSelector disabled 상태
+	let isModelSelectorDisabled = false;
+
+	// selectedCategories 변경 시 자동으로 모델 선택
+	$: {
+		if ($selectedCategories && $selectedCategories.length > 0 && $models && $models.length > 0) {
+			const hasEdm = $selectedCategories.includes('edm');
+			const hasDaesawoo = $selectedCategories.some(cat =>
+				['guide', 'helpdesk', 'dictionary', 'etc'].includes(cat)
+			);
+
+			if (hasEdm) {
+				// EDM 문서활용 선택 → EDM Search RAG 모델 자동 선택
+				const edmModel = $models.find(m =>
+					m.id === 'edm_search_milvus' ||
+					m.id === 'edm_search_pipe' ||
+					m.name?.includes('EDM Search RAG')
+				);
+				if (edmModel && selectedModels[0] !== edmModel.id) {
+					selectedModels = [edmModel.id];
+					isModelSelectorDisabled = true;
+					console.log('✅ EDM 문서활용 → 자동 모델 선택:', edmModel.name);
+				}
+			} else if (hasDaesawoo) {
+				// 대사우 Assistant 선택 → Enhanced Display Dictionary RAG 모델 자동 선택
+				const dictionaryModel = $models.find(m =>
+					m.name?.includes('Enhanced Display Dictionary RAG')
+				);
+				if (dictionaryModel && selectedModels[0] !== dictionaryModel.id) {
+					selectedModels = [dictionaryModel.id];
+					isModelSelectorDisabled = true;
+					console.log('✅ 대사우 Assistant → 자동 모델 선택:', dictionaryModel.name);
+				}
+			} else {
+				isModelSelectorDisabled = false;
+			}
+		} else {
+			// 카테고리가 선택되지 않으면 자유 선택 가능
+			isModelSelectorDisabled = false;
+		}
+	}
+
 	let selectedToolIds = [];
 	let selectedFilterIds = [];
 	let imageGenerationEnabled = false;
@@ -2980,6 +3022,7 @@
 						{initNewChat}
 						archiveChatHandler={() => {}}
 						{moveChatHandler}
+						modelSelectorDisabled={isModelSelectorDisabled}
 						onSaveTempChat={async () => {
 							try {
 								if (!history?.currentId || !Object.keys(history.messages).length) {
@@ -3353,6 +3396,7 @@
 								{generating}
 								{stopResponse}
 								{createMessagePair}
+								modelSelectorDisabled={isModelSelectorDisabled}
 								onChange={(data) => {
 									if (!$temporaryChatEnabled) {
 										saveDraft(data, $chatId);

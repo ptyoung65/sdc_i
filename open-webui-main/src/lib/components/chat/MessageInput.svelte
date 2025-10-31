@@ -92,6 +92,7 @@
 
 	export let atSelectedModel: Model | undefined = undefined;
 	export let selectedModels: [''];
+	export let modelSelectorDisabled = false;
 
 	let selectedModelIds = [];
 	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
@@ -1362,7 +1363,7 @@
 								<div class=" flex justify-between items-end mt-0.5 mb-2.5 mx-0.5 w-full" dir="ltr">
 									<div class="ml-1 self-end flex items-center gap-2 shrink-0">
 										<div class="flex-shrink-0">
-											<ModelSelector bind:selectedModels showSetDefault={false} />
+											<ModelSelector bind:selectedModels showSetDefault={false} disabled={modelSelectorDisabled} />
 										</div>
 
 										<!-- 문서첨부 버튼 -->

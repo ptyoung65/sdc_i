@@ -49,6 +49,7 @@
 	export let history;
 	export let selectedModels;
 	export let showModelSelector = true;
+	export let modelSelectorDisabled = false;
 
 	export let onSaveTempChat: () => {};
 	export let archiveChatHandler: (id: string) => void;
@@ -119,7 +120,7 @@
 					{#if $modelType === 'external'}
 						<!-- 외부 모델: ModelSelector를 통해 다중 모델 선택 가능 -->
 						<div class="flex items-center gap-2 px-2">
-							<ModelSelector bind:selectedModels {showModelSelector} />
+							<ModelSelector bind:selectedModels {showModelSelector} disabled={modelSelectorDisabled} />
 						</div>
 					{:else}
 						<!-- 내부 모델: 기존 방식 (텍스트 표시) -->

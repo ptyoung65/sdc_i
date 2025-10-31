@@ -59,6 +59,7 @@
 	export let triggerClassName = 'text-lg';
 
 	export let pinModelHandler: (modelId: string) => void = () => {};
+	export let disabled = false;
 
 	let tagsContainerElement;
 
@@ -399,22 +400,25 @@
 	<DropdownMenu.Trigger
 		class="relative w-full {($settings?.highContrastMode ?? false)
 			? ''
-			: 'outline-hidden focus:outline-hidden'}"
+			: 'outline-hidden focus:outline-hidden'} {disabled ? 'opacity-50 cursor-not-allowed' : ''}"
 		aria-label={placeholder}
 		id="model-selector-{id}-button"
+		{disabled}
 	>
 		<div
 			class="flex w-full text-left px-0.5 bg-transparent truncate {triggerClassName} justify-between {($settings?.highContrastMode ??
 			false)
 				? 'dark:placeholder-gray-100 placeholder-gray-800'
-				: 'placeholder-gray-400'}"
+				: 'placeholder-gray-400'} {disabled ? 'pointer-events-none' : ''}"
 			on:mouseenter={async () => {
-				models.set(
-					await getModels(
-						localStorage.token,
-						$config?.features?.enable_direct_connections && ($settings?.directConnections ?? null)
-					)
-				);
+				if (!disabled) {
+					models.set(
+						await getModels(
+							localStorage.token,
+							$config?.features?.enable_direct_connections && ($settings?.directConnections ?? null)
+						)
+					);
+				}
 			}}
 		>
 			{#if selectedModel}
