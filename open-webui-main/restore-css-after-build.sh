@@ -39,11 +39,15 @@ echo "📦 복원된 CSS 파일 정보:"
 ls -lh "$BUILD_DIR/assets/"*.css 2>/dev/null | awk '{print "  ", $9, "-", $5}'
 echo ""
 
-# app.js에서 CSS 참조 업데이트
-APP_JS="$BUILD_DIR/entry/app.BqWdQYeF.js"
+# app.js에서 CSS 참조 업데이트 (동적으로 최신 파일 찾기)
+echo "🔧 app.js에서 CSS 참조 업데이트 중..."
+
+# 최신 app.*.js 파일 찾기
+APP_JS=$(find "$BUILD_DIR/entry" -name "app.*.js" -type f | head -1)
 
 if [ -f "$APP_JS" ]; then
-    echo "🔧 app.js에서 CSS 참조 업데이트 중..."
+    APP_JS_NAME=$(basename "$APP_JS")
+    echo "  📄 발견된 app.js: $APP_JS_NAME"
 
     # 새로운 CSS 파일명 찾기 (빌드 시 생성된 것)
     NEW_CSS=$(grep -o '0\.[A-Za-z0-9_-]*\.css' "$APP_JS" | head -1 || echo "")
@@ -51,11 +55,12 @@ if [ -f "$APP_JS" ]; then
     if [ -n "$NEW_CSS" ] && [ "$NEW_CSS" != "0.vCeBmQ_B.css" ]; then
         echo "  변경: $NEW_CSS → 0.vCeBmQ_B.css"
         sed -i "s/$NEW_CSS/0.vCeBmQ_B.css/g" "$APP_JS"
+        echo "  ✅ CSS 참조 업데이트 완료"
     else
         echo "  ✅ 이미 올바른 CSS 참조 사용 중 (0.vCeBmQ_B.css)"
     fi
 else
-    echo "⚠️  경고: app.js 파일을 찾을 수 없습니다: $APP_JS"
+    echo "⚠️  경고: app.js 파일을 찾을 수 없습니다"
 fi
 
 echo ""
