@@ -286,6 +286,21 @@
 						</Menu>
 					{/if}
 
+					<!-- 관리자 기능 버튼 (Admin만 표시) -->
+					{#if $user?.role === 'admin'}
+						<Tooltip content={$i18n.t('Admin Panel')}>
+							<a
+								href="/admin"
+								class="flex cursor-pointer rounded-xl p-1.5 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								aria-label="Admin Panel"
+							>
+								<div class="self-center">
+									<UserGroup className="size-6" strokeWidth="1.5" />
+								</div>
+							</a>
+						</Tooltip>
+					{/if}
+
 					<!-- 주/야간 모드 토글 (모든 사용자) -->
 					<Tooltip content={$theme === 'dark' ? $i18n.t('Light mode') : $i18n.t('Dark mode')}>
 						<button
@@ -312,21 +327,6 @@
 							</div>
 						</button>
 					</Tooltip>
-
-					<!-- 관리자 기능 버튼 (Admin만 표시) -->
-					{#if $user?.role === 'admin'}
-						<Tooltip content={$i18n.t('Admin Panel')}>
-							<a
-								href="/admin"
-								class="flex cursor-pointer rounded-xl p-1.5 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
-								aria-label="Admin Panel"
-							>
-								<div class="self-center">
-									<UserGroup className="size-6" strokeWidth="1.5" />
-								</div>
-							</a>
-						</Tooltip>
-					{/if}
 
 					<!-- 설정 버튼 (Admin만 표시) -->
 					{#if $user?.role === 'admin'}
