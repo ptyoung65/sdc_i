@@ -433,8 +433,8 @@
 			on:focus={(e) => {}}
 			draggable="false"
 		>
-			<div class=" flex flex-col self-start flex-1 w-full gap-1">
-				<!-- Title -->
+			<div class=" flex flex-col self-start flex-1 gap-1 pr-16">
+				<!-- Title (with right padding to avoid button overlap) -->
 				<div dir="auto" class="text-left self-center overflow-hidden w-full truncate font-medium">
 					{title}
 				</div>
@@ -462,10 +462,10 @@
 			</div>
 		</a>
 
-		<!-- Edit and Delete Buttons (Outside <a> tag) -->
-		<div class="absolute right-2 top-2 flex items-center gap-1 z-10">
+		<!-- Edit and Delete Buttons (Outside <a> tag, with background to prevent text overlap) -->
+		<div class="absolute right-2 top-2 flex items-center gap-1 z-20 bg-gray-100 dark:bg-gray-900 rounded p-0.5">
 			<button
-				class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
+				class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
 				on:click={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
@@ -480,7 +480,7 @@
 			</button>
 
 			<button
-				class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
+				class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
 				on:click={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
