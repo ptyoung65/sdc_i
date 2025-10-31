@@ -471,7 +471,7 @@
 			? 'from-gray-100 dark:from-gray-900 selected'
 			: selected
 				? 'from-gray-100 dark:from-gray-950 selected'
-				: 'invisible group-hover:visible from-gray-100 dark:from-gray-950'}
+				: 'from-gray-100 dark:from-gray-950'}
             absolute {className === 'pr-2'
 			? 'right-[8px]'
 			: 'right-1'} top-[4px] py-1 pr-0.5 mr-1.5 pl-5 bg-linear-to-l from-80%
@@ -501,12 +501,14 @@
 					</button>
 				</Tooltip>
 			</div>
-		{:else if mouseOver}
+		{:else}
 			<div class=" flex items-center self-center space-x-1.5">
 				<Tooltip content={$i18n.t('Edit')} className="flex items-center">
 					<button
 						class=" self-center dark:hover:text-white transition"
-						on:click={() => {
+						on:click={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
 							renameHandler();
 						}}
 						type="button"
@@ -520,7 +522,9 @@
 				<Tooltip content={$i18n.t('Delete')}>
 					<button
 						class=" self-center dark:hover:text-white transition"
-						on:click={() => {
+						on:click={(e) => {
+							e.preventDefault();
+							e.stopPropagation();
 							deleteChatHandler(id);
 						}}
 						type="button"
@@ -529,76 +533,6 @@
 					</button>
 				</Tooltip>
 			</div>
-		{:else}
-			<div class="flex self-center z-10 items-end">
-				<ChatMenu
-					chatId={id}
-					cloneChatHandler={() => {
-						cloneChatHandler(id);
-					}}
-					shareHandler={() => {
-						showShareChatModal = true;
-					}}
-					{moveChatHandler}
-					archiveChatHandler={() => {
-						archiveChatHandler(id);
-					}}
-					{renameHandler}
-					deleteHandler={() => {
-						showDeleteConfirm = true;
-					}}
-					onClose={() => {
-						dispatch('unselect');
-					}}
-					on:change={async () => {
-						dispatch('change');
-					}}
-					on:tag={(e) => {
-						dispatch('tag', e.detail);
-					}}
-				>
-					<button
-						aria-label="Chat Menu"
-						class=" self-center dark:hover:text-white transition m-0"
-						on:click={() => {
-							dispatch('select');
-						}}
-					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								d="M2 8a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0ZM6.5 8a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0ZM12.5 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"
-							/>
-						</svg>
-					</button>
-				</ChatMenu>
-
-				{#if id === $chatId}
-					<!-- Shortcut support using "delete-chat-button" id -->
-					<button
-						id="delete-chat-button"
-						class="hidden"
-						on:click={() => {
-							showDeleteConfirm = true;
-						}}
-					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								d="M2 8a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0ZM6.5 8a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0ZM12.5 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"
-							/>
-						</svg>
-					</button>
-				{/if}
-			</div>
 		{/if}
 	</div>
-</div>
+	</div>
