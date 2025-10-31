@@ -433,7 +433,7 @@
 			on:focus={(e) => {}}
 			draggable="false"
 		>
-			<div class=" flex flex-col self-start flex-1 gap-1 pr-12">
+			<div class=" flex flex-col self-start flex-1 gap-1 pr-16">
 				<!-- Question and Answer Display -->
 				{#if chat?.chat?.messages && chat.chat.messages.length > 0}
 					{@const firstUserMessage = chat.chat.messages.find(m => m.role === 'user')}
@@ -464,7 +464,7 @@
 		</a>
 
 		<!-- Edit and Delete Buttons (Minimized icons at right end) -->
-		<div class="absolute right-1 top-1 flex items-center gap-0.5 z-20 bg-gray-50/80 dark:bg-gray-800/80 rounded px-1 py-0.5">
+		<div class="absolute right-1 top-1 flex items-center gap-0 z-20 bg-gray-50/80 dark:bg-gray-800/80 rounded px-0.5 py-0.5">
 			<button
 				class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
 				on:click={(e) => {
