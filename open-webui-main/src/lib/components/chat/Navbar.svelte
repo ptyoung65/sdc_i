@@ -12,9 +12,11 @@
 		showArchivedChats,
 		showControls,
 		showSidebar,
+		showSettings,
 		temporaryChatEnabled,
 		user,
-		modelType
+		modelType,
+		theme
 	} from '$lib/stores';
 
 	import { slide } from 'svelte/transition';
@@ -39,6 +41,8 @@
 	import ChatPlus from '../icons/ChatPlus.svelte';
 	import ChatCheck from '../icons/ChatCheck.svelte';
 	import Knobs from '../icons/Knobs.svelte';
+	import Settings from '../icons/Settings.svelte';
+	import UserGroup from '../icons/UserGroup.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -65,6 +69,57 @@
 	$: showLeftSidebarToggle = !$showSidebar;
 	// 오른쪽 Controls가 닫혔을 때만 토글 버튼 표시 (내부/외부 모델 모두)
 	$: showRightControlsToggle = !$showControls;
+
+	// Theme toggle function
+	const applyTheme = (_theme: string) => {
+		let themeToApply = _theme === 'oled-dark' ? 'dark' : _theme === 'her' ? 'light' : _theme;
+
+		if (_theme === 'system') {
+			themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+		}
+
+		if (themeToApply === 'dark' && !_theme.includes('oled')) {
+			document.documentElement.style.setProperty('--color-gray-800', '#333');
+			document.documentElement.style.setProperty('--color-gray-850', '#262626');
+			document.documentElement.style.setProperty('--color-gray-900', '#171717');
+			document.documentElement.style.setProperty('--color-gray-950', '#0d0d0d');
+		}
+
+		['dark', 'light', 'oled-dark']
+			.filter((e) => e !== themeToApply)
+			.forEach((e) => {
+				e.split(' ').forEach((e) => {
+					document.documentElement.classList.remove(e);
+				});
+			});
+
+		themeToApply.split(' ').forEach((e) => {
+			document.documentElement.classList.add(e);
+		});
+
+		const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+		if (metaThemeColor) {
+			metaThemeColor.setAttribute(
+				'content',
+				_theme === 'dark' ? '#171717' : _theme === 'oled-dark' ? '#000000' : '#ffffff'
+			);
+		}
+
+		if (_theme.includes('oled')) {
+			document.documentElement.style.setProperty('--color-gray-800', '#101010');
+			document.documentElement.style.setProperty('--color-gray-850', '#050505');
+			document.documentElement.style.setProperty('--color-gray-900', '#000000');
+			document.documentElement.style.setProperty('--color-gray-950', '#000000');
+			document.documentElement.classList.add('dark');
+		}
+	};
+
+	const toggleTheme = () => {
+		const newTheme = $theme === 'dark' ? 'light' : 'dark';
+		theme.set(newTheme);
+		localStorage.setItem('theme', newTheme);
+		applyTheme(newTheme);
+	};
 </script>
 
 <ShareChatModal bind:show={showShareChatModal} chatId={$chatId} />
@@ -231,11 +286,73 @@
 						</Menu>
 					{/if}
 
+					<!-- 주/야간 모드 토글 (모든 사용자) -->
+					<Tooltip content={$theme === 'dark' ? $i18n.t('Light mode') : $i18n.t('Dark mode')}>
+						<button
+							class="flex cursor-pointer rounded-xl p-1.5 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+							on:click={toggleTheme}
+							aria-label="Toggle theme"
+						>
+							<div class="self-center">
+								{#if $theme === 'dark'}
+									<!-- Sun 아이콘 (라이트 모드로 전환) -->
+									<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+										 stroke-width="1.5" stroke="currentColor" class="size-6">
+										<path stroke-linecap="round" stroke-linejoin="round"
+											  d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"/>
+									</svg>
+								{:else}
+									<!-- Moon 아이콘 (다크 모드로 전환) -->
+									<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+										 stroke-width="1.5" stroke="currentColor" class="size-6">
+										<path stroke-linecap="round" stroke-linejoin="round"
+											  d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z"/>
+									</svg>
+								{/if}
+							</div>
+						</button>
+					</Tooltip>
+
+					<!-- 관리자 기능 버튼 (Admin만 표시) -->
+					{#if $user?.role === 'admin'}
+						<Tooltip content={$i18n.t('Admin Panel')}>
+							<a
+								href="/admin"
+								class="flex cursor-pointer rounded-xl p-1.5 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								aria-label="Admin Panel"
+							>
+								<div class="self-center">
+									<UserGroup className="size-6" strokeWidth="1.5" />
+								</div>
+							</a>
+						</Tooltip>
+					{/if}
+
+					<!-- 설정 버튼 (Admin만 표시) -->
+					{#if $user?.role === 'admin'}
+						<Tooltip content={$i18n.t('Settings')}>
+							<button
+								class="flex cursor-pointer rounded-xl p-1.5 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								on:click={async () => {
+									await showSettings.set(true);
+									if ($mobile) {
+										showSidebar.set(false);
+									}
+								}}
+								aria-label="Settings"
+							>
+								<div class="self-center">
+									<Settings className="size-6" strokeWidth="1.5" />
+								</div>
+							</button>
+						</Tooltip>
+					{/if}
+
 					{#if $user !== undefined && $user !== null}
 						<UserMenu
 							className="max-w-[240px]"
 							role={$user?.role}
-							help={true}
+							help={false}
 							on:show={(e) => {
 								if (e.detail === 'archived-chat') {
 									showArchivedChats.set(true);
