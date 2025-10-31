@@ -60,10 +60,10 @@
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
 
-	// 왼쪽 사이드바가 닫혔을 때만 토글 버튼 표시 (내부 모델인 경우에만)
-	$: showLeftSidebarToggle = !$showSidebar && $modelType === 'internal';
-	// 오른쪽 Controls가 닫혔을 때만 토글 버튼 표시 (내부 모델인 경우에만)
-	$: showRightControlsToggle = !$showControls && $modelType === 'internal';
+	// 왼쪽 사이드바가 닫혔을 때만 토글 버튼 표시 (내부/외부 모델 모두)
+	$: showLeftSidebarToggle = !$showSidebar;
+	// 오른쪽 Controls가 닫혔을 때만 토글 버튼 표시 (내부/외부 모델 모두)
+	$: showRightControlsToggle = !$showControls;
 </script>
 
 <ShareChatModal bind:show={showShareChatModal} chatId={$chatId} />
@@ -85,7 +85,7 @@
 
 		<div class=" flex max-w-full w-full mx-auto px-1.5 md:px-2 pt-0.5 bg-transparent">
 			<div class="flex items-center w-full max-w-full">
-				<!-- 왼쪽 사이드바 토글 버튼: 사이드바가 닫혔을 때만 표시 (내부 모델일 때만) -->
+				<!-- 왼쪽 사이드바 토글 버튼: 사이드바가 닫혔을 때만 표시 -->
 				{#if showLeftSidebarToggle}
 					<div
 						class="-translate-x-0.5 mr-1 mt-1 self-start flex flex-none items-center text-gray-600 dark:text-gray-400"
@@ -116,17 +116,19 @@
 			{$showSidebar ? 'ml-1' : ''}
 			"
 				>
-					<!-- Model selector removed -->
-					<!-- 선택된 LLM 모델 표시 -->
-					<div class="flex items-center gap-2 px-2">
-						<span class="text-sm font-semibold text-gray-700 dark:text-gray-200 truncate">
-							{#if $modelType === 'internal'}
+					{#if $modelType === 'external'}
+						<!-- 외부 모델: ModelSelector를 통해 다중 모델 선택 가능 -->
+						<div class="flex items-center gap-2 px-2">
+							<ModelSelector bind:selectedModels {showModelSelector} />
+						</div>
+					{:else}
+						<!-- 내부 모델: 기존 방식 (텍스트 표시) -->
+						<div class="flex items-center gap-2 px-2">
+							<span class="text-sm font-semibold text-gray-700 dark:text-gray-200 truncate">
 								내부 모델: {selectedModels.length > 0 ? selectedModels.join(', ') : 'None'}
-							{:else}
-								외부 모델: {selectedModels.length > 0 ? selectedModels.join(', ') : 'None'}
-							{/if}
-						</span>
-					</div>
+							</span>
+						</div>
+					{/if}
 				</div>
 
 				<div class="self-start flex flex-none items-center text-gray-600 dark:text-gray-400 {$showControls ? 'pr-16' : 'pr-1'}">
@@ -255,7 +257,7 @@
 						</UserMenu>
 					{/if}
 
-					<!-- 오른쪽 Controls 토글 버튼: Controls가 닫혔을 때만 표시 (내부 모델일 때만) -->
+					<!-- 오른쪽 Controls 토글 버튼: Controls가 닫혔을 때만 표시 -->
 					{#if showRightControlsToggle && ($user?.role === 'admin' || ($user?.permissions.chat?.controls ?? true))}
 						<div
 							class="ml-1 mt-1 self-start flex flex-none items-center text-gray-600 dark:text-gray-400"

@@ -77,6 +77,7 @@
 	import { uploadFile } from '$lib/apis/files';
 	import { addFileToKnowledgeById } from '$lib/apis/knowledge';
 	import { createOpenAITextStream } from '$lib/apis/streaming';
+	import { vectorizeDocument, searchSimilarDocuments, batchVectorizeDocuments } from '$lib/apis/vectorization';
 
 	import { fade } from 'svelte/transition';
 
@@ -264,12 +265,15 @@
 		showSecurityWarning = false;
 		pendingModelType = null;
 
-		// Clear chat history when switching to external model
-		history = {
-			messages: {},
-			currentId: null
-		};
-		chat = null;
+		// External model 사용 시 새 채팅 초기화
+		// initNewChat을 호출하지만 temporaryChatEnabled가 true로 설정되지 않도록 보장
+		console.log('[Chat] Initializing new chat for external model');
+		await initNewChat();
+
+		// temporaryChatEnabled를 명시적으로 false로 설정하여 히스토리 저장 보장
+		// External 모델도 일반 모델처럼 히스토리에 저장되어야 함
+		await temporaryChatEnabled.set(false);
+		console.log('[Chat] temporaryChatEnabled set to false for history saving');
 	};
 
 	// Function to cancel external model switch
@@ -1633,13 +1637,49 @@
 	//////////////////////////
 
 	const submitPrompt = async (userPrompt, { _raw = false } = {}) => {
-		console.log('submitPrompt', userPrompt, $chatId);
-		console.log('🔍 submitPrompt - selectedCategories:', $selectedCategories);
+		console.log('[Chat] submitPrompt called:', userPrompt);
+		console.log('[Chat] Current chatId:', $chatId);
+		console.log('[Chat] temporaryChatEnabled:', $temporaryChatEnabled);
+		console.log('[Chat] selectedCategories:', $selectedCategories);
 
-		// EDM 문서활용이 선택된 경우만 EDM 모드 활성화
+		// EDM 문서활용이 선택된 경우 모델에 따라 분기
 		// selectedCategories는 문자열 배열 ['edm', 'guide', ...] 형태
 		const shouldUseEdm = $selectedCategories.includes('edm');
 
+		// EDM Search 파이프가 선택되었는지 확인
+		const isEdmPipeSelected = selectedModels.some(modelId => {
+			const model = $models.find(m => m.id === modelId);
+			return model && (
+				model.id === 'edm_search_milvus' ||
+				model.id === 'edm_search_pipe' ||
+				model.id === 'edm_n8n_pipe' ||
+				model.name?.includes('EDM Search') ||
+				(model.type === 'pipe' && model.id.includes('edm'))
+			);
+		});
+
+		if (shouldUseEdm && isEdmPipeSelected) {
+			// EDM 체크 + EDM Search 파이프 선택
+			// → 파이프가 n8n webhook + Milvus 벡터 DB 처리
+			console.log('📂 EDM 문서활용 + EDM Search 파이프 → 파이프에 위임 (n8n + Milvus)');
+			console.log('   선택된 모델:', selectedModels);
+			// 파이프로 위임하기 위해 일반 플로우로 진행 (return 없음)
+		} else if (shouldUseEdm && !isEdmPipeSelected) {
+			// EDM 체크 + 일반 모델 선택
+			// → 일반 RAG 구성: 벡터 유사도 검색 + LLM 전송
+			console.log('📂 EDM 문서활용 + 일반 모델 → 일반 RAG 플로우');
+			console.log('   선택된 모델:', selectedModels);
+			console.log('   벡터 검색 후 LLM 전송 예정');
+			// 일반 RAG 플로우로 진행 (return 없음)
+		}
+
+		// ========================================
+		// 기존 EDM 전용 플로우는 제거됨
+		// EDM 파이프: 파이프 내부에서 n8n + Milvus 처리
+		// 일반 모델: 아래 일반 RAG 플로우에서 처리
+		// ========================================
+
+		/* 기존 EDM 전용 플로우 제거 시작 (line 1650-1897)
 		if (shouldUseEdm) {
 			console.log('📂 EDM 문서활용 영역 - 검색 실행 (테스트 모드 강제)');
 			edmSearchQuery = userPrompt;  // 검색어 저장
@@ -1738,119 +1778,42 @@
 					}
 				}
 
-				// 2️⃣ 특정 키워드에 대한 Mock 데이터 처리
-				// '프로젝트 기획'으로 시작하면 테스트용 Mock 파일 3개 반환
-				if (userPrompt.startsWith('프로젝트 기획') && edmFileList.length === 0) {
-					console.log('🧪 "프로젝트 기획" 키워드 감지 - Mock 파일 3개 반환');
-
-					edmFileList = [
-						{
-							FILE_NAME: '프로젝트_기획서_2025.docx',
-							AUTHOR: '홍길동',
-							CREATE_DATE: '2025-01-15',
-							FILE_TYPE: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-							FILE_SIZE: '2.5MB',
-							DOC_ID: 'DOC001',
-							SCORE: 0.95
-						},
-						{
-							FILE_NAME: '프로젝트_제안서_최종.pdf',
-							AUTHOR: '김개발',
-							CREATE_DATE: '2025-01-10',
-							FILE_TYPE: 'application/pdf',
-							FILE_SIZE: '1.8MB',
-							DOC_ID: 'DOC002',
-							SCORE: 0.88
-						},
-						{
-							FILE_NAME: '프로젝트_일정표.xlsx',
-							AUTHOR: '이분석',
-							CREATE_DATE: '2025-01-08',
-							FILE_TYPE: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-							FILE_SIZE: '450KB',
-							DOC_ID: 'DOC003',
-							SCORE: 0.82
-						}
-					];
-
-					learnedDocsCount = 3;
-					sources = ['프로젝트 기획서', '프로젝트 제안서', '프로젝트 일정표'];
-				}
-
-				const isTestMode = false; // Mock 데이터 사용 안함
+				// n8n 연동만 사용 - Mock 데이터 제거됨
 
 				// edmFileList가 비어있으면 그대로 유지 (파일없음 표시용)
 
-				// Mock AI 답변 생성 함수 (JSON 파일에서 로드)
-				const generateMockAnswer = async (query) => {
-					try {
-						// Mock 데이터 JSON 파일 로드
-						const response = await fetch('/mock/edm-mock-answers.json');
-						if (!response.ok) {
-							console.error('❌ Mock 데이터 로드 실패:', response.status);
-							return `"${query}"에 대한 검색 결과를 확인했습니다.\n\n검색된 문서들을 분석한 결과, 관련 정보가 포함되어 있는 것으로 확인되었습니다. 아래 문서 검색 결과에서 필요한 문서를 선택하여 자세한 내용을 확인하실 수 있습니다.\n\n추가로 궁금하신 사항이 있으시면 구체적인 질문을 남겨주시면 더 상세한 답변을 드리겠습니다.`;
-						}
-
-						const mockAnswers = await response.json();
-						console.log('✅ Mock 데이터 로드 완료:', Object.keys(mockAnswers).length, '개 키워드');
-
-						// 검색어에 매칭되는 답변 찾기
-						for (const [keyword, data] of Object.entries(mockAnswers)) {
-							if (keyword === 'default') continue; // default는 스킵
-							if (query.includes(keyword)) {
-								console.log(`🎯 Mock 답변 매칭: "${keyword}"`);
-								return data.answer;
-							}
-						}
-
-						// 기본 답변
-						const defaultAnswer = mockAnswers.default?.answer ||
-							`"${query}"에 대한 검색 결과를 확인했습니다.\n\n검색된 문서들을 분석한 결과, 관련 정보가 포함되어 있는 것으로 확인되었습니다. 아래 문서 검색 결과에서 필요한 문서를 선택하여 자세한 내용을 확인하실 수 있습니다.\n\n추가로 궁금하신 사항이 있으시면 구체적인 질문을 남겨주시면 더 상세한 답변을 드리겠습니다.`;
-
-						return defaultAnswer.replace('{query}', query);
-					} catch (error) {
-						console.error('❌ Mock 데이터 로드 에러:', error);
-						// 에러 시 fallback 답변
-						return `"${query}"에 대한 검색 결과를 확인했습니다.\n\n검색된 문서들을 분석한 결과, 관련 정보가 포함되어 있는 것으로 확인되었습니다. 아래 문서 검색 결과에서 필요한 문서를 선택하여 자세한 내용을 확인하실 수 있습니다.\n\n추가로 궁금하신 사항이 있으시면 구체적인 질문을 남겨주시면 더 상세한 답변을 드리겠습니다.`;
-					}
-				};
-
-				// AI 답변 생성 (Mock 또는 실제 LLM)
+				// AI 답변 생성 - 실제 LLM 호출
 				let aiAnswerContent = '';
-				if (isTestMode) {
-					// Mock AI 답변 (JSON 파일에서 로드)
-					aiAnswerContent = await generateMockAnswer(edmSearchQuery);
-				} else {
-					// 실제 LLM API 호출하여 답변 생성
-					console.log('🤖 실제 LLM API 호출 시작...');
-					console.log('   선택된 모델:', selectedModels);
-					console.log('   검색어:', edmSearchQuery);
-					console.log('   검색된 문서:', edmFileList.length, '건');
 
-					try {
-						// EDM 파일 목록을 컨텍스트로 변환
-						let contextDocs = '';
-						if (edmFileList.length > 0) {
-							contextDocs = '\n\n참고 문서:\n';
-							edmFileList.forEach((file, idx) => {
-								contextDocs += `${idx + 1}. ${file.FILE_NAME} (작성자: ${file.AUTHOR}, 날짜: ${file.CREATE_DATE})\n`;
-							});
-						}
+				// 실제 LLM API 호출하여 답변 생성
+				console.log('🤖 실제 LLM API 호출 시작...');
+				console.log('   선택된 모델:', selectedModels);
+				console.log('   검색어:', edmSearchQuery);
+				console.log('   검색된 문서:', edmFileList.length, '건');
 
-						// LLM에게 전달할 프롬프트 구성
-						const llmPrompt = `사용자 질문: ${edmSearchQuery}${contextDocs}\n\n위 문서들을 참고하여 사용자의 질문에 답변해주세요.`;
-
-						// createMessagePair를 통해 실제 LLM 호출 (기존 채팅 로직 재사용)
-						// 하지만 EDM 모드이므로 history에 추가하지 않고 응답만 받음
-
-						// 임시로 간단한 답변 생성 (실제 구현에서는 API 호출)
-						aiAnswerContent = `"${edmSearchQuery}"에 대한 검색 결과입니다.\n\n검색된 ${edmFileList.length}건의 문서를 분석한 결과:\n\n• 프로젝트 기획과 관련된 주요 문서들이 확인되었습니다.\n• 아래 문서 검색 결과 버튼을 클릭하여 상세 정보를 확인하실 수 있습니다.\n• 필요하신 문서를 선택하여 자세한 내용을 검토해주세요.`;
-
-						console.log('✅ LLM 답변 생성 완료');
-					} catch (error) {
-						console.error('❌ LLM API 호출 실패:', error);
-						aiAnswerContent = `죄송합니다. 답변 생성 중 오류가 발생했습니다.\n\n검색된 ${edmFileList.length}건의 문서가 있습니다. 아래 문서 검색 결과 버튼을 클릭하여 확인해주세요.`;
+				try {
+					// EDM 파일 목록을 컨텍스트로 변환
+					let contextDocs = '';
+					if (edmFileList.length > 0) {
+						contextDocs = '\n\n참고 문서:\n';
+						edmFileList.forEach((file, idx) => {
+							contextDocs += `${idx + 1}. ${file.FILE_NAME} (작성자: ${file.AUTHOR}, 날짜: ${file.CREATE_DATE})\n`;
+						});
 					}
+
+					// LLM에게 전달할 프롬프트 구성
+					const llmPrompt = `사용자 질문: ${edmSearchQuery}${contextDocs}\n\n위 문서들을 참고하여 사용자의 질문에 답변해주세요.`;
+
+					// createMessagePair를 통해 실제 LLM 호출 (기존 채팅 로직 재사용)
+					// 하지만 EDM 모드이므로 history에 추가하지 않고 응답만 받음
+
+					// 임시로 간단한 답변 생성 (실제 구현에서는 API 호출)
+					aiAnswerContent = `"${edmSearchQuery}"에 대한 검색 결과입니다.\n\n검색된 ${edmFileList.length}건의 문서를 분석한 결과:\n\n• 프로젝트 기획과 관련된 주요 문서들이 확인되었습니다.\n• 아래 문서 검색 결과 버튼을 클릭하여 상세 정보를 확인하실 수 있습니다.\n• 필요하신 문서를 선택하여 자세한 내용을 검토해주세요.`;
+
+					console.log('✅ LLM 답변 생성 완료');
+				} catch (error) {
+					console.error('❌ LLM API 호출 실패:', error);
+					aiAnswerContent = `죄송합니다. 답변 생성 중 오류가 발생했습니다.\n\n검색된 ${edmFileList.length}건의 문서가 있습니다. 아래 문서 검색 결과 버튼을 클릭하여 확인해주세요.`;
 				}
 
 				// LLM 응답을 마크다운 박스로 감싸기 (원본 내용은 그대로, 추가 가공 없음)
@@ -1967,6 +1930,110 @@
 
 			return;  // 여기서 중단 (파일 선택 후 임베딩 요청으로 이어짐)
 		}
+		기존 EDM 전용 플로우 제거 끝 */
+
+		// 대사우 Assistant: 사용자 의도 분석 및 자동 분류
+		const isDaesawooAssistant = $selectedCategories.some(cat =>
+			['guide', 'helpdesk', 'dictionary', 'etc'].includes(cat)
+		);
+
+		if (isDaesawooAssistant) {
+			console.log('🤖 대사우 Assistant 모드 - 사용자 의도 분석 시작');
+
+			try {
+				// 1단계: LLM을 통한 사용자 의도 분석
+				const intentAnalysisPrompt = `다음 사용자 질문을 분석하여 3가지 카테고리 중 하나로 분류해주세요.
+
+카테고리:
+1. "회사생활가이드" - 회사 규정, 인사 제도, 복지, 근무 규칙 등 회사 생활 관련 질문
+2. "IT헬프데스크" - IT 시스템, 소프트웨어, 하드웨어, 네트워크 문제 등 기술 지원 관련 질문
+3. "지식용어사전" - 디스플레이 산업 기술 용어, 전문 용어의 정의나 설명을 묻는 질문
+4. "기타" - 위 3가지에 해당하지 않는 일반적인 질문
+
+질문: "${userPrompt}"
+
+응답 형식: JSON 형태로 카테고리만 반환 (예: {"category": "지식용어사전"})`;
+
+				// Qwen LLM에 의도 분석 요청
+				const intentResponse = await fetch('http://169.254.1.2:8000/api/generate', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+						model: 'qwen2:1.5b-instruct',
+						prompt: intentAnalysisPrompt,
+						stream: false
+					}),
+					timeout: 10000
+				});
+
+				if (!intentResponse.ok) {
+					throw new Error(`Intent analysis failed: ${intentResponse.status}`);
+				}
+
+				const intentData = await intentResponse.json();
+				const intentText = intentData.response || '';
+				console.log('📊 의도 분석 결과:', intentText);
+
+				// JSON 파싱 (응답에서 category 추출)
+				let detectedCategory = 'etc'; // 기본값
+				try {
+					const jsonMatch = intentText.match(/\{[^}]+\}/);
+					if (jsonMatch) {
+						const parsed = JSON.parse(jsonMatch[0]);
+						const cat = parsed.category || parsed.카테고리 || '';
+						
+						// 카테고리 매핑
+						if (cat.includes('지식용어') || cat.includes('용어사전') || cat.includes('dictionary')) {
+							detectedCategory = 'dictionary';
+						} else if (cat.includes('회사생활') || cat.includes('가이드') || cat.includes('guide')) {
+							detectedCategory = 'guide';
+						} else if (cat.includes('IT') || cat.includes('헬프데스크') || cat.includes('helpdesk')) {
+							detectedCategory = 'helpdesk';
+						}
+					}
+				} catch (parseError) {
+					console.warn('⚠️ 의도 분석 JSON 파싱 실패, 기본값 사용:', parseError);
+				}
+
+				console.log('✅ 최종 분류:', detectedCategory);
+
+				// 2단계: 분류에 따른 처리
+				if (detectedCategory === 'dictionary') {
+					console.log('📚 지식용어 사전으로 분류 - dict_search function 사용');
+
+					// dict_search function을 찾아서 selectedModels로 설정
+					const dictFunction = $functions?.find(f => 
+						f.id === 'function_dict_search_rag' || 
+						f.id === 'dict_search_rag' || 
+						f.id === 'dict_serch'
+					);
+
+					if (dictFunction) {
+						selectedModels = [dictFunction.id];
+						console.log('✅ dict_search function으로 전환:', dictFunction.id);
+						// 일반 LLM 처리 플로우로 진행 (function이 자동으로 실행됨)
+					} else {
+						console.warn('⚠️ dict_search function을 찾을 수 없습니다.');
+						console.log('사용 가능한 functions:', $functions?.map(f => f.id));
+					}
+				} else if (detectedCategory === 'guide') {
+					console.log('📖 회사생활가이드로 분류 - 추후 구현 예정');
+					// TODO: 회사생활가이드 Milvus 컬렉션 검색
+				} else if (detectedCategory === 'helpdesk') {
+					console.log('🛠️ IT 헬프데스크로 분류 - 추후 구현 예정');
+					// TODO: IT 헬프데스크 Milvus 컬렉션 검색
+				} else {
+					console.log('❓ 기타 카테고리 - 일반 LLM으로 처리');
+				}
+
+			} catch (error) {
+				console.error('❌ 사용자 의도 분석 오류:', error);
+				// 오류 시 일반 LLM으로 처리 (아래 코드 계속 진행)
+			}
+		}
+
 
 		const _selectedModels = selectedModels.map((modelId) =>
 			$models.map((m) => m.id).includes(modelId) ? modelId : ''
@@ -2086,7 +2153,10 @@
 
 		saveSessionSelectedModels();
 
+		console.log('[Chat] About to call sendMessage with newChat=true');
+		console.log('[Chat] User message parentId:', userMessage.parentId);
 		await sendMessage(history, userMessageId, { newChat: true });
+		console.log('[Chat] sendMessage completed');
 	};
 
 	const sendMessage = async (
@@ -2156,8 +2226,18 @@
 		history = history;
 
 		// Create new chat if newChat is true and first user message
+		console.log('[Chat] sendMessage - newChat check:', {
+			newChat,
+			currentId: _history.currentId,
+			hasMessage: !!_history.messages[_history.currentId],
+			parentId: _history.messages[_history.currentId]?.parentId,
+			willCreateChat: newChat && _history.messages[_history.currentId]?.parentId === null
+		});
+
 		if (newChat && _history.messages[_history.currentId].parentId === null) {
+			console.log('[Chat] Creating new chat with initChatHandler');
 			_chatId = await initChatHandler(_history);
+			console.log('[Chat] New chat created, chatId:', _chatId);
 		}
 
 		await tick();
@@ -3000,11 +3080,139 @@
 							<!-- 초기 화면 (카테고리 선택) -->
 							<div class="h-full w-full overflow-y-auto flex items-center justify-center">
 								{#if $modelType === 'internal'}
-									<!-- Category boxes for internal model -->
-									<div class="w-full max-w-6xl p-6">
-										<div class="w-full">
-											<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-												{#each categories as category}
+									<!-- 대사우 Assistant 선택 시: 3개 카테고리 카드 -->
+									{#if ['guide', 'helpdesk', 'dictionary', 'etc'].some(id => $selectedCategories.includes(id))}
+										<div class="w-full max-w-6xl p-6">
+											<!-- 헤더 메시지 -->
+											<div class="mb-6 text-center">
+												<h3 class="text-lg font-medium text-gray-700 dark:text-gray-300">
+													다음과 같은 질문을 물어볼 수 있어요
+												</h3>
+											</div>
+
+											<!-- 3개 카테고리 카드 -->
+											<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+												<!-- 회사생활가이드 -->
+												<div class="flex flex-col gap-2 p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+													<div class="flex items-center gap-2 mb-2">
+														<span class="text-2xl">📋</span>
+														<h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
+															회사생활가이드
+														</h4>
+													</div>
+													<div class="flex flex-col gap-2">
+														<button
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
+															on:click={async () => {
+																const sampleText = '육아휴직 신청 방법 알려 줘.';
+																prompt = sampleText;
+																await tick();
+																if (messageInput) { await messageInput.setText(sampleText); }
+															}}
+														>
+															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+																육아휴직 신청 방법 알려 줘.
+															</div>
+														</button>
+														<button
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
+															on:click={async () => {
+																const sampleText = '연간 패밀리넷 사용 가능 금액 알려 줘';
+																prompt = sampleText;
+																await tick();
+																if (messageInput) { await messageInput.setText(sampleText); }
+															}}
+														>
+															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+																연간 패밀리넷 사용 가능 금액 알려 줘
+															</div>
+														</button>
+													</div>
+												</div>
+
+												<!-- IT Help Desk -->
+												<div class="flex flex-col gap-2 p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+													<div class="flex items-center gap-2 mb-2">
+														<span class="text-2xl">💻</span>
+														<h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
+															IT Help Desk
+														</h4>
+													</div>
+													<div class="flex flex-col gap-2">
+														<button
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
+															on:click={async () => {
+																const sampleText = 'Knox 비밀번호 초기화 방법 알려 줘.';
+																prompt = sampleText;
+																await tick();
+																if (messageInput) { await messageInput.setText(sampleText); }
+															}}
+														>
+															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+																Knox 비밀번호 초기화 방법 알려 줘.
+															</div>
+														</button>
+														<button
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
+															on:click={async () => {
+																const sampleText = 'Wave 운영팀 내선 번호 알려 줘.';
+																prompt = sampleText;
+																await tick();
+																if (messageInput) { await messageInput.setText(sampleText); }
+															}}
+														>
+															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+																Wave 운영팀 내선 번호 알려 줘.
+															</div>
+														</button>
+													</div>
+												</div>
+
+												<!-- 지식용어 사전 -->
+												<div class="flex flex-col gap-2 p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+													<div class="flex items-center gap-2 mb-2">
+														<span class="text-2xl">📚</span>
+														<h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
+															지식용어 사전
+														</h4>
+													</div>
+													<div class="flex flex-col gap-2">
+														<button
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
+															on:click={async () => {
+																const sampleText = '우리회사 PCCB 절차는 어떻게 되';
+																prompt = sampleText;
+																await tick();
+																if (messageInput) { await messageInput.setText(sampleText); }
+															}}
+														>
+															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+																우리회사 PCCB 절차는 어떻게 되
+															</div>
+														</button>
+														<button
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
+															on:click={async () => {
+																const sampleText = 'Rfzen, Rpsc와 관련된 WSD는 어떤 뜻이야';
+																prompt = sampleText;
+																await tick();
+																if (messageInput) { await messageInput.setText(sampleText); }
+															}}
+														>
+															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+																Rfzen, Rpsc와 관련된 WSD는 어떤 뜻이야
+															</div>
+														</button>
+													</div>
+												</div>
+											</div>
+										</div>
+									{:else}
+										<!-- 기존 6개 카테고리 카드 -->
+										<div class="w-full max-w-6xl p-6">
+											<div class="w-full">
+												<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+													{#each categories as category}
 													<div
 														class="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 dark:border-gray-700"
 													>
@@ -3067,54 +3275,64 @@
 											</div>
 										</div>
 									</div>
+									{/if}
 								{:else}
-									<Placeholder
-										{history}
-										{selectedModels}
-										bind:messageInput
-										bind:files
-										bind:prompt
-										bind:autoScroll
-										bind:selectedToolIds
-										bind:selectedFilterIds
-										bind:imageGenerationEnabled
-										bind:codeInterpreterEnabled
-										bind:webSearchEnabled
-										bind:atSelectedModel
-										bind:showCommands
-										toolServers={$toolServers}
-										{stopResponse}
-										{createMessagePair}
-										{onSelect}
-										onChange={(data) => {
-											if (!$temporaryChatEnabled) {
-												saveDraft(data);
-											}
-										}}
-										on:upload={async (e) => {
-											const { type, data } = e.detail;
+									<!-- 외부모델: 외부정보검색 카테고리 카드 표시 -->
+									<div class="w-full max-w-6xl p-6 mx-auto">
+										<div class="w-full">
+											<div class="grid grid-cols-1 md:grid-cols-1 gap-6 max-w-md mx-auto">
+												{#each categories.filter(c => c.id === 'search') as category}
+												<div
+													class="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 dark:border-gray-700"
+												>
+													<div class="p-6">
+														<!-- Category header -->
+														<div class="flex items-center gap-3 mb-4">
+															<h3 class="text-xl font-bold text-gray-800 dark:text-gray-100">
+																{category.name}
+															</h3>
+														</div>
 
-											if (type === 'web') {
-												await uploadWeb(data);
-											} else if (type === 'youtube') {
-												await uploadYoutubeTranscription(data);
-											}
-										}}
-										on:submit={async (e) => {
-											clearDraft();
-											if (e.detail || files.length > 0) {
-												await tick();
-												submitPrompt(e.detail.replaceAll('\n\n', '\n'));
-											}
-										}}
-									/>
+														<!-- Description (only show if not empty) -->
+														{#if category.description}
+															<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+																{category.description}
+															</p>
+														{/if}
+
+														<!-- Sample questions -->
+														<div class="space-y-2">
+															{#each category.samples as sample}
+																<button
+																	class="w-full text-left px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700"
+																	on:click={async () => {
+																		selectedCategories.set([category]);
+																		console.log('🔵 외부모델 샘플 질문 클릭 - 카테고리:', category.name);
+
+																		// 입력창에 샘플 질문 채우기
+																		prompt = sample;
+																		await tick();
+																		if (messageInput) {
+																			await messageInput.setText(sample);
+																		}
+																	}}
+																>
+																	<span class="text-gray-700 dark:text-gray-300">{sample}</span>
+																</button>
+															{/each}
+														</div>
+													</div>
+												</div>
+												{/each}
+											</div>
+										</div>
+									</div>
 								{/if}
 							</div>
 						{/if}
 						</div>
 
-						<!-- 하단 고정 입력 영역 (외부모델이 아닐 때만 표시) -->
-						{#if $modelType === 'internal'}
+						<!-- 하단 고정 입력 영역 (내부/외부 모델 모두 표시) -->
 						<div class="flex-shrink-0 border-t border-gray-300 dark:border-gray-700">
 							<MessageInput
 								bind:this={messageInput}
@@ -3167,7 +3385,6 @@
 								}}
 							/>
 						</div>
-						{/if}
 
 						<!-- Model type toggle buttons (항상 표시) -->
 						<div class="flex justify-between gap-2 px-4 py-2 border-t border-gray-200 dark:border-gray-700">
@@ -3208,11 +3425,13 @@
 							</div>
 				</Pane>
 
-				<!-- Right Sidebar Pane (Category Selection) -->
+				<!-- Right Sidebar Pane (Category Selection) - 내부모델일 때만 표시 -->
+				{#if $modelType === 'internal'}
 				<PaneResizer class="w-1 hover:bg-gray-300 dark:hover:bg-gray-700 transition-colors" />
 				<Pane defaultSize={20} minSize={15} maxSize={30} class="h-full">
 					<RightSidebar />
 				</Pane>
+				{/if}
 			</PaneGroup>
 		</div>
 	{:else if loading}
@@ -3227,64 +3446,49 @@
 	{#if showSecurityWarning}
 		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
 			<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
-				<!-- Header -->
-				<div class="bg-yellow-500 dark:bg-yellow-600 px-6 py-4 flex items-center gap-3">
-					<svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-					</svg>
-					<h3 class="text-xl font-bold text-white">보안 경고</h3>
-				</div>
-
-				<!-- Content -->
-				<div class="px-6 py-6 space-y-4">
-					<div class="space-y-3">
-						<p class="text-gray-800 dark:text-gray-200 font-semibold text-lg">
-							외부 모델 사용 시 주의사항
-						</p>
-
-						<div class="space-y-2 text-sm text-gray-700 dark:text-gray-300">
-							<div class="flex items-start gap-2">
-								<span class="text-red-500 font-bold mt-0.5">⚠️</span>
-								<p><strong>가드레일 미적용:</strong> 외부 모델은 내부 보안 정책이 적용되지 않습니다.</p>
-							</div>
-
-							<div class="flex items-start gap-2">
-								<span class="text-red-500 font-bold mt-0.5">⚠️</span>
-								<p><strong>회사 정보 유출 위험:</strong> 민감한 회사 정보를 입력하지 마세요.</p>
-							</div>
-
-							<div class="flex items-start gap-2">
-								<span class="text-red-500 font-bold mt-0.5">⚠️</span>
-								<p><strong>개인정보 보호:</strong> 개인정보 및 기밀 데이터 입력이 금지됩니다.</p>
-							</div>
-
-							<div class="flex items-start gap-2">
-								<span class="text-blue-500 font-bold mt-0.5">ℹ️</span>
-								<p><strong>채팅 내역 분리:</strong> 내부 모델의 채팅 내역은 외부 모델에서 사용할 수 없습니다.</p>
-							</div>
-						</div>
-
-						<div class="bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-500 p-4 mt-4">
-							<p class="text-sm text-yellow-800 dark:text-yellow-200 font-medium">
-								외부 모델로 전환하면 현재 채팅 내용이 초기화됩니다.
-							</p>
-						</div>
+				<!-- 아이콘 -->
+				<div class="flex justify-center mb-4 pt-6">
+					<div class="flex items-center justify-center w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-900/30">
+						<svg class="w-6 h-6 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+						</svg>
 					</div>
 				</div>
 
-				<!-- Footer -->
-				<div class="bg-gray-50 dark:bg-gray-900 px-6 py-4 flex gap-3 justify-end">
+				<!-- 제목 -->
+				<h3 class="text-center text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3 px-6">
+					외부모델로 전환
+				</h3>
+
+				<!-- 메시지 -->
+				<div class="px-6 pb-6 space-y-2 text-sm text-gray-600 dark:text-gray-400 text-center">
+					<p class="font-medium text-amber-700 dark:text-amber-400">
+						외부 검색 전용 공간입니다.
+					</p>
+					<p>내부 데이터와 분리됩니다.</p>
+					<p>내부모델의 챗팅내역은 외부모델에서 사용할 수 없습니다.</p>
+				</div>
+
+				<!-- 버튼 -->
+				<div class="px-6 pb-6 flex gap-3 justify-center">
 					<button
-						class="px-4 py-2 rounded-lg font-medium text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+						class="px-6 py-2 rounded-lg text-sm font-medium
+						       bg-gray-100 dark:bg-gray-700
+						       text-gray-700 dark:text-gray-300
+						       hover:bg-gray-200 dark:hover:bg-gray-600
+						       transition-colors duration-200"
 						on:click={cancelExternalModelSwitch}
 					>
 						취소
 					</button>
 					<button
-						class="px-4 py-2 rounded-lg font-medium text-sm text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+						class="px-6 py-2 rounded-lg text-sm font-medium
+						       bg-blue-600 hover:bg-blue-700
+						       text-white
+						       transition-colors duration-200"
 						on:click={confirmExternalModelSwitch}
 					>
-						확인 및 계속
+						동의 후 이동
 					</button>
 				</div>
 			</div>
@@ -3314,69 +3518,43 @@
 				// EDM 지식 베이스 ID (없으면 생성)
 				let knowledgeBaseId = 'edm-knowledge-base';
 
-				// 각 파일 처리
+				// 각 파일 처리 - 실제 벡터화 파이프 사용
 				for (let i = 0; i < selectedFiles.length; i++) {
 					const file = selectedFiles[i];
 					const fileNum = i + 1;
 					const totalFiles = selectedFiles.length;
 
 					try {
-						// 1단계: 파일 읽기
+						// 1단계: 파일 벡터화 요청
 						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 읽고 있습니다...`);
-						console.log(`📄 처리 중: ${file.objtNm}`);
+						console.log(`📄 벡터화 처리 중: ${file.objtNm}`);
 
-						// Mock 파일 내용 생성 (실제 파일 대신 Mock 데이터 사용)
-						const mockContent = await fetch(`/static/mock/${file.objtNm}`)
-							.then(res => {
-								if (!res.ok) {
-									// 파일이 없으면 기본 내용 생성
-									return `# ${file.objtNm}\n\n이 파일은 EDM에서 가져온 문서입니다.\n\n소유자: ${file.filePOwerNm}\n워크스페이스: ${file.workspaceNm}\n등록일: ${new Date(file.objtRegDtm).toLocaleDateString('ko-KR')}`;
-								}
-								return res.text();
-							})
-							.catch(() => {
-								// 에러 시 기본 내용 생성
-								return `# ${file.objtNm}\n\n이 파일은 EDM에서 가져온 문서입니다.\n\n소유자: ${file.filePOwerNm}\n워크스페이스: ${file.workspaceNm}\n등록일: ${new Date(file.objtRegDtm).toLocaleDateString('ko-KR')}`;
-							});
-
-						// 2단계: 파싱 및 File 객체 생성
-						const fileBlob = new Blob([mockContent], { type: 'text/plain' });
-						const fileObject = new File([fileBlob], file.objtNm, {
-							type: 'text/plain',
-							lastModified: file.objtStatChgDtm
-						});
-
-						// 3단계: 청킹 및 임베딩
+						// 2단계: 파싱, 청킹, 임베딩 (vectorization API → Backend Pipe)
 						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 분석하고 있습니다...`);
 
-						// Open WebUI 파일 업로드 (자동으로 파싱, 청킹, 임베딩 수행)
-						const uploadResult = await uploadFile(token, fileObject, {
-							source: 'edm',
-							objid: file.objid,
-							workspace: file.workspaceNm,
-							owner: file.filePOwerNm
+						const vectorizeResult = await vectorizeDocument({
+							file_id: file.DOC_ID || file.objid,
+							file_name: file.FILE_NAME || file.objtNm,
+							file_url: file.URL,
+							file_type: file.FILE_TYPE || 'application/octet-stream',
+							user_id: $user?.id,
+							chat_id: $chatId
 						});
 
-						if (uploadResult && uploadResult.id) {
-							console.log(`✅ 파일 업로드 성공: ${file.objtNm} (ID: ${uploadResult.id})`);
+						if (vectorizeResult.success) {
+							console.log(`✅ 벡터화 성공: ${file.objtNm}`);
+							console.log(`   - 문서 ID: ${vectorizeResult.doc_id}`);
+							console.log(`   - 청크 수: ${vectorizeResult.chunks_count}`);
+							console.log(`   - 임베딩 수: ${vectorizeResult.embeddings_count}`);
 
-							// 4단계: 벡터라이징 및 저장
-							toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 벡터 DB에 저장하고 있습니다...`);
+							// 3단계: Milvus DB 저장 완료
+							toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 벡터 DB에 저장 완료`);
 
-							try {
-								await addFileToKnowledgeById(token, knowledgeBaseId, uploadResult.id);
-								console.log(`✅ 지식 베이스 반영 성공: ${file.objtNm}`);
-
-								// 5단계: 완료
-								toast.success(`[${fileNum}/${totalFiles}] ${file.objtNm} - 반영 완료!`);
-								successCount++;
-							} catch (kbError) {
-								console.warn(`⚠️ 지식 베이스 반영 실패, 파일은 업로드됨: ${file.objtNm}`, kbError);
-								toast.success(`[${fileNum}/${totalFiles}] ${file.objtNm} - 업로드 완료 (지식베이스 연결 대기)`);
-								successCount++;
-							}
+							// 4단계: 완료
+							toast.success(`[${fileNum}/${totalFiles}] ${file.objtNm} - 지식화 완료! (${vectorizeResult.chunks_count}개 청크)`);
+							successCount++;
 						} else {
-							throw new Error('파일 업로드 결과 없음');
+							throw new Error(vectorizeResult.error || '벡터화 실패');
 						}
 					} catch (fileError) {
 						console.error(`❌ 파일 처리 실패: ${file.objtNm}`, fileError);
@@ -3384,8 +3562,8 @@
 						failCount++;
 					}
 
-					// 파일 간 짧은 대기 (UI 업데이트)
-					await new Promise(resolve => setTimeout(resolve, 300));
+					// 파일 간 짧은 대기 (UI 업데이트 및 서버 부하 방지)
+					await new Promise(resolve => setTimeout(resolve, 500));
 				}
 
 				// 최종 결과 표시
