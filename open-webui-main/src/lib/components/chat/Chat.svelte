@@ -99,7 +99,7 @@
 	import Image from '../common/Image.svelte';
 	import { updateFolderById } from '$lib/apis/folders';
 	import { getEdmFileList } from '$lib/apis/edm';
-	import { searchEdmDocumentsViaN8n, convertN8nDocsToEdmFormat } from '$lib/apis/n8n';
+	import { convertN8nDocsToEdmFormat } from '$lib/apis/n8n';
 
 	export let chatIdProp = '';
 
@@ -1784,42 +1784,57 @@
 				let sources = [];
 				let n8nDocuments = [];
 
-				// 1️⃣ n8n webhook 호출하여 문서 검색
+// 1️⃣ EDM Search 파이프 호출하여 문서 검색
 				if (useN8nIntegration) {
-					console.log('📡 n8n webhook 호출 중...');
+					console.log('📡 EDM Search 파이프 호출 중...');
 					toast.info('EDM 문서 검색 중...');
 
-					const n8nResult = await searchEdmDocumentsViaN8n(
-						userPrompt,
-						['edm'], // 선택된 카테고리
-						$chatId,
-						$user?.id
-					);
+					try {
+						// EDM Search 파이프 호출
+						const pipeName = 'edm_search_pipe'; // 실제 파이프명으로 변경 필요
+						const pipePayload = {
+							query: userPrompt,
+							categories: $selectedCategories || ['edm'],
+							chatId: $chatId,
+							userId: $user?.id
+						};
 
-					if (n8nResult.error) {
-						console.warn('⚠️ n8n 호출 실패:', n8nResult.error);
-						console.log('📭 n8n 결과 없음 - edmFileList는 빈 배열로 유지됨');
-						// edmFileList는 초기화된 빈 배열 상태 유지
-					} else {
-						console.log('✅ n8n 응답:', n8nResult.total_count, '개 문서');
-						console.log('📦 n8n documents 원본:', n8nResult.documents);
+						const pipeResponse = await fetch(`/api/pipelines/${pipeName}`, {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+								'Authorization': `Bearer ${localStorage.token}`
+							},
+							body: JSON.stringify(pipePayload)
+						});
 
-						n8nDocuments = n8nResult.documents;
-
-						// n8n 결과를 EDM 포맷으로 변환
-						// n8n이 반환하는 [{key,value ...},{key,value ...},...] 배열을
-						// 각 객체마다 하나의 파일 리스트 항목으로 처리
-						if (Array.isArray(n8nDocuments) && n8nDocuments.length > 0) {
-							edmFileList = convertN8nDocsToEdmFormat(n8nDocuments);
-							console.log(`✅ EDM 파일 리스트 변환 완료: ${edmFileList.length}개 파일`);
-							console.log('📋 변환된 파일 리스트:', edmFileList);
-						} else {
-							console.log('📭 n8n 문서 없음 - edmFileList는 빈 배열 유지');
-							edmFileList = [];
+						if (!pipeResponse.ok) {
+							throw new Error(`파이프 호출 실패: ${pipeResponse.status} ${pipeResponse.statusText}`);
 						}
 
-						learnedDocsCount = edmFileList.length;
-						sources = edmFileList.slice(0, 3).map(file => file.FILE_NAME);
+						const pipeResult = await pipeResponse.json();
+						console.log('✅ EDM Search 파이프 응답:', pipeResult);
+
+						// 파이프 결과가 List[dict] 형태로 반환됨
+						const pipeDocuments = pipeResult.documents || pipeResult.data || pipeResult || [];
+
+						if (Array.isArray(pipeDocuments) && pipeDocuments.length > 0) {
+							// 파이프 결과를 EDM 포맷으로 변환
+							edmFileList = convertN8nDocsToEdmFormat(pipeDocuments);
+							console.log(`✅ EDM 파일 리스트 변환 완료: ${edmFileList.length}개 파일`);
+							console.log('📋 변환된 파일 리스트:', edmFileList);
+
+							learnedDocsCount = edmFileList.length;
+							sources = edmFileList.slice(0, 3).map(file => file.FILE_NAME);
+						} else {
+							console.log('📭 파이프 결과 없음 - edmFileList는 빈 배열 유지');
+							edmFileList = [];
+						}
+					} catch (error) {
+						console.error('❌ EDM Search 파이프 호출 실패:', error);
+						edmFileList = [];
+						// 에러는 아래 catch 블록에서 처리
+						throw error;
 					}
 				}
 
@@ -1913,42 +1928,40 @@
 				toast.success(isTestMode ? `테스트 모드: Mock AI 답변 + ${edmFileList.length}건의 샘플 문서` : `${edmFileList.length}건의 문서를 찾았습니다.`);
 			} catch (error) {
 				console.error('❌ EDM API 호출 실패:', error);
-				toast.error('파일 검색 중 오류가 발생했습니다. 테스트 모드로 전환합니다.');
+				
+				// 에러 메시지 생성 (Markdown 형식)
+				const errorMessage = error?.message || '알 수 없는 오류 발생';
+				const errorStack = error?.stack || '스택 정보 없음';
 
-				// 에러 발생 시에도 Mock 데이터로 대체
-				const mockEdmFileList = [
-					{
-						FILE_NAME: '[에러 복구] 샘플 문서.docx',
-						AUTHOR: '시스템',
-						CREATE_DATE: new Date().toISOString().split('T')[0],
-						FILE_TYPE: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-						FILE_SIZE: '1.0MB'
-					}
-				];
+				const errorContent = `> ## ❌ EDM 문서 검색 실패
+>
+> **오류 내용**: ${errorMessage}
+>
+> **상세 정보**:
+> \`\`\`
+> ${errorStack}
+> \`\`\`
+>
+> ---
+>
+> 다시 시도하거나 관리자에게 문의하세요.`;
 
 				const edmResultMessage = {
 					id: uuidv4(),
 					parentId: history.currentId,
 					childrenIds: [],
 					role: 'assistant',
-					content: `<div class="w-full max-w-4xl mx-auto space-y-6 py-4">
-<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
-<p class="text-xs text-red-800 dark:text-red-300">⚠️ EDM API 연결 실패. 테스트 모드로 전환되었습니다.</p>
-</div>
-<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-<p class="text-sm text-gray-700 dark:text-gray-300">
-검색어: "<strong>${edmSearchQuery}</strong>" (Mock 데이터)
-</p>
-</div>
-</div>`,
-					model: 'edm-error-mode',
+					content: errorContent, // Markdown 형식 에러 메시지
+					model: 'edm-error',
 					timestamp: Math.floor(Date.now() / 1000),
-					done: true, // 메시지 완료 상태 (버튼 표시를 위해 필수)
-					edmData: mockEdmFileList,
-					testMode: true,
-					isEdmResult: true, // EDM 검색 결과임을 표시
-					edmFileList: mockEdmFileList, // 파일 목록 저장 (버튼 컴포넌트에서 사용)
-					error: true
+					done: true,
+					edmData: [],
+					testMode: false,
+					isEdmResult: true,
+					edmFileList: [],
+					error: true,
+					errorMessage: errorMessage, // 오류 메시지 저장
+					errorStack: errorStack // 스택 정보 저장
 				};
 
 				history.messages[edmResultMessage.id] = edmResultMessage;
@@ -1958,6 +1971,8 @@
 				if (autoScroll) {
 					scrollToBottom();
 				}
+
+				toast.error('EDM 문서 검색 중 오류가 발생했습니다.');
 			}
 
 			// EDM 모드에서도 채팅 히스토리 저장

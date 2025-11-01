@@ -39,8 +39,8 @@
 		selectedFiles = [];
 	}
 
-	// 파일 반영 (임베딩 및 업로드)
-	function handleApply() {
+	// 파일 반영 (다운로드 파이프라인 → 임베딩 및 업로드)
+	async function handleApply() {
 		if (selectedFiles.length === 0) {
 			toast.error('최소 1개 이상의 파일을 선택해주세요.');
 			return;
@@ -48,11 +48,74 @@
 
 		const selectedFileObjects = files.filter((f) => selectedFiles.includes(f.objid));
 
-		dispatch('embed', {
-			files: selectedFileObjects
-		});
+		try {
+			toast.info(`${selectedFileObjects.length}개 파일 다운로드 중...`);
 
-		close();
+			// EDM Download 파이프라인 호출
+			const downloadPipeName = 'edm_download_pipe'; // 실제 파이프명
+			const downloadResults = [];
+
+			for (const file of selectedFileObjects) {
+				try {
+					const downloadPayload = {
+						objid: file.objid,
+						objtNm: file.objtNm,
+						workspaceNm: file.workspaceNm
+					};
+
+					const downloadResponse = await fetch(`/api/pipelines/${downloadPipeName}`, {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							'Authorization': `Bearer ${localStorage.token}`
+						},
+						body: JSON.stringify(downloadPayload)
+					});
+
+					if (!downloadResponse.ok) {
+						throw new Error(`다운로드 실패: ${downloadResponse.status}`);
+					}
+
+					const downloadResult = await downloadResponse.json();
+					console.log('✅ 파일 다운로드 성공:', downloadResult);
+
+					// 파일명, 파일경로 포함
+					downloadResults.push({
+						...file,
+						fileName: downloadResult.fileName || downloadResult.filename,
+						filePath: downloadResult.filePath || downloadResult.filepath,
+						downloadSuccess: true
+					});
+				} catch (error) {
+					console.error('❌ 파일 다운로드 실패:', file.objtNm, error);
+					downloadResults.push({
+						...file,
+						downloadSuccess: false,
+						error: error.message
+					});
+				}
+			}
+
+			// 다운로드 성공한 파일만 임베딩 처리
+			const successFiles = downloadResults.filter(f => f.downloadSuccess);
+
+			if (successFiles.length === 0) {
+				toast.error('모든 파일 다운로드에 실패했습니다.');
+				return;
+			}
+
+			toast.success(`${successFiles.length}개 파일 다운로드 완료. 임베딩 처리 중...`);
+
+			// 임베딩 이벤트 발송 (Chat.svelte에서 처리)
+			dispatch('embed', {
+				files: successFiles
+			});
+
+			close();
+		} catch (error) {
+			console.error('❌ 파일 반영 실패:', error);
+			toast.error(`파일 반영 중 오류: ${error.message}`);
+		}
 	}
 
 	// 모달 닫기
