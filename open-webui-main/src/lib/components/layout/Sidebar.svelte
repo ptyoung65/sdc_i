@@ -471,23 +471,9 @@
 	});
 
 	const newChatHandler = async () => {
-		selectedChatId = null;
-		selectedFolder.set(null);
-
-		if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
-			await temporaryChatEnabled.set(true);
-		} else {
-			await temporaryChatEnabled.set(false);
-		}
-
-		// 첫 화면으로 이동
-		await goto('/');
-
-		setTimeout(() => {
-			if ($mobile) {
-				showSidebar.set(false);
-			}
-		}, 0);
+		// 완전한 페이지 리프레시로 모든 상태 초기화 (채팅 히스토리는 localStorage에 유지됨)
+		console.log('🔄 [ChatPro 로고] 페이지 리프레시 - 모든 상태 초기화');
+		window.location.href = '/';
 	};
 
 	// 새로운 채팅 세션 생성 (API 사용)
@@ -512,10 +498,10 @@
 			goto('/');
 			newChatHandler();
 
-			toast.success($i18n.t('New chat session created'));
+			toast.success('새 채팅 세션이 생성되었습니다.');
 		} catch (error) {
 			console.error('Error creating new chat:', error);
-			toast.error($i18n.t('Failed to create new chat session'));
+			toast.error('새 채팅 세션 생성에 실패했습니다.');
 		}
 	};
 

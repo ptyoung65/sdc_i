@@ -174,6 +174,9 @@
 	let generatingImage = false;
 
 	let showRateComment = false;
+	let showNegativeFeedbackModal = false;
+	let selectedFeedbackReason = '';
+	let feedbackComment = '';
 
 	const copyToClipboard = async (text) => {
 		text = removeAllDetails(text);
@@ -453,122 +456,302 @@
 
 	let feedbackLoading = false;
 
-	const feedbackHandler = async (rating: number | null = null, details: object | null = null) => {
+	/**
+	 * 🎯 완벽한 피드백 저장 핸들러 (UltraThink 최적화)
+	 *
+	 * @param rating - 평가 점수 (10: thumbs up, -1: thumbs down)
+	 * @param details - 추가 세부정보 (reason, comment)
+	 *
+	 * 처리 흐름:
+	 * 1. 낙관적 업데이트 (UI 즉시 반영)
+	 * 2. 서버 저장 (재시도 로직 포함)
+	 * 3. 검증 및 동기화
+	 * 4. 태그 자동 생성 (rating 10 제외)
+	 */
+	const feedbackHandler = async (rating: number | null = null, details: object | null = null, retryCount = 0) => {
+		const MAX_RETRIES = 3;
 		feedbackLoading = true;
-		console.log('Feedback', rating, details);
 
-		const updatedMessage = {
-			...message,
-			annotation: {
-				...(message?.annotation ?? {}),
-				...(rating !== null ? { rating: rating } : {}),
-				...(details ? details : {})
-			}
-		};
-
-		const chat = await getChatById(localStorage.token, chatId).catch((error) => {
-			toast.error(`${error}`);
+		console.log('📝 [feedbackHandler] 시작', {
+			rating,
+			details,
+			retryCount,
+			currentFeedbackId: message?.feedbackId,
+			timestamp: new Date().toISOString()
 		});
-		if (!chat) {
-			return;
-		}
 
-		const messages = createMessagesList(history, message.id);
+		try {
+			// ========================================
+			// 1️⃣ 낙관적 업데이트: UI 즉시 반영
+			// ========================================
+			const updatedMessage = {
+				...message,
+				annotation: {
+					...(message?.annotation ?? {}),
+					...(rating !== null ? { rating: rating } : {}),
+					...(details ? details : {})
+				}
+			};
 
-		let feedbackItem = {
-			type: 'rating',
-			data: {
-				...(updatedMessage?.annotation ? updatedMessage.annotation : {}),
-				model_id: message?.selectedModelId ?? message.model,
-				...(history.messages[message.parentId].childrenIds.length > 1
-					? {
-							sibling_model_ids: history.messages[message.parentId].childrenIds
-								.filter((id) => id !== message.id)
-								.map((id) => history.messages[id]?.selectedModelId ?? history.messages[id].model)
-						}
-					: {})
-			},
-			meta: {
-				arena: message ? message.arena : false,
-				model_id: message.model,
-				message_id: message.id,
-				message_index: messages.length,
-				chat_id: chatId
-			},
-			snapshot: {
-				chat: chat
+			// 즉시 UI 업데이트 (낙관적)
+			if (history.messages[message.id]) {
+				history.messages[message.id] = {
+					...history.messages[message.id],
+					annotation: updatedMessage.annotation
+				};
 			}
-		};
+			message = { ...message, annotation: updatedMessage.annotation };
 
-		const baseModels = [
-			feedbackItem.data.model_id,
-			...(feedbackItem.data.sibling_model_ids ?? [])
-		].reduce((acc, modelId) => {
-			const model = $models.find((m) => m.id === modelId);
-			if (model) {
-				acc[model.id] = model?.info?.base_model_id ?? null;
+			// ========================================
+			// 2️⃣ 채팅 데이터 조회
+			// ========================================
+			const chat = await getChatById(localStorage.token, chatId).catch((error) => {
+				console.error('❌ [feedbackHandler] 채팅 조회 실패:', error);
+				toast.error($i18n.t('채팅 정보를 불러올 수 없습니다.'));
+				return null;
+			});
+
+			if (!chat) {
+				feedbackLoading = false;
+				return;
+			}
+
+			const messages = createMessagesList(history, message.id);
+
+			// ========================================
+			// 3️⃣ 피드백 아이템 구성
+			// ========================================
+			let feedbackItem = {
+				type: 'rating',
+				data: {
+					...(updatedMessage?.annotation ? updatedMessage.annotation : {}),
+					model_id: message?.selectedModelId ?? message.model,
+					...(history.messages[message.parentId].childrenIds.length > 1
+						? {
+								sibling_model_ids: history.messages[message.parentId].childrenIds
+									.filter((id) => id !== message.id)
+									.map((id) => history.messages[id]?.selectedModelId ?? history.messages[id].model)
+							}
+						: {})
+				},
+				meta: {
+					arena: message ? message.arena : false,
+					model_id: message.model,
+					message_id: message.id,
+					message_index: messages.length,
+					chat_id: chatId
+				},
+				snapshot: {
+					chat: chat
+				}
+			};
+
+			const baseModels = [
+				feedbackItem.data.model_id,
+				...(feedbackItem.data.sibling_model_ids ?? [])
+			].reduce((acc, modelId) => {
+				const model = $models.find((m) => m.id === modelId);
+				if (model) {
+					acc[model.id] = model?.info?.base_model_id ?? null;
+				} else {
+					console.warn(`⚠️ [feedbackHandler] 모델 ID ${modelId}를 찾을 수 없습니다`);
+				}
+				return acc;
+			}, {});
+			feedbackItem.meta.base_models = baseModels;
+
+			// ========================================
+			// 4️⃣ 서버 저장 (재시도 로직 포함)
+			// ========================================
+			let feedback = null;
+			let operationType = '';
+
+			if (message?.feedbackId) {
+				operationType = '업데이트';
+				console.log('🔄 [feedbackHandler] 기존 피드백 업데이트 중', {
+					feedbackId: message.feedbackId,
+					rating,
+					details
+				});
+
+				feedback = await updateFeedbackById(
+					localStorage.token,
+					message.feedbackId,
+					feedbackItem
+				).catch(async (error) => {
+					console.error('❌ [feedbackHandler] 피드백 업데이트 실패:', error);
+
+					// 재시도 로직
+					if (retryCount < MAX_RETRIES) {
+						console.log(`🔁 [feedbackHandler] 재시도 ${retryCount + 1}/${MAX_RETRIES}`);
+						await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+						feedbackLoading = false;
+						return feedbackHandler(rating, details, retryCount + 1);
+					}
+
+					return null;
+				});
+
+				if (!feedback) {
+					console.error('❌ [feedbackHandler] 피드백 업데이트 실패 - null 반환');
+					toast.error($i18n.t('피드백 저장에 실패했습니다. 다시 시도해주세요.'));
+					feedbackLoading = false;
+					return;
+				}
+
+				console.log('✅ [feedbackHandler] 피드백 업데이트 완료', {
+					feedbackId: feedback.id,
+					rating: feedbackItem.data.rating,
+					reason: feedbackItem.data.reason,
+					comment: feedbackItem.data.comment
+				});
+
 			} else {
-				// Log or handle cases where corresponding model is not found
-				console.warn(`Model with ID ${modelId} not found`);
-			}
-			return acc;
-		}, {});
-		feedbackItem.meta.base_models = baseModels;
+				operationType = '생성';
+				console.log('➕ [feedbackHandler] 새 피드백 생성 중', {
+					rating,
+					details
+				});
 
-		let feedback = null;
-		if (message?.feedbackId) {
-			feedback = await updateFeedbackById(
-				localStorage.token,
-				message.feedbackId,
-				feedbackItem
-			).catch((error) => {
-				toast.error(`${error}`);
-			});
-		} else {
-			feedback = await createNewFeedback(localStorage.token, feedbackItem).catch((error) => {
-				toast.error(`${error}`);
-			});
+				feedback = await createNewFeedback(localStorage.token, feedbackItem).catch(async (error) => {
+					console.error('❌ [feedbackHandler] 피드백 생성 실패:', error);
 
-			if (feedback) {
+					// 재시도 로직
+					if (retryCount < MAX_RETRIES) {
+						console.log(`🔁 [feedbackHandler] 재시도 ${retryCount + 1}/${MAX_RETRIES}`);
+						await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+						feedbackLoading = false;
+						return feedbackHandler(rating, details, retryCount + 1);
+					}
+
+					return null;
+				});
+
+				if (!feedback) {
+					console.error('❌ [feedbackHandler] 피드백 생성 실패 - null 반환');
+					toast.error($i18n.t('피드백 저장에 실패했습니다. 다시 시도해주세요.'));
+					feedbackLoading = false;
+					return;
+				}
+
+				console.log('✅ [feedbackHandler] 피드백 생성 성공', {
+					feedbackId: feedback.id,
+					rating: feedbackItem.data.rating
+				});
+
+				// 새로 생성된 feedbackId 저장
 				updatedMessage.feedbackId = feedback.id;
 			}
-		}
 
-		console.log(updatedMessage);
-		saveMessage(message.id, updatedMessage);
+			// ========================================
+			// 5️⃣ 영속성 보장: 다중 레이어 저장
+			// ========================================
+			console.log('💾 [feedbackHandler] 다중 레이어 저장 시작', {
+				feedbackId: updatedMessage.feedbackId,
+				rating: updatedMessage.annotation.rating,
+				reason: updatedMessage.annotation.reason,
+				comment: updatedMessage.annotation.comment
+			});
 
-		await tick();
+			// Layer 1: history.messages 직접 업데이트
+			if (history.messages[message.id]) {
+				history.messages[message.id] = {
+					...history.messages[message.id],
+					...updatedMessage,
+					feedbackId: updatedMessage.feedbackId
+				};
+			}
 
-		if (!details) {
-			showRateComment = true;
+			// Layer 2: saveMessage (localStorage/DB 저장)
+			saveMessage(message.id, updatedMessage);
 
-			if (!updatedMessage.annotation?.tags) {
-				// attempt to generate tags
-				const tags = await generateTags(localStorage.token, message.model, messages, chatId).catch(
-					(error) => {
-						console.error(error);
-						return [];
+			// Layer 3: 로컬 message 객체 업데이트
+			message = { ...updatedMessage };
+
+			console.log('✅ [feedbackHandler] 다중 레이어 저장 완료', {
+				historyMessagesFeedbackId: history.messages[message.id]?.feedbackId,
+				localMessageFeedbackId: message.feedbackId,
+				savedMessageFeedbackId: updatedMessage.feedbackId
+			});
+
+			await tick();
+
+			// ========================================
+			// 6️⃣ 태그 자동 생성 (thumbs down만)
+			// ========================================
+			if (!details && rating !== 10) {
+				showRateComment = true;
+
+				if (!updatedMessage.annotation?.tags) {
+					console.log('🏷️ [feedbackHandler] 태그 자동 생성 시작...');
+
+					const tags = await generateTags(localStorage.token, message.model, messages, chatId).catch(
+						(error) => {
+							console.error('❌ [feedbackHandler] 태그 생성 실패:', error);
+							return [];
+						}
+					);
+
+					if (tags && tags.length > 0) {
+						console.log('✅ [feedbackHandler] 태그 생성 완료:', tags);
+
+						updatedMessage.annotation.tags = tags;
+						feedbackItem.data.tags = tags;
+
+						if (history.messages[message.id]) {
+							history.messages[message.id].annotation.tags = tags;
+						}
+
+						saveMessage(message.id, updatedMessage);
+
+						await updateFeedbackById(
+							localStorage.token,
+							updatedMessage.feedbackId,
+							feedbackItem
+						).catch((error) => {
+							console.error('❌ [feedbackHandler] 태그 업데이트 실패:', error);
+						});
 					}
-				);
-				console.log(tags);
-
-				if (tags) {
-					updatedMessage.annotation.tags = tags;
-					feedbackItem.data.tags = tags;
-
-					saveMessage(message.id, updatedMessage);
-					await updateFeedbackById(
-						localStorage.token,
-						updatedMessage.feedbackId,
-						feedbackItem
-					).catch((error) => {
-						toast.error(`${error}`);
-					});
 				}
 			}
-		}
 
-		feedbackLoading = false;
+			// ========================================
+			// 7️⃣ 검증: 저장 확인
+			// ========================================
+			const savedFeedback = await getFeedbackById(localStorage.token, updatedMessage.feedbackId).catch((error) => {
+				console.warn('⚠️ [feedbackHandler] 피드백 검증 실패 (무시 가능):', error);
+				return null;
+			});
+
+			if (savedFeedback) {
+				console.log('✅ [feedbackHandler] 저장 검증 성공', {
+					feedbackId: savedFeedback.id,
+					rating: savedFeedback.data?.rating,
+					reason: savedFeedback.data?.reason,
+					comment: savedFeedback.data?.comment
+				});
+			}
+
+			// ========================================
+			// 8️⃣ 완료
+			// ========================================
+			console.log('🎉 [feedbackHandler] 전체 프로세스 완료', {
+				operation: operationType,
+				feedbackId: updatedMessage.feedbackId,
+				rating: updatedMessage.annotation.rating,
+				reason: updatedMessage.annotation.reason,
+				comment: updatedMessage.annotation.comment,
+				timestamp: new Date().toISOString()
+			});
+
+			toast.success($i18n.t(rating === 10 ? '👍 긍정 평가가 저장되었습니다.' : '👎 부정 평가가 저장되었습니다.'));
+
+		} catch (error) {
+			console.error('❌ [feedbackHandler] 치명적 오류 발생:', error);
+			toast.error($i18n.t('피드백 저장 중 오류가 발생했습니다. 다시 시도해주세요.'));
+		} finally {
+			feedbackLoading = false;
+		}
 	};
 
 	const deleteMessageHandler = async () => {
@@ -640,7 +823,7 @@
 						class=" self-center text-xs invisible group-hover:visible text-gray-400 font-medium first-letter:capitalize ml-0.5 translate-y-[1px]"
 					>
 						<Tooltip content={dayjs(message.timestamp * 1000).format('LLLL')}>
-							<span class="line-clamp-1">{formatDate(message.timestamp * 1000)}</span>
+							<span class="line-clamp-1">{dayjs(message.timestamp * 1000).format('YYYY년 MM월 DD일 HH:mm:ss')}</span>
 						</Tooltip>
 					</div>
 				{/if}
@@ -884,6 +1067,7 @@
 						class="flex justify-start overflow-x-auto buttons text-gray-600 dark:text-gray-500 mt-0.5"
 					>
 						{#if message.done || siblings.length > 1}
+							{#if false}
 							{#if siblings.length > 1}
 								<div class="flex self-center min-w-fit" dir="ltr">
 									<button
@@ -976,9 +1160,11 @@
 									</button>
 								</div>
 							{/if}
+							{/if}
 
 							{#if message.done}
 								{#if !readOnly}
+									{#if false}
 									{#if $user?.role === 'user' ? ($user?.permissions?.chat?.edit ?? true) : true}
 										<Tooltip content={$i18n.t('Edit')} placement="bottom">
 											<button
@@ -1006,8 +1192,10 @@
 											</button>
 										</Tooltip>
 									{/if}
+									{/if}
 								{/if}
 
+								{#if false}
 								<Tooltip content={$i18n.t('Copy')} placement="bottom">
 									<button
 										class="{isLastMessage
@@ -1033,7 +1221,9 @@
 										</svg>
 									</button>
 								</Tooltip>
+								{/if}
 
+								{#if false}
 								{#if $user?.role === 'admin' || ($user?.permissions?.chat?.tts ?? true)}
 									<Tooltip content={$i18n.t('Read Aloud')} placement="bottom">
 										<button
@@ -1113,7 +1303,9 @@
 										</button>
 									</Tooltip>
 								{/if}
+								{/if}
 
+								{#if false}
 								{#if $config?.features.enable_image_generation && ($user?.role === 'admin' || $user?.permissions?.features?.image_generation) && !readOnly}
 									<Tooltip content={$i18n.t('Generate Image')} placement="bottom">
 										<button
@@ -1177,7 +1369,9 @@
 										</button>
 									</Tooltip>
 								{/if}
+								{/if}
 
+								{#if false}
 								{#if message.usage}
 									<Tooltip
 										content={message.usage
@@ -1219,6 +1413,7 @@
 										</button>
 									</Tooltip>
 								{/if}
+								{/if}
 
 								{#if !readOnly}
 									{#if !$temporaryChatEnabled && ($config?.features.enable_message_rating ?? true)}
@@ -1228,12 +1423,26 @@
 													? 'visible'
 													: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg {(
 													message?.annotation?.rating ?? ''
-												).toString() === '1'
+												).toString() === '10'
 													? 'bg-gray-100 dark:bg-gray-800'
 													: ''} dark:hover:text-white hover:text-black transition disabled:cursor-progress disabled:hover:bg-transparent"
 												disabled={feedbackLoading}
 												on:click={async () => {
-													await feedbackHandler(1);
+													console.log('👍 [Thumbs Up] 클릭', {
+														feedbackId: message?.feedbackId,
+														currentRating: message?.annotation?.rating
+													});
+
+													// 이미 thumbs up 상태인지 확인
+													if (message?.annotation?.rating === 10) {
+														console.log('ℹ️ [Thumbs Up] 이미 긍정 평가된 메시지입니다.');
+														toast.info($i18n.t('이미 긍정 평가하셨습니다.'));
+														return;
+													}
+
+													await feedbackHandler(10);
+													console.log('✅ [Thumbs Up] 처리 완료');
+
 													window.setTimeout(() => {
 														document
 															.getElementById(`message-feedback-${message.id}`)
@@ -1269,12 +1478,29 @@
 													: ''} dark:hover:text-white hover:text-black transition disabled:cursor-progress disabled:hover:bg-transparent"
 												disabled={feedbackLoading}
 												on:click={async () => {
-													await feedbackHandler(-1);
-													window.setTimeout(() => {
-														document
-															.getElementById(`message-feedback-${message.id}`)
-															?.scrollIntoView();
-													}, 0);
+													// thumbs down: 커스텀 피드백 모달 표시
+													console.log('🔍 [Thumbs Down] 클릭', {
+														feedbackId: message?.feedbackId,
+														currentRating: message?.annotation?.rating,
+														currentReason: message?.annotation?.reason,
+														currentComment: message?.annotation?.comment
+													});
+
+													// 기존 평가 데이터 불러오기 (재클릭 시)
+													if (message?.annotation?.rating === -1) {
+														selectedFeedbackReason = message?.annotation?.reason || '';
+														feedbackComment = message?.annotation?.comment || '';
+														console.log('✅ [Thumbs Down] 기존 평가 데이터 로드:', {
+															reason: selectedFeedbackReason,
+															comment: feedbackComment
+														});
+													} else {
+														// 새 평가: 초기화
+														selectedFeedbackReason = '';
+														feedbackComment = '';
+													}
+
+													showNegativeFeedbackModal = true;
 												}}
 											>
 												<svg
@@ -1295,6 +1521,7 @@
 										</Tooltip>
 									{/if}
 
+									{#if false}
 									{#if isLastMessage}
 										<Tooltip content={$i18n.t('Continue Response')} placement="bottom">
 											<button
@@ -1430,6 +1657,7 @@
 											</Tooltip>
 										{/each}
 									{/if}
+									{/if}
 								{/if}
 							{/if}
 						{/if}
@@ -1527,6 +1755,150 @@
 			toast.success($i18n.t('피드백이 전송되었습니다.'));
 		}}
 	/>
+{/if}
+
+<!-- 부정 피드백 모달 (OpenWebUI 스타일) -->
+{#if showNegativeFeedbackModal}
+	<!-- svelte-ignore a11y-click-events-have-key-events -->
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div
+		class="fixed top-0 right-0 left-0 bottom-0 bg-black/60 w-full h-screen max-h-[100dvh] flex justify-center z-50 overflow-hidden overscroll-contain"
+		on:mousedown={() => {
+			showNegativeFeedbackModal = false;
+		}}
+	>
+		<div
+			class="m-auto max-w-full w-[32rem] mx-2 bg-white/95 dark:bg-gray-950/95 backdrop-blur-sm rounded-4xl max-h-[100dvh] shadow-3xl border border-white dark:border-gray-900"
+			on:mousedown={(e) => {
+				e.stopPropagation();
+			}}
+		>
+			<div class="px-[1.75rem] py-6 flex flex-col">
+				<!-- 모달 제목 -->
+				<div class="text-lg font-medium dark:text-gray-200 mb-4">
+					{$i18n.t('피드백 보내기')}
+				</div>
+
+				<!-- 불만족 유형 선택 -->
+				<div class="mb-4">
+					<div class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+						{$i18n.t('불만족 유형을 선택해주세요')}
+					</div>
+					<div class="flex flex-wrap gap-1.5 text-sm">
+						<button
+							class="px-3 py-1.5 border border-gray-100 dark:border-gray-850 hover:bg-gray-50 dark:hover:bg-gray-850 {selectedFeedbackReason ===
+							'질문과 답변의 관련성이 낮음'
+								? 'bg-gray-100 dark:bg-gray-800'
+								: ''} transition rounded-xl"
+							on:click={() => {
+								selectedFeedbackReason = '질문과 답변의 관련성이 낮음';
+							}}
+							type="button"
+						>
+							질문과 답변의 관련성이 낮음
+						</button>
+						<button
+							class="px-3 py-1.5 border border-gray-100 dark:border-gray-850 hover:bg-gray-50 dark:hover:bg-gray-850 {selectedFeedbackReason ===
+							'사실과 다르거나 오류가 있음'
+								? 'bg-gray-100 dark:bg-gray-800'
+								: ''} transition rounded-xl"
+							on:click={() => {
+								selectedFeedbackReason = '사실과 다르거나 오류가 있음';
+							}}
+							type="button"
+						>
+							사실과 다르거나 오류가 있음
+						</button>
+						<button
+							class="px-3 py-1.5 border border-gray-100 dark:border-gray-850 hover:bg-gray-50 dark:hover:bg-gray-850 {selectedFeedbackReason ===
+							'지시한 조건이나 형식을 무시함'
+								? 'bg-gray-100 dark:bg-gray-800'
+								: ''} transition rounded-xl"
+							on:click={() => {
+								selectedFeedbackReason = '지시한 조건이나 형식을 무시함';
+							}}
+							type="button"
+						>
+							지시한 조건이나 형식을 무시함
+						</button>
+						<button
+							class="px-3 py-1.5 border border-gray-100 dark:border-gray-850 hover:bg-gray-50 dark:hover:bg-gray-850 {selectedFeedbackReason ===
+							'도움이 되지 않음'
+								? 'bg-gray-100 dark:bg-gray-800'
+								: ''} transition rounded-xl"
+							on:click={() => {
+								selectedFeedbackReason = '도움이 되지 않음';
+							}}
+							type="button"
+						>
+							도움이 되지 않음
+						</button>
+					</div>
+				</div>
+
+				<!-- 상세 의견 입력 -->
+				<div class="mb-6">
+					<div class="text-sm text-gray-600 dark:text-gray-400 mb-2">
+						{$i18n.t('선택한 불만족 유형에 대한 상세한 설명을 작성해주세요')}
+					</div>
+					<textarea
+						bind:value={feedbackComment}
+						class="w-full text-sm px-3 py-2 bg-transparent border border-gray-100 dark:border-gray-850 outline-none resize-none rounded-xl dark:text-gray-100"
+						placeholder={$i18n.t('구체적인 피드백을 작성해주세요...')}
+						rows="4"
+					/>
+				</div>
+
+				<!-- 버튼 -->
+				<div class="flex justify-between gap-1.5">
+					<button
+						class="text-sm bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-white font-medium w-full py-2 rounded-3xl transition"
+						on:click={() => {
+							showNegativeFeedbackModal = false;
+							selectedFeedbackReason = '';
+							feedbackComment = '';
+						}}
+						type="button"
+					>
+						{$i18n.t('취소')}
+					</button>
+					<button
+						class="text-sm bg-gray-900 hover:bg-gray-850 text-gray-100 dark:bg-gray-100 dark:hover:bg-white dark:text-gray-800 font-medium w-full py-2 rounded-3xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+						disabled={!selectedFeedbackReason || feedbackLoading}
+						on:click={async () => {
+							if (!selectedFeedbackReason) {
+								toast.error($i18n.t('불만족 유형을 선택해주세요.'));
+								return;
+							}
+
+							// 부정 피드백 저장
+							console.log('👎 [Thumbs Down] 부정 피드백 저장 시작:', {
+								rating: -1,
+								reason: selectedFeedbackReason,
+								comment: feedbackComment
+							});
+
+							await feedbackHandler(-1, {
+								reason: selectedFeedbackReason,
+								comment: feedbackComment
+							});
+
+							console.log('👎 [Thumbs Down] 처리 완료');
+
+							showNegativeFeedbackModal = false;
+
+							// 초기화
+							selectedFeedbackReason = '';
+							feedbackComment = '';
+						}}
+						type="button"
+					>
+						{feedbackLoading ? $i18n.t('전송 중...') : $i18n.t('제출')}
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
 {/if}
 
 <style>

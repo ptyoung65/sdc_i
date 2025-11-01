@@ -1,5 +1,18 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
+
+	onMount(() => {
+		console.log('🔵 [EdmFileListModal 팝업 표시]', {
+			timestamp: new Date().toISOString(),
+			action: 'modal_opened',
+			filesCount: files.length,
+			files: files.map(f => ({
+				objid: f.objid,
+				objtNm: f.objtNm,
+				hasPermission: f.maxObjtSharePolicyId !== null
+			}))
+		});
+	});
 	import { toast } from 'svelte-sonner';
 
 	export let files: any[] = [];
@@ -16,6 +29,16 @@
 
 	// 파일 선택/해제
 	function toggleFileSelection(objid: string, file: any) {
+		const action = selectedFiles.includes(objid) ? 'deselect' : 'select';
+		console.log('🔵 [파일 선택/해제]', {
+			timestamp: new Date().toISOString(),
+			action: action,
+			objid: objid,
+			fileName: file.objtNm,
+			hasPermission: hasPermission(file),
+			selectedCount: action === 'select' ? selectedFiles.length + 1 : selectedFiles.length - 1
+		});
+
 		if (!hasPermission(file)) {
 			toast.error('이 파일에 대한 권한이 없습니다.');
 			return;
@@ -39,8 +62,15 @@
 		selectedFiles = [];
 	}
 
-	// 파일 반영 (다운로드 파이프라인 → 임베딩 및 업로드)
+	// 파일 지식화 (다운로드 → 파싱 → 청킹 → 임베딩 → Milvus 저장)
 	async function handleApply() {
+		console.log('🔵 [지식화 버튼 클릭]', {
+			timestamp: new Date().toISOString(),
+			action: 'knowledge_button_clicked',
+			selectedFilesCount: selectedFiles.length,
+			selectedFiles: selectedFiles
+		});
+
 		if (selectedFiles.length === 0) {
 			toast.error('최소 1개 이상의 파일을 선택해주세요.');
 			return;
@@ -49,10 +79,47 @@
 		const selectedFileObjects = files.filter((f) => selectedFiles.includes(f.objid));
 
 		try {
-			toast.info(`${selectedFileObjects.length}개 파일 다운로드 중...`);
+			// 1. edm_download 파이프 존재 여부 확인 (필수)
+			const downloadPipeName = 'edm_download';
+			
+			console.log('🔵 [파이프 존재 여부 확인]', {
+				timestamp: new Date().toISOString(),
+				action: 'check_pipe_exists',
+				requiredPipe: downloadPipeName
+			});
 
-			// EDM Download 파이프라인 호출
-			const downloadPipeName = 'edm_download_pipe'; // 실제 파이프명
+			// 파이프 목록 가져오기
+			const pipesResponse = await fetch('/api/pipelines', {
+				headers: {
+					'Authorization': `Bearer ${localStorage.token}`
+				}
+			});
+
+			if (!pipesResponse.ok) {
+				throw new Error('파이프 목록을 가져올 수 없습니다.');
+			}
+
+			const pipesData = await pipesResponse.json();
+			const availablePipes = pipesData.data || pipesData || [];
+			const pipeExists = availablePipes.some(p => p.id === downloadPipeName);
+
+			if (!pipeExists) {
+				console.error('🔴 [파이프 없음 오류]', {
+					timestamp: new Date().toISOString(),
+					requiredPipe: downloadPipeName,
+					availablePipes: availablePipes.map(p => p.id)
+				});
+				throw new Error(`❌ 지식화를 위해서는 ${downloadPipeName} 파이프가 필요합니다. 파이프를 등록해주세요.`);
+			}
+
+			console.log('🟢 [파이프 확인 완료]', {
+				timestamp: new Date().toISOString(),
+				pipeName: downloadPipeName,
+				status: 'exists'
+			});
+
+			// 2. 파일 다운로드 시작
+			toast.info(`${selectedFileObjects.length}개 파일 다운로드 중...`);
 			const downloadResults = [];
 
 			for (const file of selectedFileObjects) {
@@ -63,7 +130,14 @@
 						workspaceNm: file.workspaceNm
 					};
 
-					const downloadResponse = await fetch(`/api/pipelines/${downloadPipeName}`, {
+									console.log('🔵 [edm_download 호출]', {
+					timestamp: new Date().toISOString(),
+					action: 'download_pipe_call',
+					pipeName: downloadPipeName,
+					payload: downloadPayload
+				});
+
+				const downloadResponse = await fetch(`/api/pipelines/${downloadPipeName}`, {
 						method: 'POST',
 						headers: {
 							'Content-Type': 'application/json',
@@ -77,7 +151,14 @@
 					}
 
 					const downloadResult = await downloadResponse.json();
-					console.log('✅ 파일 다운로드 성공:', downloadResult);
+					console.log('🟢 [파일 다운로드 성공]', {
+					timestamp: new Date().toISOString(),
+					action: 'download_success',
+					objid: file.objid,
+					fileName: downloadResult.fileName || downloadResult.filename,
+					filePath: downloadResult.filePath || downloadResult.filepath,
+					response: downloadResult
+				});
 
 					// 파일명, 파일경로 포함
 					downloadResults.push({
@@ -87,7 +168,14 @@
 						downloadSuccess: true
 					});
 				} catch (error) {
-					console.error('❌ 파일 다운로드 실패:', file.objtNm, error);
+					console.error('🔴 [파일 다운로드 실패]', {
+					timestamp: new Date().toISOString(),
+					action: 'download_error',
+					objid: file.objid,
+					fileName: file.objtNm,
+					error: error.message,
+					stack: error.stack
+				});
 					downloadResults.push({
 						...file,
 						downloadSuccess: false,
@@ -107,14 +195,25 @@
 			toast.success(`${successFiles.length}개 파일 다운로드 완료. 임베딩 처리 중...`);
 
 			// 임베딩 이벤트 발송 (Chat.svelte에서 처리)
+			console.log('🔵 [dispatch embed 이벤트]', {
+				timestamp: new Date().toISOString(),
+				action: 'dispatch_embed',
+				successFilesCount: successFiles.length,
+				successFiles: successFiles.map(f => ({
+					objid: f.objid,
+					fileName: f.fileName,
+					filePath: f.filePath
+				}))
+			});
+
 			dispatch('embed', {
 				files: successFiles
 			});
 
 			close();
 		} catch (error) {
-			console.error('❌ 파일 반영 실패:', error);
-			toast.error(`파일 반영 중 오류: ${error.message}`);
+			console.error('❌ 파일 지식화 실패:', error);
+			toast.error(`파일 지식화 중 오류: ${error.message}`);
 		}
 	}
 
@@ -168,17 +267,21 @@
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
 		on:click={close}
+		on:keydown={(e) => e.key === 'Escape' && close()}
 		role="dialog"
 		aria-modal="true"
+		aria-labelledby="edm-file-modal-title"
 	>
 		<div
 			class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-7xl w-full mx-4 max-h-[92vh] flex flex-col border border-gray-200 dark:border-gray-700"
+			role="document"
 			on:click|stopPropagation
+			on:keydown|stopPropagation
 		>
 			<!-- Header -->
 			<div class="flex items-center justify-between p-6 pb-4 border-b dark:border-gray-800">
 				<div>
-					<h2 class="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+					<h2 id="edm-file-modal-title" class="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
 						<svg
 							class="w-7 h-7 text-blue-600 dark:text-blue-500"
 							fill="none"
@@ -195,7 +298,7 @@
 						EDM 파일 검색 결과
 					</h2>
 					<p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
-						지식 베이스에 반영할 파일을 선택하세요 • 총 <span class="font-semibold"
+						지식화할 파일을 선택하세요 • 총 <span class="font-semibold"
 							>{files.length}</span
 						>개 파일
 					</p>
@@ -429,7 +532,7 @@
 						<div class="flex flex-col">
 							<span class="text-gray-500 dark:text-gray-400">파일을 선택해주세요</span>
 							<span class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-								반영 시 자동으로 RAG 파이프라인 처리
+								지식화 시 자동으로 벡터화 파이프라인 처리 (파싱 → 청킹 → 임베딩 → Milvus 저장)
 							</span>
 						</div>
 					{/if}
@@ -454,7 +557,7 @@
 								d="M5 13l4 4L19 7"
 							/>
 						</svg>
-						반영 ({selectedFiles.length}개)
+						지식화 ({selectedFiles.length}개)
 					</button>
 				</div>
 			</div>

@@ -113,6 +113,10 @@
 	let processing = '';
 	let messagesContainerElement: HTMLDivElement;
 
+	// 🔄 멀티턴 관리
+	const MAX_TURNS = 10; // 최대 턴 수 (사용자 메시지 + AI 응답 = 1턴)
+	let showMultiTurnModal = false; // 멀티턴 초과 팝업 표시 여부
+
 	let navbarElement;
 
 	let showEventConfirmation = false;
@@ -145,26 +149,50 @@
 			);
 
 			if (hasEdm) {
-				// EDM 문서활용 선택 → EDM Search RAG 모델 자동 선택
-				const edmModel = $models.find(m =>
-					m.id === 'edm_search_milvus' ||
-					m.id === 'edm_search_pipe' ||
-					m.name?.includes('EDM Search RAG')
-				);
-				if (edmModel && selectedModels[0] !== edmModel.id) {
-					selectedModels = [edmModel.id];
+				// EDM 문서활용 선택 → edm_search_pipe 모델만 사용 (필수)
+				const edmModel = $models.find(m => m.id === 'edm_search_pipe');
+				
+				if (!edmModel) {
+					console.error('🔴 [EDM 모델 오류] edm_search_pipe 모델을 찾을 수 없습니다.', {
+						timestamp: new Date().toISOString(),
+						availableModels: $models.map(m => m.id),
+						selectedCategories: $selectedCategories
+					});
+					// toast 사용 (Promise rejection 방지)
+					if (typeof toast !== 'undefined') {
+						toast.error('❌ EDM 문서활용을 위해서는 edm_search_pipe 모델이 필요합니다. 파이프를 등록해주세요.');
+					}
+					// 모델 선택 비활성화 유지
 					isModelSelectorDisabled = true;
-					console.log('✅ EDM 문서활용 → 자동 모델 선택:', edmModel.name);
+				} else {
+					// edm_search_pipe 모델이 있을 때만 실행
+					if (selectedModels && selectedModels[0] !== edmModel.id) {
+						selectedModels = [edmModel.id];
+						isModelSelectorDisabled = true;
+						console.log('🔵 [EDM 모델 선택]', {
+							timestamp: new Date().toISOString(),
+							action: 'auto_model_selection',
+							selectedCategories: $selectedCategories,
+							selectedModel: edmModel.id,
+							modelName: edmModel.name,
+							isDisabled: true
+						});
+					}
 				}
 			} else if (hasDaesawoo) {
-				// 대사우 Assistant 선택 → Enhanced Display Dictionary RAG 모델 자동 선택
-				const dictionaryModel = $models.find(m =>
-					m.name?.includes('Enhanced Display Dictionary RAG')
+				// 대사우 Assistant 선택 → daesawoo 파이프라인 자동 선택
+				const daesawooModel = $models.find(m =>
+					m.id?.includes('daesawoo') || m.name?.includes('daesawoo')
 				);
-				if (dictionaryModel && selectedModels[0] !== dictionaryModel.id) {
-					selectedModels = [dictionaryModel.id];
+
+				if (!daesawooModel) {
+					toast.error('❌ daesawoo 파이프라인을 찾을 수 없습니다. 파이프라인을 등록해주세요.');
+					console.error('❌ daesawoo 파이프라인이 등록되지 않았습니다.');
+					isModelSelectorDisabled = false;
+				} else if (selectedModels[0] !== daesawooModel.id) {
+					selectedModels = [daesawooModel.id];
 					isModelSelectorDisabled = true;
-					console.log('✅ 대사우 Assistant → 자동 모델 선택:', dictionaryModel.name);
+					console.log('✅ 대사우 Assistant → daesawoo 파이프라인 자동 선택:', daesawooModel.name);
 				}
 			} else {
 				isModelSelectorDisabled = false;
@@ -227,7 +255,7 @@
 		},
 		{
 			id: 'guide',
-			name: '대사우 Assistant',
+			name: '대사우 Assistant [사규]',
 			description: '사규',
 			samples: [
 				'육아휴직 신청 방법 알려 줘',
@@ -236,7 +264,7 @@
 		},
 		{
 			id: 'helpdesk',
-			name: '대사우 Assistant',
+			name: '대사우 Assistant [IT Help Desk]',
 			description: 'IT Help Desk',
 			samples: [
 				'Knox 비밀번호 초기화 방법 알려 줘',
@@ -325,6 +353,21 @@
 	const cancelExternalModelSwitch = () => {
 		showSecurityWarning = false;
 		pendingModelType = null;
+	};
+
+	// Upload multiple files
+	const uploadFiles = async (token: string, files: File[]) => {
+		const results = [];
+		for (const file of files) {
+			try {
+				const result = await uploadFile(token, file);
+				results.push(result);
+			} catch (error) {
+				console.error(`Failed to upload file ${file.name}:`, error);
+				throw error;
+			}
+		}
+		return results;
 	};
 
 	// Update selected models when model type changes
@@ -1687,9 +1730,31 @@
 		console.log('[Chat] temporaryChatEnabled:', $temporaryChatEnabled);
 		console.log('[Chat] selectedCategories:', $selectedCategories);
 
+		// 🔄 멀티턴 제한 체크 (사용자 메시지 개수 기반)
+		// 주의: 현재 입력 중인 메시지는 아직 history에 없으므로 +1 해서 체크
+		const currentUserMessageCount = Object.values(history.messages).filter(msg => msg.role === 'user').length;
+		const nextUserMessageCount = currentUserMessageCount + 1; // 지금 전송하려는 메시지 포함
+
+		console.log(`🔄 [멀티턴] 현재 사용자 메시지: ${currentUserMessageCount}개, 전송 후: ${nextUserMessageCount}개/${MAX_TURNS}턴 제한`);
+		console.log(`🔄 [멀티턴] 전체 메시지: ${Object.keys(history.messages).length}개`);
+
+		if (nextUserMessageCount > MAX_TURNS) {
+			console.log(`⚠️ [멀티턴] 최대 턴 수(${MAX_TURNS}) 초과 - 팝업 표시`);
+
+			// 멀티턴 초과 팝업 표시
+			showMultiTurnModal = true;
+
+			return; // 현재 메시지 제출 중단
+		}
+
 		// EDM 문서활용이 선택된 경우 모델에 따라 분기
 		// selectedCategories는 문자열 배열 ['edm', 'guide', ...] 형태
 		const shouldUseEdm = $selectedCategories.includes('edm');
+
+		// 대사우 Assistant가 선택된 경우 확인
+		const shouldUseDaesawoo = $selectedCategories.some(cat =>
+			['guide', 'helpdesk', 'dictionary', 'etc'].includes(cat)
+		);
 
 		// EDM Search 파이프가 선택되었는지 확인
 		const isEdmPipeSelected = selectedModels.some(modelId => {
@@ -1703,19 +1768,49 @@
 			);
 		});
 
-		if (shouldUseEdm && isEdmPipeSelected) {
-			// EDM 체크 + EDM Search 파이프 선택
-			// → 파이프가 n8n webhook + Milvus 벡터 DB 처리
-			console.log('📂 EDM 문서활용 + EDM Search 파이프 → 파이프에 위임 (n8n + Milvus)');
+		// daesawoo 파이프가 선택되었는지 확인
+		const isDaesawooPipeSelected = selectedModels.some(modelId => {
+			const model = $models.find(m => m.id === modelId);
+			return model && (
+				model.id?.includes('daesawoo') ||
+				model.name?.includes('daesawoo')
+			);
+		});
+
+		if (shouldUseDaesawoo && isDaesawooPipeSelected) {
+			// 대사우 Assistant 체크 + daesawoo 파이프 선택
+			// → 전처리 없이 바로 daesawoo 파이프로 위임
+			// → daesawoo 파이프 내부에서 LLM 호출 및 응답 처리
+			console.log('🟢 [submitPrompt] 대사우 파이프 위임 (전처리 없음)', {
+				timestamp: new Date().toISOString(),
+				action: 'daesawoo_pipe_delegation',
+				shouldUseDaesawoo: shouldUseDaesawoo,
+				isDaesawooPipeSelected: isDaesawooPipeSelected,
+				selectedModels: selectedModels,
+				selectedCategories: $selectedCategories,
+				userPrompt: userPrompt.substring(0, 100) + '...'
+			});
 			console.log('   선택된 모델:', selectedModels);
-			// 파이프로 위임하기 위해 일반 플로우로 진행 (return 없음)
-		} else if (shouldUseEdm && !isEdmPipeSelected) {
-			// EDM 체크 + 일반 모델 선택
-			// → 일반 RAG 구성: 벡터 유사도 검색 + LLM 전송
-			console.log('📂 EDM 문서활용 + 일반 모델 → 일반 RAG 플로우');
+			// 파이프로 위임하기 위해 일반 플로우로 진행 (return 없음, 전처리 없음)
+		} else if (shouldUseEdm && isEdmPipeSelected) {
+			// EDM 문서활용 체크 + edm_search_pipe 선택
+			// → 전처리 없이 바로 edm_search_pipe로 위임
+			// → 파이프 내부에서:
+			//   1. /tmp/download/imsi 폴더에 파일 다운로드
+			//   2. 파싱 - 청킹 - 임베딩 - 벡터 저장
+			//   3. RAG를 통해 응답
+			console.log('🔵 [submitPrompt] EDM 파이프 위임 (전처리 없음)', {
+				timestamp: new Date().toISOString(),
+				action: 'edm_pipe_delegation',
+				shouldUseEdm: shouldUseEdm,
+				isEdmPipeSelected: isEdmPipeSelected,
+				selectedModels: selectedModels,
+				selectedCategories: $selectedCategories,
+				userPrompt: userPrompt.substring(0, 100) + '...'
+			});
 			console.log('   선택된 모델:', selectedModels);
-			console.log('   벡터 검색 후 LLM 전송 예정');
-			// 일반 RAG 플로우로 진행 (return 없음)
+			console.log('   📁 파이프 내부에서 /tmp/download/imsi 폴더 처리 예정');
+			// 파이프로 위임하기 위해 일반 플로우로 진행 (return 없음, 전처리 없음)
 		}
 
 		// ========================================
@@ -1730,10 +1825,12 @@
 			edmSearchQuery = userPrompt;  // 검색어 저장
 
 			// 첫 번째 EDM 사용 시 환영 메시지 표시
-			const isFirstEdmUse = !history.messages || Object.keys(history.messages).length === 0 ||
-				!Object.values(history.messages).some(msg => msg.model === 'edm-welcome');
+			// EDM 안내 메시지 표시 조건 (현재 채팅에 edm-welcome 메시지가 없을 때만)
+			const hasEdmWelcomeMessage = history.messages &&
+				Object.values(history.messages).some(msg => msg.model === 'edm-welcome');
+			const showEdmWelcome = !hasEdmWelcomeMessage;
 
-			if (isFirstEdmUse) {
+			if (showEdmWelcome) {
 				console.log('🎉 첫 번째 EDM 사용 - 환영 메시지 추가');
 
 				// 시스템 메시지로 EDM 안내 추가 (마크다운 형식)
@@ -1742,23 +1839,33 @@
 					parentId: history.currentId,
 					childrenIds: [],
 					role: 'assistant',
-					content: `> ## 📚 EDM 문서활용 영역
->
-> **EDM 문서활용**은 이미 학습된 문서를 참고하여 AI 답변을 생성하고, 추가로 키워드 기반으로 EDM 문서 검색 결과를 제공합니다.
->
-> ### 🔍 사용 방법
-> 1. 질문을 입력하면 AI가 학습된 문서를 참고하여 답변을 생성합니다
-> 2. 관련 문서 목록이 함께 제공됩니다
-> 3. 답변 하단의 **"문서 검색결과 보기"** 버튼을 눌러 추가 문서를 확인할 수 있습니다
-> 4. 원하는 문서를 선택하여 첨부 등록할 수 있습니다
->
-> ### 📄 지원 형식
-> 텍스트, 표, 차트, PDF, Word, Excel, PowerPoint 등 다양한 문서 형식을 지원합니다.`,
+					content: `## 📚 EDM 문서활용 영역
+
+**EDM 문서활용**은 이미 학습된 문서를 참고하여 AI 답변을 생성하고, 추가로 키워드 기반으로 EDM 문서 검색 결과를 제공합니다.
+
+### 🔍 사용 방법
+1. 질문을 입력하면 AI가 학습된 문서를 참고하여 답변을 생성합니다
+2. 관련 문서 목록이 함께 제공됩니다
+3. 답변 하단의 **"문서 검색결과 보기"** 버튼을 눌러 추가 문서를 확인할 수 있습니다
+4. 원하는 문서를 선택하여 첨부 등록할 수 있습니다
+
+### 📄 지원 형식
+텍스트, 표, 차트, PDF, Word, Excel, PowerPoint 등 다양한 문서 형식을 지원합니다.`,
 					model: 'edm-welcome',
-					timestamp: Math.floor(Date.now() / 1000)
+					timestamp: Math.floor(Date.now() / 1000),
+					done: true
 				};
 
 				history.messages[edmInitMessage.id] = edmInitMessage;
+
+				// parentId의 childrenIds에 추가 (메시지 트리 구조 유지)
+				if (history.messages[history.currentId]) {
+					if (!history.messages[history.currentId].childrenIds) {
+						history.messages[history.currentId].childrenIds = [];
+					}
+					history.messages[history.currentId].childrenIds.push(edmInitMessage.id);
+				}
+
 				history.currentId = edmInitMessage.id;
 
 				await tick();
@@ -1809,9 +1916,11 @@
 						});
 
 						if (!pipeResponse.ok) {
-							throw new Error(`파이프 호출 실패: ${pipeResponse.status} ${pipeResponse.statusText}`);
-						}
-
+							console.error("🔴 EDM Search 파이프 호출 실패:", pipeResponse.status, pipeResponse.statusText);
+						toast.error(`EDM 문서 검색 실패: ${pipeResponse.status}`);
+						edmFileList = [];
+						// 에러 발생 시에도 계속 진행 (빈 결과로)
+					} else {
 						const pipeResult = await pipeResponse.json();
 						console.log('✅ EDM Search 파이프 응답:', pipeResult);
 
@@ -1830,11 +1939,14 @@
 							console.log('📭 파이프 결과 없음 - edmFileList는 빈 배열 유지');
 							edmFileList = [];
 						}
+					}
 					} catch (error) {
 						console.error('❌ EDM Search 파이프 호출 실패:', error);
 						edmFileList = [];
 						// 에러는 아래 catch 블록에서 처리
-						throw error;
+					toast.error('EDM 문서 검색 중 오류가 발생했습니다.');
+					edmFileList = [];
+					// 에러 발생 시에도 계속 진행 (빈 결과로)
 					}
 				}
 
@@ -2172,7 +2284,14 @@
 					name: category.name,
 					collection_name: collectionName
 				});
-				console.log(`📚 컬렉션 추가: ${category.name} → ${collectionName}`);
+				console.log('🔵 [Knowledge Base 추가]', {
+					timestamp: new Date().toISOString(),
+					action: 'add_collection',
+					categoryId: category.id,
+					categoryName: category.name,
+					collectionName: collectionName,
+					totalChatFiles: chatFiles.length
+				});
 			});
 		}
 
@@ -2234,6 +2353,15 @@
 			newChat?: boolean;
 		} = {}
 	) => {
+		console.log('🔵 [sendMessage 시작]', {
+			timestamp: new Date().toISOString(),
+			action: 'send_message_start',
+			parentId: parentId,
+			newChat: newChat,
+			modelId: modelId,
+			modelIdx: modelIdx
+		});
+
 		if (autoScroll) {
 			scrollToBottom();
 		}
@@ -2862,12 +2990,39 @@
 	const saveChatHandler = async (_chatId, history) => {
 		if ($chatId == _chatId) {
 			if (!$temporaryChatEnabled) {
+				// 🎯 자동 제목 생성: 제목이 "새 채팅"이면 첫 메시지로 교체
+				let titleToUpdate = chat?.title;
+				const isDefaultTitle = !titleToUpdate ||
+					titleToUpdate === $i18n.t('New Chat') ||
+					titleToUpdate === 'New Chat' ||
+					titleToUpdate === '새 채팅';
+
+				if (isDefaultTitle && history?.messages) {
+					// 첫 번째 사용자 메시지 찾기
+					const firstUserMessage = Object.values(history.messages).find(msg => msg.role === 'user');
+
+					if (firstUserMessage?.content) {
+						// 제목 생성: 첫 50자 사용, 줄바꿈 제거, 공백 정리
+						titleToUpdate = (firstUserMessage.content || '')
+							.substring(0, 50)
+							.replace(/\n/g, ' ')
+							.replace(/\s+/g, ' ')
+							.trim();
+
+						if (titleToUpdate) {
+							console.log('🎯 [자동 제목] 생성:', titleToUpdate);
+							chatTitle.set(titleToUpdate);
+						}
+					}
+				}
+
 				chat = await updateChatById(localStorage.token, _chatId, {
 					models: selectedModels,
 					history: history,
 					messages: createMessagesList(history, history.currentId),
 					params: params,
-					files: chatFiles
+					files: chatFiles,
+					...(titleToUpdate && titleToUpdate !== chat?.title ? { title: titleToUpdate } : {})
 				});
 				currentChatPage.set(1);
 				await chats.set(await getChatList(localStorage.token, $currentChatPage));
@@ -2988,6 +3143,23 @@
 	}}
 	on:cancel={() => {
 		eventCallback(false);
+	}}
+/>
+
+<!-- 🔄 멀티턴 초과 팝업 -->
+<EventConfirmDialog
+	bind:show={showMultiTurnModal}
+	title="대화 턴 제한 초과"
+	message={`대화 턴이 ${MAX_TURNS}회를 초과했습니다.\n\n새 채팅 세션을 시작하시겠습니까?`}
+	input={false}
+	on:confirm={() => {
+		console.log('🔄 [멀티턴 팝업] 확인 버튼 클릭 - 새 채팅 세션 시작');
+		showMultiTurnModal = false;
+		window.location.href = '/';
+	}}
+	on:cancel={() => {
+		console.log('🔄 [멀티턴 팝업] 취소 버튼 클릭');
+		showMultiTurnModal = false;
 	}}
 />
 
@@ -3280,17 +3452,32 @@
 														<div class="p-6">
 															<!-- Category header -->
 															<div class="flex items-center gap-3 mb-4">
+																<!-- 카테고리 아이콘 -->
+																<div class="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg shadow-sm flex-shrink-0">
+																	{#if category.id === 'edm'}
+																		<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+																		</svg>
+																	{:else if category.id === 'guide'}
+																		<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+																		</svg>
+																	{:else if category.id === 'helpdesk'}
+																		<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"></path>
+																		</svg>
+																	{/if}
+																</div>
+
 																<h3 class="text-xl font-bold text-gray-800 dark:text-gray-100">
-																	{category.name}
+																	{#if category.name.includes('[')}
+																		{category.name.split('[')[0].trim()}
+																	{:else}
+																		{category.name}
+																	{/if}
 																</h3>
 															</div>
 
-															<!-- Description (only show if not empty) -->
-															{#if category.description}
-																<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-																	{category.description}
-																</p>
-															{/if}
 
 															<!-- Action button -->
 															<div class="mt-4">
@@ -3349,17 +3536,32 @@
 													<div class="p-6">
 														<!-- Category header -->
 														<div class="flex items-center gap-3 mb-4">
+															<!-- 카테고리 아이콘 -->
+															<div class="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg shadow-sm flex-shrink-0">
+																{#if category.id === 'edm'}
+																	<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																		<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+																	</svg>
+																{:else if category.id === 'guide'}
+																	<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																		<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+																	</svg>
+																{:else if category.id === 'helpdesk'}
+																	<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																		<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"></path>
+																	</svg>
+																{/if}
+															</div>
+
 															<h3 class="text-xl font-bold text-gray-800 dark:text-gray-100">
-																{category.name}
+																{#if category.name.includes('[')}
+																	{category.name.split('[')[0].trim()}
+																{:else}
+																	{category.name}
+																{/if}
 															</h3>
 														</div>
 
-														<!-- Description (only show if not empty) -->
-														{#if category.description}
-															<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-																{category.description}
-															</p>
-														{/if}
 
 														<!-- Sample questions -->
 														<div class="space-y-2">
@@ -3528,7 +3730,7 @@
 						외부 검색 전용 공간입니다.
 					</p>
 					<p>내부 데이터와 분리됩니다.</p>
-					<p>내부모델의 챗팅내역은 외부모델에서 사용할 수 없습니다.</p>
+					<p>내부모델의 채팅내역은 외부모델에서 사용할 수 없습니다.</p>
 				</div>
 
 				<!-- 버튼 -->
@@ -3567,7 +3769,16 @@
 			showEdmFileListModal = false;
 		}}
 		on:embed={async (event) => {
-			console.log('📤 EDM 파일 반영 시작:', event.detail);
+			console.log('🔵 [on:embed 핸들러 시작]', {
+				timestamp: new Date().toISOString(),
+				action: 'embed_handler_start',
+				filesCount: event.detail.files.length,
+				files: event.detail.files.map(f => ({
+					objid: f.objid,
+					fileName: f.fileName || f.objtNm,
+					filePath: f.filePath
+				}))
+			});
 			const selectedFiles = event.detail.files;
 
 			showEdmFileListModal = false;
@@ -3587,36 +3798,81 @@
 					const totalFiles = selectedFiles.length;
 
 					try {
-						// 1단계: 파일 벡터화 요청
+						// 1단계: 파일 파싱 시작
 						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 읽고 있습니다...`);
-						console.log(`📄 벡터화 처리 중: ${file.objtNm}`);
-
-						// 2단계: 파싱, 청킹, 임베딩 (vectorization API → Backend Pipe)
-						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 분석하고 있습니다...`);
-
-						const vectorizeResult = await vectorizeDocument({
-							file_id: file.DOC_ID || file.objid,
-							file_name: file.FILE_NAME || file.objtNm,
-							file_url: file.URL,
-							file_type: file.FILE_TYPE || 'application/octet-stream',
-							user_id: $user?.id,
-							chat_id: $chatId
+						console.log(`📄 벡터화 처리 중: ${file.objtNm}`, {
+							fileName: file.fileName,
+							filePath: file.filePath,
+							objid: file.objid
 						});
 
-						if (vectorizeResult.success) {
+						// 2단계: 파싱, 청킹, 임베딩 파이프라인 호출
+						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파싱 및 청킹 중...`);
+
+						const vectorizePipeName = 'edm_vectorization_pipe';
+						const vectorizePayload = {
+							file_id: file.objid,
+							file_name: file.fileName || file.objtNm,
+							file_path: file.filePath,  // edm_download_pipe에서 받은 로컬 파일 경로
+							file_type: 'application/octet-stream',
+							user_id: $user?.id,
+							chat_id: $chatId,
+							collection_name: 'edm-knowledge'  // Milvus collection
+						};
+
+						console.log('🔵 [벡터화 파이프 호출]', {
+						timestamp: new Date().toISOString(),
+						action: 'vectorization_pipe_call',
+						pipeName: vectorizePipeName,
+						fileNum: fileNum,
+						totalFiles: totalFiles,
+						payload: vectorizePayload
+					});
+
+						const vectorizeResponse = await fetch(`/api/pipelines/${vectorizePipeName}`, {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+								'Authorization': `Bearer ${localStorage.token}`
+							},
+							body: JSON.stringify(vectorizePayload)
+						});
+
+						if (!vectorizeResponse.ok) {
+							throw new Error(`벡터화 파이프 실패: ${vectorizeResponse.status}`);
+						}
+
+						const vectorizeResult = await vectorizeResponse.json();
+						console.log('🟢 [벡터화 파이프 응답 성공]', {
+						timestamp: new Date().toISOString(),
+						action: 'vectorization_pipe_response',
+						fileNum: fileNum,
+						fileName: file.objtNm,
+						success: vectorizeResult.success || vectorizeResult.status === 'success',
+						doc_id: vectorizeResult.doc_id || vectorizeResult.document_id,
+						chunks_count: vectorizeResult.chunks_count || vectorizeResult.total_chunks,
+						embeddings_count: vectorizeResult.embeddings_count || vectorizeResult.total_embeddings,
+						response: vectorizeResult
+					});
+
+						// 3단계: 벡터 임베딩 처리
+						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 벡터 임베딩 생성 중...`);
+
+						if (vectorizeResult.success || vectorizeResult.status === 'success') {
 							console.log(`✅ 벡터화 성공: ${file.objtNm}`);
-							console.log(`   - 문서 ID: ${vectorizeResult.doc_id}`);
-							console.log(`   - 청크 수: ${vectorizeResult.chunks_count}`);
-							console.log(`   - 임베딩 수: ${vectorizeResult.embeddings_count}`);
+							console.log(`   - 문서 ID: ${vectorizeResult.doc_id || vectorizeResult.document_id}`);
+							console.log(`   - 청크 수: ${vectorizeResult.chunks_count || vectorizeResult.total_chunks}`);
+							console.log(`   - 임베딩 수: ${vectorizeResult.embeddings_count || vectorizeResult.total_embeddings}`);
 
-							// 3단계: Milvus DB 저장 완료
-							toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 벡터 DB에 저장 완료`);
+							// 4단계: Milvus DB 저장 완료
+							toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - Milvus DB에 저장 완료`);
 
-							// 4단계: 완료
-							toast.success(`[${fileNum}/${totalFiles}] ${file.objtNm} - 지식화 완료! (${vectorizeResult.chunks_count}개 청크)`);
+							// 5단계: 완료
+							const chunkCount = vectorizeResult.chunks_count || vectorizeResult.total_chunks || 0;
+							toast.success(`[${fileNum}/${totalFiles}] ${file.objtNm} - 지식화 완료! (${chunkCount}개 청크)`);
 							successCount++;
 						} else {
-							throw new Error(vectorizeResult.error || '벡터화 실패');
+							throw new Error(vectorizeResult.error || vectorizeResult.message || '벡터화 실패');
 						}
 					} catch (fileError) {
 						console.error(`❌ 파일 처리 실패: ${file.objtNm}`, fileError);
@@ -3630,16 +3886,16 @@
 
 				// 최종 결과 표시
 				if (successCount > 0 && failCount === 0) {
-					toast.success(`🎉 모든 파일(${successCount}개) 반영 완료! 이제 채팅에서 문서 내용을 검색할 수 있습니다.`);
+					toast.success(`🎉 모든 파일(${successCount}개) 지식화 완료! 이제 채팅에서 문서 내용을 검색할 수 있습니다.`);
 				} else if (successCount > 0 && failCount > 0) {
-					toast.info(`✅ ${successCount}개 성공, ❌ ${failCount}개 실패`);
+					toast.info(`✅ ${successCount}개 지식화 성공, ❌ ${failCount}개 실패`);
 				} else {
-					toast.error(`모든 파일 처리 실패 (${failCount}개)`);
+					toast.error(`모든 파일 지식화 실패 (${failCount}개)`);
 				}
 
 			} catch (error) {
-				console.error('❌ EDM 파일 반영 실패:', error);
-				toast.error('파일 반영 중 오류 발생: ' + error.message);
+				console.error('❌ EDM 파일 지식화 실패:', error);
+				toast.error('파일 지식화 중 오류 발생: ' + error.message);
 			}
 		}}
 	/>

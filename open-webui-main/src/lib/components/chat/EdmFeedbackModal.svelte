@@ -43,18 +43,24 @@
 <!-- 모달 배경 -->
 <div
 	class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+	role="dialog"
+	aria-modal="true"
+	aria-labelledby="feedback-modal-title"
 	on:click={handleClose}
+	on:keydown={(e) => e.key === 'Escape' && handleClose()}
 	transition:fade={{ duration: 200 }}
 >
 	<!-- 모달 컨텐츠 -->
 	<div
 		class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden"
+		role="document"
 		on:click|stopPropagation
+		on:keydown|stopPropagation
 		transition:fly={{ y: 50, duration: 300 }}
 	>
 		<!-- 헤더 -->
 		<div class="p-6 border-b border-gray-200 dark:border-gray-700">
-			<h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">
+			<h2 id="feedback-modal-title" class="text-lg font-bold text-gray-900 dark:text-gray-100">
 				어떤 점이 마음에 들지 않으셨나요?
 			</h2>
 		</div>
@@ -62,10 +68,10 @@
 		<!-- 본문 -->
 		<div class="p-6 space-y-6">
 			<!-- 불만족 유형 선택 -->
-			<div class="space-y-3">
-				<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+			<div class="space-y-3" role="radiogroup" aria-label="불만족 유형 선택">
+				<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
 					불만족 유형 선택
-				</label>
+				</div>
 
 				{#each feedbackReasons as reason}
 					<label class="flex items-start gap-3 p-3 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors">

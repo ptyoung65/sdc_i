@@ -399,7 +399,7 @@
 	{:else}
 		<a
 			id="sidebar-chat-item"
-			class=" w-full flex rounded-xl px-[11px] py-2 min-h-[48px] {id === $chatId ||
+			class=" w-full flex rounded-xl px-[11px] py-2 min-h-[48px] border border-gray-200/50 dark:border-gray-700/50 {id === $chatId ||
 			confirmEdit
 				? 'bg-gray-100 dark:bg-gray-900 selected'
 				: selected
@@ -464,7 +464,7 @@
 		</a>
 
 		<!-- Edit and Delete Buttons (Minimized icons at right end) -->
-		<div class="absolute right-1 top-1 flex items-center gap-0 z-20 bg-gray-50/80 dark:bg-gray-800/80 rounded px-0.5 py-0.5">
+		<div class="absolute right-1 top-1 flex items-center gap-0 z-20 bg-gray-50/80 dark:bg-gray-800/80 rounded px-0.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
 			<button
 				class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
 				on:click={(e) => {
