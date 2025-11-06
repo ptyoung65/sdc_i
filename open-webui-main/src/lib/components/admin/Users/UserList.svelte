@@ -103,6 +103,50 @@
 	$: if (query !== null && orderBy && direction) {
 		getUserList();
 	}
+
+	const exportToCSV = () => {
+		if (!users || users.length === 0) {
+			toast.error($i18n.t('No users to export'));
+			return;
+		}
+
+		// CSV 헤더 생성
+		const headers = ['Name', 'Email', 'Role', 'Department', 'Dept Code', 'External Search', 'Created At', 'Last Active'];
+
+		// CSV 데이터 생성
+		const csvData = users.map(user => [
+			user.name,
+			user.email,
+			user.role,
+			user.dept_nm || '-',
+			user.dept_cd || '-',
+			user.external_search_enabled ? 'Yes' : 'No',
+			dayjs(user.created_at * 1000).format('YYYY-MM-DD HH:mm:ss'),
+			dayjs(user.last_active_at * 1000).format('YYYY-MM-DD HH:mm:ss')
+		]);
+
+		// CSV 문자열 생성
+		const csvContent = [
+			headers.join(','),
+			...csvData.map(row => row.map(cell => `"${cell}"`).join(','))
+		].join('\n');
+
+		// BOM 추가 (Excel에서 한글 깨짐 방지)
+		const BOM = '\uFEFF';
+		const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+
+		// 다운로드
+		const link = document.createElement('a');
+		const url = URL.createObjectURL(blob);
+		link.setAttribute('href', url);
+		link.setAttribute('download', `users_${dayjs().format('YYYYMMDD_HHmmss')}.csv`);
+		link.style.visibility = 'hidden';
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+
+		toast.success($i18n.t('Users exported successfully'));
+	};
 </script>
 
 <ConfirmDialog
@@ -204,6 +248,29 @@
 				</div>
 
 				<div>
+					<Tooltip content="Export to CSV">
+						<button
+							class=" p-2 rounded-xl hover:bg-gray-100 dark:bg-gray-900 dark:hover:bg-gray-850 transition font-medium text-sm flex items-center space-x-1"
+							on:click={exportToCSV}
+						>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 16 16"
+								fill="currentColor"
+								class="size-3.5"
+							>
+								<path
+									d="M8.75 2.75a.75.75 0 0 0-1.5 0v5.69L5.03 6.22a.75.75 0 0 0-1.06 1.06l3.5 3.5a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0-1.06-1.06L8.75 8.44V2.75Z"
+								/>
+								<path
+									d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
+								/>
+							</svg>
+						</button>
+					</Tooltip>
+				</div>
+
+				<div>
 					<Tooltip content={$i18n.t('Add User')}>
 						<button
 							class=" p-2 rounded-xl hover:bg-gray-100 dark:bg-gray-900 dark:hover:bg-gray-850 transition font-medium text-sm flex items-center space-x-1"
@@ -293,6 +360,14 @@
 						</div>
 					</th>
 
+					<th scope="col" class="px-2.5 py-2">
+						<div class="flex gap-1.5 items-center">부서명</div>
+					</th>
+
+					<th scope="col" class="px-2.5 py-2">
+						<div class="flex gap-1.5 items-center">외부검색</div>
+					</th>
+
 					<th
 						scope="col"
 						class="px-2.5 py-2 cursor-pointer select-none"
@@ -375,6 +450,18 @@
 							</div>
 						</td>
 						<td class=" px-3 py-1"> {user.email} </td>
+
+						<td class=" px-3 py-1 text-gray-700 dark:text-gray-300">
+							{user.dept_nm || '-'}
+						</td>
+
+						<td class=" px-3 py-1 text-center">
+							{#if user.external_search_enabled}
+								<span class="text-green-600 dark:text-green-400">가능</span>
+							{:else}
+								<span class="text-gray-400">불가능</span>
+							{/if}
+						</td>
 
 						<td class=" px-3 py-1">
 							{dayjs(user.last_active_at * 1000).fromNow()}

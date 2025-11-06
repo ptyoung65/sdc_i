@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
+	import { toast } from 'svelte-sonner';
+	import { downloadAndUploadEdmFiles } from '$lib/apis/edm-download';
 
 	onMount(() => {
 		console.log('🔵 [EdmFileListModal 팝업 표시]', {
@@ -13,7 +15,6 @@
 			}))
 		});
 	});
-	import { toast } from 'svelte-sonner';
 
 	export let files: any[] = [];
 	export let show: boolean = false;
@@ -21,10 +22,56 @@
 	const dispatch = createEventDispatcher();
 
 	let selectedFiles: string[] = [];
+	let previewFile: any = null;
+	let showPreview: boolean = false;
+	let previewContent: string = '';
+	let isLoadingPreview: boolean = false;
 
 	// 권한이 있는 파일만 선택 가능
 	function hasPermission(file: any): boolean {
 		return file.maxObjtSharePolicyId !== null && file.maxObjtSharePolicyId !== undefined;
+	}
+
+	// 문서 미리보기
+	async function viewDocument(file: any) {
+		if (!hasPermission(file)) {
+			toast.error('이 파일에 대한 권한이 없습니다.');
+			return;
+		}
+
+		previewFile = file;
+		showPreview = true;
+		isLoadingPreview = true;
+		previewContent = '';
+
+		try {
+			// EDM API를 통해 문서 내용을 가져와야 함
+			// 현재는 파일 정보만 표시
+			previewContent = `파일 정보:
+파일명: ${file.objtNm}
+워크스페이스: ${file.workspaceNm || '-'}
+소유자: ${file.filePOwerNm || '-'}
+크기: ${formatFileSize(file.filesize || 0)}
+확장자: ${file.fileExtNm || '-'}
+버전: ${file.fileVerNm || '-'}
+등록일: ${formatDate(file.objtRegDtm)}
+
+※ 실제 문서 내용은 EDM 다운로드 API를 통해 표시됩니다.`;
+
+			isLoadingPreview = false;
+		} catch (error) {
+			console.error('❌ 문서 미리보기 실패:', error);
+			toast.error(`문서 미리보기 실패: ${error.message}`);
+			isLoadingPreview = false;
+			closePreview();
+		}
+	}
+
+	// 미리보기 닫기
+	function closePreview() {
+		showPreview = false;
+		previewFile = null;
+		previewContent = '';
 	}
 
 	// 파일 선택/해제
@@ -47,14 +94,22 @@
 		if (selectedFiles.includes(objid)) {
 			selectedFiles = selectedFiles.filter((id) => id !== objid);
 		} else {
+			// 최대 3개까지만 선택 가능
+			if (selectedFiles.length >= 3) {
+				toast.error('문서는 최대 3개까지만 선택 가능합니다.');
+				return;
+			}
 			selectedFiles = [...selectedFiles, objid];
 		}
 	}
 
-	// 전체 선택
+	// 전체 선택 (최대 3개까지)
 	function selectAll() {
 		const selectableFiles = files.filter(hasPermission);
-		selectedFiles = selectableFiles.map((f) => f.objid);
+		selectedFiles = selectableFiles.slice(0, 3).map((f) => f.objid);
+		if (selectableFiles.length > 3) {
+			toast.info('최대 3개 파일만 선택되었습니다.');
+		}
 	}
 
 	// 전체 해제
@@ -62,7 +117,7 @@
 		selectedFiles = [];
 	}
 
-	// 파일 지식화 (다운로드 → 파싱 → 청킹 → 임베딩 → Milvus 저장)
+	// 파일 지식화 (다운로드 → Open WebUI가 자동 처리)
 	async function handleApply() {
 		console.log('🔵 [지식화 버튼 클릭]', {
 			timestamp: new Date().toISOString(),
@@ -78,136 +133,82 @@
 
 		const selectedFileObjects = files.filter((f) => selectedFiles.includes(f.objid));
 
+		// 📋 선택된 파일 리스트 상세 로그
+		console.log("=" + "=".repeat(79));
+		console.log('📋 [COMPONENT] EdmFileListModal.svelte');
+		console.log('📋 [ACTION] 사용자가 지식화할 파일 선택 완료');
+		console.log(`📋 [SELECTED_FILES_COUNT] ${selectedFileObjects.length}개 파일`);
+		selectedFileObjects.forEach((file, idx) => {
+			console.log(`📄 [SELECTED_FILE_${idx + 1}] objid=${file.objid}, name=${file.objtNm}, workspace=${file.workspaceNm}`);
+		});
+		console.log("=" + "=".repeat(79));
+
 		try {
-			// 1. edm_download 파이프 존재 여부 확인 (필수)
-			const downloadPipeName = 'edm_download';
-			
-			console.log('🔵 [파이프 존재 여부 확인]', {
+			toast.info(`${selectedFileObjects.length}개 파일 다운로드 및 지식화 중...`);
+
+			// 다운로드 요청 데이터 구성
+			const downloadRequests = selectedFileObjects.map((file) => ({
+				objid: file.objid,
+				fileLastVerSno: file.fileLastVerSno || file.flieLasVerSno || 1,
+				requestUser: file.requestUser || 'system'
+			}));
+
+			console.log('📥 [다운로드 및 업로드 시작]', {
 				timestamp: new Date().toISOString(),
-				action: 'check_pipe_exists',
-				requiredPipe: downloadPipeName
+				filesCount: downloadRequests.length
 			});
 
-			// 파이프 목록 가져오기
-			const pipesResponse = await fetch('/api/pipelines', {
-				headers: {
-					'Authorization': `Bearer ${localStorage.token}`
-				}
-			});
+			// EDM 파일 다운로드 + Open WebUI Knowledge Base 업로드
+			// Open WebUI가 자동으로 파싱, 청킹, 임베딩, Milvus 저장 처리
+			const result = await downloadAndUploadEdmFiles(
+				downloadRequests,
+				localStorage.token || ''
+			);
 
-			if (!pipesResponse.ok) {
-				throw new Error('파이프 목록을 가져올 수 없습니다.');
-			}
-
-			const pipesData = await pipesResponse.json();
-			const availablePipes = pipesData.data || pipesData || [];
-			const pipeExists = availablePipes.some(p => p.id === downloadPipeName);
-
-			if (!pipeExists) {
-				console.error('🔴 [파이프 없음 오류]', {
-					timestamp: new Date().toISOString(),
-					requiredPipe: downloadPipeName,
-					availablePipes: availablePipes.map(p => p.id)
-				});
-				throw new Error(`❌ 지식화를 위해서는 ${downloadPipeName} 파이프가 필요합니다. 파이프를 등록해주세요.`);
-			}
-
-			console.log('🟢 [파이프 확인 완료]', {
+			console.log('✅ [처리 완료]', {
 				timestamp: new Date().toISOString(),
-				pipeName: downloadPipeName,
-				status: 'exists'
+				success: result.success,
+				processedFiles: result.processed_files
 			});
 
-			// 2. 파일 다운로드 시작
-			toast.info(`${selectedFileObjects.length}개 파일 다운로드 중...`);
-			const downloadResults = [];
+			// 결과 집계
+			const successFiles = result.processed_files.filter((f) => f.success);
+			const failedFiles = result.processed_files.filter((f) => !f.success);
 
-			for (const file of selectedFileObjects) {
-				try {
-					const downloadPayload = {
-						objid: file.objid,
-						objtNm: file.objtNm,
-						workspaceNm: file.workspaceNm
-					};
-
-									console.log('🔵 [edm_download 호출]', {
-					timestamp: new Date().toISOString(),
-					action: 'download_pipe_call',
-					pipeName: downloadPipeName,
-					payload: downloadPayload
-				});
-
-				const downloadResponse = await fetch(`/api/pipelines/${downloadPipeName}`, {
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json',
-							'Authorization': `Bearer ${localStorage.token}`
-						},
-						body: JSON.stringify(downloadPayload)
-					});
-
-					if (!downloadResponse.ok) {
-						throw new Error(`다운로드 실패: ${downloadResponse.status}`);
-					}
-
-					const downloadResult = await downloadResponse.json();
-					console.log('🟢 [파일 다운로드 성공]', {
-					timestamp: new Date().toISOString(),
-					action: 'download_success',
-					objid: file.objid,
-					fileName: downloadResult.fileName || downloadResult.filename,
-					filePath: downloadResult.filePath || downloadResult.filepath,
-					response: downloadResult
-				});
-
-					// 파일명, 파일경로 포함
-					downloadResults.push({
-						...file,
-						fileName: downloadResult.fileName || downloadResult.filename,
-						filePath: downloadResult.filePath || downloadResult.filepath,
-						downloadSuccess: true
-					});
-				} catch (error) {
-					console.error('🔴 [파일 다운로드 실패]', {
-					timestamp: new Date().toISOString(),
-					action: 'download_error',
-					objid: file.objid,
-					fileName: file.objtNm,
-					error: error.message,
-					stack: error.stack
-				});
-					downloadResults.push({
-						...file,
-						downloadSuccess: false,
-						error: error.message
-					});
-				}
+			if (successFiles.length > 0) {
+				toast.success(`✅ ${successFiles.length}개 파일 지식화 완료!`);
+				console.log('✅ [성공 파일]', successFiles);
 			}
 
-			// 다운로드 성공한 파일만 임베딩 처리
-			const successFiles = downloadResults.filter(f => f.downloadSuccess);
+			if (failedFiles.length > 0) {
+				toast.warning(`⚠️ ${failedFiles.length}개 파일 처리 실패`);
+				failedFiles.forEach((failedFile) => {
+					console.error('❌ [파일 처리 실패]', {
+						objid: failedFile.objid,
+						fileName: failedFile.file_name,
+						error: failedFile.error
+					});
+				});
+			}
 
 			if (successFiles.length === 0) {
-				toast.error('모든 파일 다운로드에 실패했습니다.');
-				return;
+				throw new Error('모든 파일 처리에 실패했습니다.');
 			}
 
-			toast.success(`${successFiles.length}개 파일 다운로드 완료. 임베딩 처리 중...`);
-
-			// 임베딩 이벤트 발송 (Chat.svelte에서 처리)
+			// 성공 이벤트 발송 (Chat.svelte에서 처리)
 			console.log('🔵 [dispatch embed 이벤트]', {
 				timestamp: new Date().toISOString(),
 				action: 'dispatch_embed',
-				successFilesCount: successFiles.length,
-				successFiles: successFiles.map(f => ({
-					objid: f.objid,
-					fileName: f.fileName,
-					filePath: f.filePath
-				}))
+				successFiles: successFiles
 			});
 
 			dispatch('embed', {
-				files: successFiles
+				files: successFiles.map((f) => ({
+					objid: f.objid,
+					fileName: f.file_name,
+					fileId: f.file_id,
+					status: 'success'
+				}))
 			});
 
 			close();
@@ -319,34 +320,40 @@
 				</button>
 			</div>
 
-			<!-- Toolbar -->
-			<div
-				class="flex items-center justify-between px-6 py-3 bg-gray-50 dark:bg-gray-800/50 border-b dark:border-gray-800"
-			>
-				<div class="flex gap-2">
-					<button
-						on:click={selectAll}
-						class="px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700/50 rounded-lg transition-all duration-200 border border-blue-200 dark:border-blue-900/30"
-					>
-						<span class="flex items-center gap-1.5">
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-								/>
-							</svg>
-							전체 선택
-						</span>
-					</button>
-					<button
-						on:click={deselectAll}
-						class="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700/50 rounded-lg transition-all duration-200 border border-gray-300 dark:border-gray-700"
-					>
-						선택 해제
-					</button>
-				</div>
+		<!-- Toolbar -->
+		<div
+			class="flex items-center justify-between px-6 py-3 bg-gray-50 dark:bg-gray-800/50 border-b dark:border-gray-800 gap-4"
+		>
+			<div class="flex gap-2">
+				<button
+					on:click={selectAll}
+					class="px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700/50 rounded-lg transition-all duration-200 border border-blue-200 dark:border-blue-900/30"
+				>
+					<span class="flex items-center gap-1.5">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+							/>
+						</svg>
+						전체 선택
+					</span>
+				</button>
+				<button
+					on:click={deselectAll}
+					class="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700/50 rounded-lg transition-all duration-200 border border-gray-300 dark:border-gray-700"
+				>
+					선택 해제
+				</button>
+			</div>
+			<div class="flex-1"></div>
+			<div class="flex items-center gap-4">
+				<p class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+					문서는 총 <span class="font-semibold text-blue-600 dark:text-blue-400">3개까지</span> 선택 가능합니다.
+					<span class="text-gray-400 dark:text-gray-500">(파일용량 제한 : 20MB)</span>
+				</p>
 				<div
 					class="flex items-center gap-2 text-sm px-4 py-1.5 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700"
 				>
@@ -355,6 +362,7 @@
 					<span class="text-gray-400">/ {files.length}개</span>
 				</div>
 			</div>
+		</div>
 
 			<!-- File List -->
 			<div class="flex-1 overflow-y-auto p-6 bg-gray-50/50 dark:bg-gray-900/30">
@@ -407,7 +415,7 @@
 										checked={selected}
 										disabled={!permitted}
 										class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 dark:border-gray-600 dark:focus:ring-blue-400"
-										on:click|stopPropagation
+										on:click|stopPropagation={() => toggleFileSelection(file.objid, file)}
 									/>
 								</div>
 
@@ -500,6 +508,22 @@
 										</div>
 									</div>
 								</div>
+								<!-- View Document Button -->
+								<div class="flex-shrink-0 pt-1">
+									<button
+										on:click|stopPropagation={() => viewDocument(file)}
+										disabled={!permitted}
+										class="px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 rounded-lg transition-all duration-200 border border-blue-200 dark:border-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+										type="button"
+										title="문서 미리보기"
+									>
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+										</svg>
+										문서보기
+									</button>
+								</div>
 							</div>
 						{/each}
 					</div>
@@ -560,6 +584,77 @@
 						지식화 ({selectedFiles.length}개)
 					</button>
 				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Document Preview Modal -->
+{#if showPreview}
+	<div
+		class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+		on:click={closePreview}
+		on:keydown={(e) => e.key === 'Escape' && closePreview()}
+		role="dialog"
+		aria-modal="true"
+	>
+		<div
+			class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-4xl w-full mx-4 max-h-[85vh] flex flex-col border border-gray-200 dark:border-gray-700"
+			on:click|stopPropagation
+			on:keydown|stopPropagation
+		>
+			<!-- Preview Header -->
+			<div class="flex items-center justify-between p-6 pb-4 border-b dark:border-gray-800">
+				<div>
+					<h2 class="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+						<svg class="w-6 h-6 text-blue-600 dark:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+						</svg>
+						문서 미리보기
+					</h2>
+					{#if previewFile}
+						<p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+							{previewFile.objtNm}
+						</p>
+					{/if}
+				</div>
+				<button
+					on:click={closePreview}
+					class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+				>
+					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+
+			<!-- Preview Content -->
+			<div class="flex-1 overflow-y-auto p-6 bg-gray-50/50 dark:bg-gray-900/30">
+				{#if isLoadingPreview}
+					<div class="flex items-center justify-center h-full">
+						<div class="text-center">
+							<svg class="animate-spin h-12 w-12 text-blue-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+								<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+							</svg>
+							<p class="text-gray-600 dark:text-gray-400">문서 로딩 중...</p>
+						</div>
+					</div>
+				{:else}
+					<div class="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm">
+						<pre class="whitespace-pre-wrap text-sm text-gray-900 dark:text-gray-100 font-mono">{previewContent}</pre>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Preview Footer -->
+			<div class="flex items-center justify-end px-6 py-4 border-t dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
+				<button
+					on:click={closePreview}
+					class="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700 transition-all duration-200"
+				>
+					닫기
+				</button>
 			</div>
 		</div>
 	</div>

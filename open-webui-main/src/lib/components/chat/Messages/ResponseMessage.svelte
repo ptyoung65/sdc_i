@@ -117,14 +117,42 @@
 		}
 	}
 
+	// HTML 주석에서 EDM 파일 리스트 파싱
+	function parseEdmFiles(content: string): any[] {
+		try {
+			const match = content.match(/<!--EDM_FILES:(.*?)-->/s);
+			if (match && match[1]) {
+				return JSON.parse(match[1]);
+			}
+		} catch (e) {
+			console.error('EDM 파일 리스트 파싱 실패:', e);
+		}
+		return [];
+	}
+
+	// 메시지 내용에서 EDM 파일 리스트 추출
+	$: edmFiles = message.content ? parseEdmFiles(message.content) : [];
+
+	// EDM 파일 메타데이터 주석을 제거한 순수 메시지 내용 (화면 표시용)
+	function removeEdmMetadata(content: string): string {
+		if (!content) return content;
+		// <!--EDM_FILES:....--> 형태의 주석 제거
+		return content.replace(/<!--EDM_FILES:.*?-->/gs, '').trim();
+	}
+
+	// 화면에 표시될 순수 메시지 내용
+	$: displayContent = removeEdmMetadata(message.content);
+
 	// EDM 메시지 디버깅
-	$: if (message.isEdmResult) {
+	$: if (message.isEdmResult || message?.info?.edmFileList || message?.metadata?.edm_file_list) {
 		console.log('🔵 [ResponseMessage] EDM 메시지 감지:', {
 			id: message.id,
 			isEdmResult: message.isEdmResult,
 			edmFileList: message.edmFileList,
 			edmData: message.edmData,
-			fileCount: (message.edmFileList || message.edmData || []).length
+			infoEdmFileList: message?.info?.edmFileList,
+			metadataEdmFileList: message?.metadata?.edm_file_list,
+			fileCount: (message.edmFileList || message.edmData || message?.info?.edmFileList || message?.metadata?.edm_file_list || []).length
 		});
 	}
 
@@ -168,6 +196,8 @@
 	// EDM 모달 상태
 	let showEdmSearchModal = false;
 	let showEdmFeedbackModal = false;
+	let showFileContentsModal = false;
+	let selectedFileContents = { title: '', contents: [] };
 	let speakingIdx: number | undefined;
 
 	let loadingSpeech = false;
@@ -236,7 +266,7 @@
 
 		speaking = true;
 
-		const content = removeAllDetails(message.content);
+		const content = removeAllDetails(displayContent);
 
 		if ($config.audio.tts.engine === '') {
 			let voices = [];
@@ -996,7 +1026,7 @@
 									<ContentRenderer
 										id={message.id}
 										{history}
-										content={message.content}
+										content={displayContent}
 										sources={message.sources}
 										floatingButtons={message?.done && !readOnly}
 										save={!readOnly}
@@ -1202,7 +1232,7 @@
 											? 'visible'
 											: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition copy-response-button"
 										on:click={() => {
-											copyToClipboard(message.content);
+											copyToClipboard(displayContent);
 										}}
 									>
 										<svg
@@ -1417,6 +1447,34 @@
 
 								{#if !readOnly}
 									{#if !$temporaryChatEnabled && ($config?.features.enable_message_rating ?? true)}
+										<!-- Copy Button -->
+										<Tooltip content={$i18n.t('Copy')} placement="bottom">
+											<button
+												class="{isLastMessage
+													? 'visible'
+													: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition copy-response-button"
+												on:click={() => {
+													copyToClipboard(displayContent);
+												}}
+											>
+												<svg
+													xmlns="http://www.w3.org/2000/svg"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke-width="2.3"
+													stroke="currentColor"
+													class="w-4 h-4"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
+													/>
+												</svg>
+											</button>
+										</Tooltip>
+
+										<!-- Thumbs Up Button -->
 										<Tooltip content={$i18n.t('Good Response')} placement="bottom">
 											<button
 												class="{isLastMessage
@@ -1473,7 +1531,7 @@
 													? 'visible'
 													: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg {(
 													message?.annotation?.rating ?? ''
-												).toString() === '-1'
+												).toString() === '1'
 													? 'bg-gray-100 dark:bg-gray-800'
 													: ''} dark:hover:text-white hover:text-black transition disabled:cursor-progress disabled:hover:bg-transparent"
 												disabled={feedbackLoading}
@@ -1487,7 +1545,7 @@
 													});
 
 													// 기존 평가 데이터 불러오기 (재클릭 시)
-													if (message?.annotation?.rating === -1) {
+													if (message?.annotation?.rating === 1) {
 														selectedFeedbackReason = message?.annotation?.reason || '';
 														feedbackComment = message?.annotation?.comment || '';
 														console.log('✅ [Thumbs Down] 기존 평가 데이터 로드:', {
@@ -1514,11 +1572,21 @@
 													xmlns="http://www.w3.org/2000/svg"
 												>
 													<path
-														d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"
+														d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 6 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"
 													/>
 												</svg>
 											</button>
 										</Tooltip>
+
+										<!-- AI 안내 문구 -->
+										<div class="flex items-center ml-3">
+											<svg class="w-3.5 h-3.5 text-gray-400 dark:text-gray-500 mr-1.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+											</svg>
+											<span class="text-xs text-gray-400 dark:text-gray-500 leading-tight">
+												생성형 AI는 부정확한 내용을 답변할 가능성이 있으므로 검토 후 활용하세요.
+											</span>
+										</div>
 									{/if}
 
 									{#if false}
@@ -1676,49 +1744,30 @@
 					{/if}
 
 					<!-- EDM 검색 결과 버튼 및 평가 버튼 -->
-					{#if message.isEdmResult && (message.edmFileList || message.edmData)}
-						<div class="flex items-center justify-between mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-							<!-- EDM 검색 결과 보기 버튼 -->
+					{#if edmFiles.length > 0 || (message.isEdmResult && (message.edmFileList || message.edmData)) || message?.info?.edmFileList || message?.metadata?.edm_file_list}
+						{@const fileList = edmFiles.length > 0 ? edmFiles : (message.edmFileList || message.edmData || message?.info?.edmFileList || message?.metadata?.edm_file_list || [])}
+						<!-- EDM 검색결과 버튼 -->
+						<div class="mt-3">
 							<button
 								data-testid="edm-file-list-button"
 								on:click={() => {
-									console.log('🔵 [ResponseMessage] EDM 파일 검색 버튼 클릭');
-									showEdmSearchModal = true;
+									console.log('🔵 [ResponseMessage] EDM 파일 검색 버튼 클릭:', {
+										messageId: message.id,
+										filesCount: fileList.length
+									});
+									dispatch('openEdmFileList', { files: fileList });
 								}}
-								class="px-4 py-2 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm hover:shadow-md"
+								class="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg text-sm font-medium transition-all duration-200 shadow-sm hover:shadow-md border border-gray-300 dark:border-gray-600"
 								type="button"
 							>
-								📂 문서 검색결과 보기 ({(message.edmFileList || message.edmData || []).length}건)
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+								</svg>
+								<span>EDM 검색결과</span>
+								<span class="px-2 py-0.5 bg-gray-200 dark:bg-gray-600 rounded-full text-xs font-semibold">
+									{fileList.length}건
+								</span>
 							</button>
-
-							<!-- 평가 버튼 -->
-							<div class="flex items-center space-x-4">
-								<span class="text-sm text-gray-600 dark:text-gray-400">이 답변이 도움이 되셨나요?</span>
-								<button
-									data-testid="edm-thumbs-up-button"
-									on:click={() => {
-										console.log('🔵 [ResponseMessage] 👍 버튼 클릭');
-										toast.success($i18n.t('피드백이 전송되었습니다.'));
-									}}
-									class="text-2xl hover:scale-110 transition-transform"
-									type="button"
-									title="도움이 되었어요"
-								>
-									👍
-								</button>
-								<button
-									data-testid="edm-thumbs-down-button"
-									on:click={() => {
-										console.log('🔵 [ResponseMessage] 👎 버튼 클릭');
-										showEdmFeedbackModal = true;
-									}}
-									class="text-2xl hover:scale-110 transition-transform"
-									type="button"
-									title="도움이 되지 않았어요"
-								>
-									👎
-								</button>
-							</div>
 						</div>
 					{/if}
 				{/if}
@@ -1735,7 +1784,7 @@
 
 <!-- EDM 검색 결과 모달 -->
 {#if showEdmSearchModal}
-	{@const edmResults = message?.edmFileList || message?.edmData || []}
+	{@const edmResults = message?.edmFileList || message?.edmData || message?.info?.edmFileList || []}
 	{#if edmResults.length > 0}
 		<EdmSearchResultsModal bind:show={showEdmSearchModal} results={edmResults} />
 	{/if}
@@ -1782,7 +1831,7 @@
 				<!-- 불만족 유형 선택 -->
 				<div class="mb-4">
 					<div class="text-sm text-gray-600 dark:text-gray-400 mb-3">
-						{$i18n.t('불만족 유형을 선택해주세요')}
+						{$i18n.t('불만족 유형을 선택하거나 의견을 작성해주세요')} <span class="text-gray-400">(선택 사항)</span>
 					</div>
 					<div class="flex flex-wrap gap-1.5 text-sm">
 						<button
@@ -1864,22 +1913,20 @@
 					</button>
 					<button
 						class="text-sm bg-gray-900 hover:bg-gray-850 text-gray-100 dark:bg-gray-100 dark:hover:bg-white dark:text-gray-800 font-medium w-full py-2 rounded-3xl transition disabled:opacity-50 disabled:cursor-not-allowed"
-						disabled={!selectedFeedbackReason || feedbackLoading}
+						disabled={(!selectedFeedbackReason && !feedbackComment) || feedbackLoading}
 						on:click={async () => {
-							if (!selectedFeedbackReason) {
-								toast.error($i18n.t('불만족 유형을 선택해주세요.'));
-								return;
-							}
+							// 분류를 선택하지 않으면 '기타'로 자동 설정
+							const finalReason = selectedFeedbackReason || '기타';
 
 							// 부정 피드백 저장
 							console.log('👎 [Thumbs Down] 부정 피드백 저장 시작:', {
-								rating: -1,
-								reason: selectedFeedbackReason,
+								rating: 1,
+								reason: finalReason,
 								comment: feedbackComment
 							});
 
-							await feedbackHandler(-1, {
-								reason: selectedFeedbackReason,
+							await feedbackHandler(1, {
+								reason: finalReason,
 								comment: feedbackComment
 							});
 
@@ -1896,6 +1943,89 @@
 						{feedbackLoading ? $i18n.t('전송 중...') : $i18n.t('제출')}
 					</button>
 				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- 파일 목록 팝업 모달 (Open WebUI 스타일) -->
+{#if showFileContentsModal}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+		on:click={() => showFileContentsModal = false}
+		on:keydown={(e) => e.key === 'Escape' && (showFileContentsModal = false)}
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="file-contents-modal-title"
+	>
+		<div
+			class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-4xl w-full mx-4 max-h-[85vh] flex flex-col border border-gray-200 dark:border-gray-700"
+			role="document"
+			on:click|stopPropagation
+			on:keydown|stopPropagation
+		>
+			<!-- Header -->
+			<div class="flex items-center justify-between p-6 pb-4 border-b dark:border-gray-800">
+				<div>
+					<h2 id="file-contents-modal-title" class="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+						<svg class="w-7 h-7 text-blue-600 dark:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+						</svg>
+						{selectedFileContents.title}
+					</h2>
+					<p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+						총 <span class="font-semibold">{selectedFileContents.contents.length}</span>개 항목
+					</p>
+				</div>
+				<button
+					on:click={() => showFileContentsModal = false}
+					class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+					aria-label="닫기"
+				>
+					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+					</svg>
+				</button>
+			</div>
+
+			<!-- Content -->
+			<div class="flex-1 overflow-y-auto p-6 bg-gray-50/50 dark:bg-gray-900/30">
+				{#if selectedFileContents.contents.length === 0}
+					<div class="text-center py-20">
+						<svg class="mx-auto w-16 h-16 text-gray-400 dark:text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+						</svg>
+						<p class="text-lg font-medium text-gray-500 dark:text-gray-400">목록이 비어있습니다</p>
+					</div>
+				{:else}
+					<div class="space-y-3">
+						{#each selectedFileContents.contents as item, index}
+							<div class="flex items-start gap-4 p-5 rounded-xl bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md transition-all duration-200">
+								<div class="flex-shrink-0 w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold text-sm">
+									{index + 1}
+								</div>
+								<div class="flex-1 min-w-0 pt-1">
+									<p class="text-gray-900 dark:text-white leading-relaxed">
+										{item}
+									</p>
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<!-- Footer -->
+			<div class="flex items-center justify-between px-6 py-5 border-t dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					<span class="font-medium">{selectedFileContents.contents.length}개 항목 표시 중</span>
+				</div>
+				<button
+					on:click={() => showFileContentsModal = false}
+					class="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700 transition-all duration-200 hover:shadow-sm"
+				>
+					닫기
+				</button>
 			</div>
 		</div>
 	</div>

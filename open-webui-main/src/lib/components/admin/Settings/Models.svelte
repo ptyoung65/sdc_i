@@ -71,6 +71,18 @@
 
 	let searchValue = '';
 
+	// 모델 타입 판단 함수 (내부/외부)
+	// 내부: SDC 회사 내부 모델
+	// 외부: MCP 서버를 통해 외부 LLM 서버로 연결
+	const getModelType = (model) => {
+		// meta에 model_type이 설정되어 있으면 그것 사용
+		if (model?.meta?.model_type) {
+			return model.meta.model_type;
+		}
+		// 기본값: 외부 모델
+		return 'external';
+	};
+
 	const downloadModels = async (models) => {
 		let blob = new Blob([JSON.stringify(models)], {
 			type: 'application/json'
@@ -354,7 +366,18 @@
 									className=" w-fit"
 									placement="top-start"
 								>
-									<div class="  font-semibold line-clamp-1">{model.name}</div>
+									<div class="flex items-center gap-2">
+										<div class="font-semibold line-clamp-1">{model.name}</div>
+										{#if getModelType(model) === 'internal'}
+											<span class="px-2 py-0.5 text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-full">
+												내부
+											</span>
+										{:else}
+											<span class="px-2 py-0.5 text-xs font-medium bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 rounded-full">
+												외부
+											</span>
+										{/if}
+									</div>
 								</Tooltip>
 								<div class=" text-xs overflow-hidden text-ellipsis line-clamp-1 text-gray-500">
 									<span class=" line-clamp-1">

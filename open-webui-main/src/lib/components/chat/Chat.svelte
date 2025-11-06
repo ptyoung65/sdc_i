@@ -149,35 +149,40 @@
 			);
 
 			if (hasEdm) {
-				// EDM 문서활용 선택 → edm_search_pipe 모델만 사용 (필수)
-				const edmModel = $models.find(m => m.id === 'edm_search_pipe');
-				
-				if (!edmModel) {
-					console.error('🔴 [EDM 모델 오류] edm_search_pipe 모델을 찾을 수 없습니다.', {
-						timestamp: new Date().toISOString(),
-						availableModels: $models.map(m => m.id),
-						selectedCategories: $selectedCategories
-					});
-					// toast 사용 (Promise rejection 방지)
-					if (typeof toast !== 'undefined') {
-						toast.error('❌ EDM 문서활용을 위해서는 edm_search_pipe 모델이 필요합니다. 파이프를 등록해주세요.');
-					}
-					// 모델 선택 비활성화 유지
-					isModelSelectorDisabled = true;
-				} else {
-					// edm_search_pipe 모델이 있을 때만 실행
-					if (selectedModels && selectedModels[0] !== edmModel.id) {
+				// EDM 문서활용 선택 시 모델 고정 및 비활성화
+				const availableModels = $models || [];
+
+				// 1순위: edm_search_pipe 모델 찾기 (필수!)
+				let edmModel = availableModels.find(m =>
+					m.id === 'edm_search_pipe' || m.id?.includes('edm_search')
+				);
+
+				// 2순위: edm_search_pipe가 없으면 에러 (다른 모델 사용 금지)
+				if (!edmModel && availableModels.length > 0) {
+					console.error('❌ edm_search_pipe 모델을 찾을 수 없습니다!');
+					toast.error('❌ EDM Search Pipeline을 활성화해주세요.');
+					edmModel = null;
+				}
+
+				if (edmModel) {
+					// 모델 고정 및 선택기 비활성화
+					if (selectedModels[0] !== edmModel.id) {
 						selectedModels = [edmModel.id];
-						isModelSelectorDisabled = true;
-						console.log('🔵 [EDM 모델 선택]', {
-							timestamp: new Date().toISOString(),
-							action: 'auto_model_selection',
-							selectedCategories: $selectedCategories,
-							selectedModel: edmModel.id,
-							modelName: edmModel.name,
-							isDisabled: true
-						});
 					}
+					isModelSelectorDisabled = true;
+
+					console.log('✅ [EDM Filter] EDM 문서활용 활성화 - 모델 고정 및 비활성화', {
+						timestamp: new Date().toISOString(),
+						selectedCategories: $selectedCategories,
+						fixedModel: edmModel.id,
+						modelName: edmModel.name,
+						isDisabled: true,
+						filterType: 'edm_search_pipe (Filter - auto-execute)'
+					});
+				} else {
+					// 모델이 없으면 경고
+					toast.error('❌ 사용 가능한 모델이 없습니다.');
+					isModelSelectorDisabled = false;
 				}
 			} else if (hasDaesawoo) {
 				// 대사우 Assistant 선택 → daesawoo 파이프라인 자동 선택
@@ -198,8 +203,23 @@
 				isModelSelectorDisabled = false;
 			}
 		} else {
-			// 카테고리가 선택되지 않으면 자유 선택 가능
+			// 카테고리가 선택되지 않으면 기본 모델로 복원
 			isModelSelectorDisabled = false;
+
+			// 기본 모델로 자동 전환
+			if ($modelType === 'internal') {
+				const defaultModelId = getDefaultInternalModelId();
+				if (selectedModels[0] !== defaultModelId) {
+					selectedModels = [defaultModelId];
+					console.log('✅ [카테고리 해제] 내부 기본 모델로 복원:', defaultModelId);
+				}
+			} else if ($modelType === 'external') {
+				const defaultModelId = getDefaultExternalModelId();
+				if (selectedModels[0] !== defaultModelId) {
+					selectedModels = [defaultModelId];
+					console.log('✅ [카테고리 해제] 외부 기본 모델로 복원:', defaultModelId);
+				}
+			}
 		}
 	}
 
@@ -221,16 +241,14 @@
 	let showSecurityWarning = false;
 	let pendingModelType = null;
 
-	// Model lists by type
-	const internalModels = [
-		{ id: 'gpt-oss', name: 'gpt-oss' },
-		{ id: 'qwen3', name: 'Qwen3' }
-	];
+	// 기본 모델 ID (관리자 설정에서 지정)
+	const getDefaultInternalModelId = () => {
+		return localStorage.getItem('defaultInternalModel') || 'gpt-oss';
+	};
 
-	const externalModels = [
-		{ id: 'gpt-4.1', name: 'GPT 4.1' },
-		{ id: 'perplexity', name: 'Perplexity' }
-	];
+	const getDefaultExternalModelId = () => {
+		return localStorage.getItem('defaultExternalModel') || 'gpt-4.1';
+	};
 
 	// Category boxes for internal model
 	const categories = [
@@ -372,9 +390,9 @@
 
 	// Update selected models when model type changes
 	$: if ($modelType === 'internal') {
-		selectedModels = [internalModels[0].id];
+		selectedModels = [getDefaultInternalModelId()];
 	} else if ($modelType === 'external') {
-		selectedModels = [externalModels[0].id];
+		selectedModels = [getDefaultExternalModelId()];
 	}
 
 	let history = {
@@ -696,6 +714,33 @@
 					eventConfirmationMessage = data.message;
 					eventConfirmationInputPlaceholder = data.placeholder;
 					eventConfirmationInputValue = data?.value ?? '';
+				} else if (type === 'event') {
+					// 📤 파이프에서 전송된 커스텀 이벤트 처리
+					const eventType = data?.event?.type ?? null;
+					const eventDetail = data?.event?.detail ?? null;
+
+					if (eventType === 'openEdmFileList') {
+						// 📂 EDM 파일 리스트를 메시지 메타데이터에 저장
+						console.log('[Chat] 📂 openEdmFileList 이벤트 수신 from pipe:', {
+							messageId: message.id,
+							filesCount: eventDetail?.files?.length ?? 0,
+							files: eventDetail?.files
+						});
+
+						// 메시지에 edmFileList 메타데이터 저장
+						if (!message.info) {
+							message.info = {};
+						}
+						message.info.edmFileList = eventDetail?.files || [];
+						message.isEdmResult = true;  // EDM 결과 플래그 설정 (버튼 렌더링용)
+
+						console.log('[Chat] ✅ edmFileList saved to message.info:', {
+							messageId: message.id,
+							savedFiles: message.info.edmFileList.length
+						});
+					} else {
+						console.log('[Chat] ⚠️ Unknown event type:', eventType, eventDetail);
+					}
 				} else {
 					console.log('Unknown message type', data);
 				}
@@ -2274,21 +2319,27 @@
 
 		// 선택된 카테고리에서 Knowledge Base 추가
 		if ($selectedCategories.length > 0) {
-			$selectedCategories.forEach(category => {
+		// EDM 선택 여부를 metadata로 전달 (chatFiles에 추가하지 않음)
+		const hasEdm = $selectedCategories.includes("edm");
+		if (hasEdm) {
+			console.log("🔵 [EDM 선택됨] metadata로 전달");
+		}
+		// EDM이 아닌 knowledge base만 chatFiles에 추가
+		$selectedCategories.filter(id => id !== "edm").forEach(categoryId => {
 				// Knowledge Base를 collection 타입으로 chatFiles에 추가
 				// EDM의 경우 collection_name 사용, 그 외는 name 사용
-				const collectionName = category.collection_name || category.name;
+				const collectionName = categoryId;
 				chatFiles.push({
 					type: 'collection',
-					id: category.id,
-					name: category.name,
+					id: categoryId,
+					name: categoryId,
 					collection_name: collectionName
 				});
 				console.log('🔵 [Knowledge Base 추가]', {
 					timestamp: new Date().toISOString(),
 					action: 'add_collection',
-					categoryId: category.id,
-					categoryName: category.name,
+					categoryId: categoryId,
+					categoryName: categoryId,
 					collectionName: collectionName,
 					totalChatFiles: chatFiles.length
 				});
@@ -2538,10 +2589,22 @@
 			return fileExists;
 		});
 
+		// EDM 선택 여부 확인
+		const hasEdm = $selectedCategories.includes("edm");
+
+		// EDM 선택 시: collection 타입 파일 제외 (middleware 에러 방지)
 		let files = JSON.parse(JSON.stringify(chatFiles));
+		if (hasEdm) {
+			// EDM 선택 시에는 collection 타입 파일 모두 제외
+			files = files.filter(item => item.type !== 'collection');
+			console.log("🔵 [EDM 선택됨] collection 타입 파일 제외:", files.length);
+		}
+
 		files.push(
 			...(userMessage?.files ?? []).filter((item) =>
-				['doc', 'text', 'file', 'note', 'chat', 'collection'].includes(item.type)
+				hasEdm
+					? ['doc', 'text', 'file', 'note', 'chat'].includes(item.type) // EDM: collection 제외
+					: ['doc', 'text', 'file', 'note', 'chat', 'collection'].includes(item.type) // 일반: collection 포함
 			)
 		);
 		// Remove duplicates
@@ -2631,11 +2694,17 @@
 			}
 		}
 
+		// EDM 선택 시 EDM Search Pipeline을 모델로 설정
+		if (hasEdm) {
+			selectedModels = ['edm_search_pipe'];
+			console.log('🔵 [EDM 선택됨] EDM Search Pipeline 모델로 설정:', selectedModels);
+		}
+
 		const res = await generateOpenAIChatCompletion(
 			localStorage.token,
 			{
 				stream: stream,
-				model: model.id,
+				model: hasEdm ? 'edm_search_pipe' : model.id,
 				messages: messages,
 				params: {
 					...$settings?.params,
@@ -3413,14 +3482,14 @@
 														<button
 															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
 															on:click={async () => {
-																const sampleText = '우리회사 PCCB 절차는 어떻게 되';
+																const sampleText = '우리회사 PCCB 절차는 어떻게 돼';
 																prompt = sampleText;
 																await tick();
 																if (messageInput) { await messageInput.setText(sampleText); }
 															}}
 														>
 															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
-																우리회사 PCCB 절차는 어떻게 되
+																우리회사 PCCB 절차는 어떻게 돼
 															</div>
 														</button>
 														<button
@@ -3798,6 +3867,16 @@
 					const totalFiles = selectedFiles.length;
 
 					try {
+						// 📂 [Chat.svelte:3827] 벡터화 시작 로그
+						console.log("=" + "=".repeat(79));
+						console.log('📂 [COMPONENT] Chat.svelte:3827');
+						console.log('📂 [ACTION] 파일 벡터화 시작');
+						console.log(`📂 [FILE_INFO] ${fileNum}/${totalFiles} - ${file.objtNm}`);
+						console.log(`📂 [FILE_NAME] ${file.fileName || file.objtNm}`);
+						console.log(`📂 [FILE_PATH] ${file.filePath}`);
+						console.log(`📂 [OBJID] ${file.objid}`);
+						console.log("=" + "=".repeat(79));
+
 						// 1단계: 파일 파싱 시작
 						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 읽고 있습니다...`);
 						console.log(`📄 벡터화 처리 중: ${file.objtNm}`, {
@@ -3809,7 +3888,7 @@
 						// 2단계: 파싱, 청킹, 임베딩 파이프라인 호출
 						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파싱 및 청킹 중...`);
 
-						const vectorizePipeName = 'edm_vectorization_pipe';
+						const vectorizePipeName = 'edm_embedding_pipe';
 						const vectorizePayload = {
 							file_id: file.objid,
 							file_name: file.fileName || file.objtNm,
@@ -3819,6 +3898,16 @@
 							chat_id: $chatId,
 							collection_name: 'edm-knowledge'  // Milvus collection
 						};
+
+						// 🔌 [Chat.svelte:3858] 벡터화 파이프 호출 로그
+						console.log("=" + "=".repeat(79));
+						console.log('🔌 [PIPELINE] edm_embedding_pipe');
+						console.log('🔌 [COMPONENT] Chat.svelte:3858');
+						console.log('🔌 [ACTION] 벡터화 파이프 호출');
+						console.log(`🔌 [FILE_PATH] ${vectorizePayload.file_path}`);
+						console.log(`🔌 [COLLECTION] ${vectorizePayload.collection_name}`);
+						console.log(`🔌 [PAYLOAD]`, vectorizePayload);
+						console.log("=" + "=".repeat(79));
 
 						console.log('🔵 [벡터화 파이프 호출]', {
 						timestamp: new Date().toISOString(),

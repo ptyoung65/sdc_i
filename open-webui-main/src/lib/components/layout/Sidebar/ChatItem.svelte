@@ -54,20 +54,10 @@
 	export let onDragEnd = () => {};
 
 	let chat = null;
+	let draggable = true;
 
-	let mouseOver = false;
-	let draggable = false;
-	$: if (mouseOver) {
-		loadChat();
-	}
-
-	const loadChat = async () => {
-		if (!chat) {
-			draggable = false;
-			chat = await getChatById(localStorage.token, id);
-			draggable = true;
-		}
-	};
+	// 롤오버 기능 제거 - 더 이상 마우스 오버 시 자동 로드하지 않음
+	// mouseOver 시 chat 로드 기능 제거됨
 
 	let showShareChatModal = false;
 	let confirmEdit = false;
@@ -140,15 +130,20 @@
 	};
 
 	const moveChatHandler = async (chatId, folderId) => {
+		console.log('🔍 [moveChatHandler] Called with:', { chatId, folderId });
+
 		if (chatId && folderId) {
+			console.log('✅ [moveChatHandler] Both chatId and folderId are valid, calling API...');
 			const res = await updateChatFolderIdById(localStorage.token, chatId, folderId).catch(
 				(error) => {
+					console.error('❌ [moveChatHandler] API Error:', error);
 					toast.error(`${error}`);
 					return null;
 				}
 			);
 
 			if (res) {
+				console.log('✅ [moveChatHandler] API Success:', res);
 				currentChatPage.set(1);
 				await chats.set(await getChatList(localStorage.token, $currentChatPage));
 				await pinnedChats.set(await getPinnedChatList(localStorage.token));
@@ -158,6 +153,7 @@
 				toast.success($i18n.t('Chat moved successfully'));
 			}
 		} else {
+			console.error('❌ [moveChatHandler] Missing parameter:', { chatId, folderId });
 			toast.error($i18n.t('Failed to move chat'));
 		}
 	};
@@ -316,13 +312,13 @@
 
 <DeleteConfirmDialog
 	bind:show={showDeleteConfirm}
-	title={$i18n.t('Delete chat?')}
+	title={`${title} 을(를) 대화이력에서 삭제합니다`}
 	on:confirm={() => {
 		deleteChatHandler(id);
 	}}
 >
 	<div class=" text-sm text-gray-500 flex-1 line-clamp-3">
-		{$i18n.t('This will delete')} <span class="  font-semibold">{title}</span>.
+		이 작업은 취소할 수 없습니다.
 	</div>
 </DeleteConfirmDialog>
 
@@ -397,103 +393,75 @@
 			/>
 		</div>
 	{:else}
-		<a
-			id="sidebar-chat-item"
-			class=" w-full flex rounded-xl px-[11px] py-2 min-h-[48px] border border-gray-200/50 dark:border-gray-700/50 {id === $chatId ||
-			confirmEdit
-				? 'bg-gray-100 dark:bg-gray-900 selected'
-				: selected
-					? 'bg-gray-100 dark:bg-gray-950 selected'
-					: ' group-hover:bg-gray-100 dark:group-hover:bg-gray-950'}"
-			href="/c/{id}"
-			on:click={() => {
-				dispatch('select');
+		<div class="flex items-center w-full relative">
+			<a
+				id="sidebar-chat-item"
+				class="flex-1 flex rounded-xl px-[11px] py-2 min-h-[48px] {id === $chatId ||
+				confirmEdit
+					? 'bg-gray-100 dark:bg-gray-900 selected'
+					: selected
+						? 'bg-gray-100 dark:bg-gray-950 selected'
+						: ' group-hover:bg-gray-100 dark:group-hover:bg-gray-950'}"
+				href="/c/{id}"
+				on:click={() => {
+					dispatch('select');
 
-				if ($selectedFolder) {
-					selectedFolder.set(null);
-				}
+					if ($selectedFolder) {
+						selectedFolder.set(null);
+					}
 
-				if ($mobile) {
-					showSidebar.set(false);
-				}
-			}}
-			on:dblclick={async (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-
-				doubleClicked = true;
-				renameHandler();
-			}}
-			on:mouseenter={(e) => {
-				mouseOver = true;
-			}}
-			on:mouseleave={(e) => {
-				mouseOver = false;
-			}}
-			on:focus={(e) => {}}
-			draggable="false"
-		>
-			<div class=" flex flex-col self-start flex-1 gap-1 pr-16">
-				<!-- Question and Answer Display -->
-				{#if chat?.chat?.messages && chat.chat.messages.length > 0}
-					{@const firstUserMessage = chat.chat.messages.find(m => m.role === 'user')}
-					{@const firstAssistantMessage = chat.chat.messages.find(m => m.role === 'assistant')}
-
-					<!-- Question (User Message) -->
-					{#if firstUserMessage?.content}
-						<div dir="auto" class="text-left overflow-hidden w-full truncate">
-							<span class="text-xs font-semibold text-gray-700 dark:text-gray-300">Q:</span>
-							<span class="text-xs text-gray-600 dark:text-gray-400 ml-1">{firstUserMessage.content}</span>
-						</div>
-					{/if}
-
-					<!-- Answer (Assistant Message) -->
-					{#if firstAssistantMessage?.content}
-						<div dir="auto" class="text-left overflow-hidden w-full truncate">
-							<span class="text-xs font-semibold text-gray-700 dark:text-gray-300">A:</span>
-							<span class="text-xs text-gray-600 dark:text-gray-400 ml-1">{firstAssistantMessage.content}</span>
-						</div>
-					{/if}
-				{:else}
-					<!-- Fallback to title if no messages loaded yet -->
-					<div dir="auto" class="text-left overflow-hidden w-full truncate text-sm font-medium">
-						{title}
-					</div>
-				{/if}
-			</div>
-		</a>
-
-		<!-- Edit and Delete Buttons (Minimized icons at right end) -->
-		<div class="absolute right-1 top-1 flex items-center gap-0 z-20 bg-gray-50/80 dark:bg-gray-800/80 rounded px-0.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-			<button
-				class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
-				on:click={(e) => {
+					if ($mobile) {
+						showSidebar.set(false);
+					}
+				}}
+				on:dblclick={async (e) => {
 					e.preventDefault();
 					e.stopPropagation();
+
+					doubleClicked = true;
 					renameHandler();
 				}}
-				type="button"
-				title="Edit"
+				on:focus={(e) => {}}
+				draggable="false"
 			>
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3">
-					<path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-				</svg>
-			</button>
+				<div class=" flex flex-1 items-center gap-2 pr-10">
+					<!-- Chat Title Display -->
+					<div dir="auto" class="text-left overflow-hidden w-full line-clamp-2 text-sm">
+						{title}
+					</div>
+				</div>
+			</a>
 
-			<button
-				class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
-				on:click={(e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					showDeleteConfirm = true;
-				}}
-				type="button"
-				title="Delete"
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-				</svg>
-			</button>
+			<!-- More Options Menu Button (Always Visible) -->
+			<div class="absolute right-2 z-20">
+				<ChatMenu
+					{id}
+					shareHandler={() => {
+						showShareChatModal = true;
+					}}
+					cloneChatHandler={cloneChatHandler}
+					{renameHandler}
+					deleteHandler={() => {
+						showDeleteConfirm = true;
+					}}
+					archiveChatHandler={archiveChatHandler}
+					moveChatHandler={moveChatHandler}
+					onClose={() => {}}
+					chatId={id}
+					on:change
+				>
+					<button
+						class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition"
+						type="button"
+						title={$i18n.t('More options')}
+					>
+						<!-- Three Dots Icon -->
+						<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
+						</svg>
+					</button>
+				</ChatMenu>
+			</div>
 		</div>
 	{/if}
 

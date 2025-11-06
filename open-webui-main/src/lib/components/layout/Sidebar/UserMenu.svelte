@@ -70,27 +70,6 @@
 			align="start"
 			transition={(e) => fade(e, { duration: 100 })}
 		>
-			<!-- 사용자 정보 -->
-			<DropdownMenu.Item
-				as="a"
-				href="/profile"
-				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition select-none cursor-pointer"
-				on:click={async () => {
-					show = false;
-					if ($mobile) {
-						await tick();
-						showSidebar.set(false);
-					}
-				}}
-			>
-				<div class=" self-center mr-3">
-					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-					</svg>
-				</div>
-				<div class=" self-center truncate">{$i18n.t('My Profile')}</div>
-			</DropdownMenu.Item>
-
 			<!-- 보관된 채팅 -->
 			<DropdownMenu.Item
 				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer"
@@ -109,6 +88,44 @@
 					<ArchiveBox className="size-5" strokeWidth="1.5" />
 				</div>
 				<div class=" self-center truncate">{$i18n.t('Archived Chats')}</div>
+			</DropdownMenu.Item>
+
+			<hr class=" border-gray-50 dark:border-gray-800 my-1 p-0" />
+
+			<!-- 설정 -->
+			<DropdownMenu.Item
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer"
+				on:click={async () => {
+					show = false;
+					showSettings.set(true);
+					if ($mobile) {
+						await tick();
+						showSidebar.set(false);
+					}
+				}}
+			>
+				<div class=" self-center mr-3">
+					<Settings className="size-5" strokeWidth="1.5" />
+				</div>
+				<div class=" self-center truncate">{$i18n.t('Settings')}</div>
+			</DropdownMenu.Item>
+
+			<!-- 키보드 단축키 -->
+			<DropdownMenu.Item
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer"
+				on:click={async () => {
+					show = false;
+					showShortcuts.set(true);
+					if ($mobile) {
+						await tick();
+						showSidebar.set(false);
+					}
+				}}
+			>
+				<div class=" self-center mr-3">
+					<Keyboard className="size-5" strokeWidth="1.5" />
+				</div>
+				<div class=" self-center truncate">{$i18n.t('Keyboard shortcuts')}</div>
 			</DropdownMenu.Item>
 
 			<hr class=" border-gray-50 dark:border-gray-800 my-1 p-0" />

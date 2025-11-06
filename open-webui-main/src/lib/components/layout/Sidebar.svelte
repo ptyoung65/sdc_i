@@ -51,7 +51,7 @@
 	import ChatItem from './Sidebar/ChatItem.svelte';
 	import Spinner from '../common/Spinner.svelte';
 	import Loader from '../common/Loader.svelte';
-	import Folder from '../common/Folder.svelte';
+	import FolderIcon from '../icons/Folder.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Folders from './Sidebar/Folders.svelte';
 	import { getChannels, createNewChannel } from '$lib/apis/channels';
@@ -151,7 +151,9 @@
 		}
 	};
 
-	const createFolder = async ({ name, data }) => {
+	const createFolder = async ({ name, meta, data }) => {
+		console.log('🔵 [createFolder] Started with:', { name, meta, data });
+
 		if (name === '') {
 			toast.error($i18n.t('Folder name cannot be empty.'));
 			return;
@@ -170,29 +172,26 @@
 			name = `${name} ${i}`;
 		}
 
-		// Add a dummy folder to the list to show the user that the folder is being created
-		const tempId = uuidv4();
-		folders = {
-			...folders,
-			tempId: {
-				id: tempId,
-				name: name,
-				created_at: Date.now(),
-				updated_at: Date.now()
-			}
-		};
+		console.log('🔵 [createFolder] Calling API with name:', name);
 
 		const res = await createNewFolder(localStorage.token, {
 			name,
+			meta,
 			data
 		}).catch((error) => {
+			console.error('❌ [createFolder] API Error:', error);
 			toast.error(`${error}`);
 			return null;
 		});
 
+		console.log('🔵 [createFolder] API Response:', res);
+
 		if (res) {
-			// newFolderId = res.id;
 			await initFolders();
+			toast.success($i18n.t('Folder created successfully'));
+			console.log('✅ [createFolder] Completed successfully');
+		} else {
+			console.error('❌ [createFolder] API returned null');
 		}
 	};
 
@@ -472,7 +471,7 @@
 
 	const newChatHandler = async () => {
 		// 완전한 페이지 리프레시로 모든 상태 초기화 (채팅 히스토리는 localStorage에 유지됨)
-		console.log('🔄 [ChatPro 로고] 페이지 리프레시 - 모든 상태 초기화');
+		console.log('🔄 [Gen SDC 로고] 페이지 리프레시 - 모든 상태 초기화');
 		window.location.href = '/';
 	};
 
@@ -742,6 +741,7 @@
 					</Tooltip>
 				</div>
 
+
 				{#if ($config?.features?.enable_notes ?? false) && ($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true))}
 					<div class="">
 						<Tooltip content={$i18n.t('Notes')} placement="right">
@@ -884,7 +884,7 @@
 			>
 				<a href="/" class="flex flex-1 px-1.5" on:click={newChatHandler}>
 					<div class=" self-center font-medium text-gray-850 dark:text-white font-primary">
-						ChatPro
+						Gen SDC
 					</div>
 				</a>
 				<Tooltip
@@ -954,6 +954,23 @@
 					</button>
 				</Tooltip>
 
+				<!-- 폴더 추가 버튼 -->
+				<Tooltip content="새 폴더" placement="bottom">
+					<button
+						class="flex rounded-xl size-8.5 justify-center items-center hover:bg-gray-100/50 dark:hover:bg-gray-850/50 transition"
+						on:click={(e) => {
+							e.stopImmediatePropagation();
+							e.preventDefault();
+							showCreateFolderModal = true;
+						}}
+						aria-label="새 폴더"
+					>
+						<div class="self-center p-1.5">
+							<FolderIcon className="size-4.5" />
+						</div>
+					</button>
+				</Tooltip>
+
 				<div
 					class="{scrollTop > 0
 						? 'visible'
@@ -961,20 +978,7 @@
 				></div>
 			</div>
 
-			<!-- 채팅 히스토리 헤더 - 상단 헤더 바로 아래 고정 -->
-			<div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 sticky top-[52px] z-10">
-				<div class="flex items-center justify-between">
-					<h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
-						<span>📝</span>
-						<span>채팅 히스토리</span>
-					</h3>
-					<span class="text-xs px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full font-medium">
-						{filteredChats?.length || 0}
-					</span>
-				</div>
-			</div>
-
-			<!-- 채팅 히스토리 컨텐츠 영역 -->
+			<!-- 채팅 히스토리 및 폴더 컨텐츠 영역 -->
 			<div
 				class="flex-1 flex flex-col overflow-y-auto scrollbar-hidden"
 				on:scroll={(e) => {
@@ -985,6 +989,45 @@
 					}
 				}}
 			>
+				<!-- 폴더 섹션 -->
+				{#if Object.keys(folders).length > 0}
+					<div class="px-2 pt-2 pb-3 border-b border-gray-200 dark:border-gray-700">
+						<div class="px-4 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
+							📁 {$i18n.t('Folders')}
+						</div>
+						<Folders
+							bind:folderRegistry
+							{folders}
+							{shiftKey}
+							onDelete={(folderId) => {
+								initFolders();
+							}}
+							on:import={(e) => {
+								importChatHandler(e.detail.items, false, e.detail.folderId);
+							}}
+							on:update={() => {
+								initFolders();
+							}}
+							on:change={() => {
+								chats.set(getChatList(localStorage.token, $currentChatPage));
+							}}
+						/>
+					</div>
+				{/if}
+
+				<!-- 채팅 히스토리 헤더 -->
+				<div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 sticky top-0 z-10">
+					<div class="flex items-center justify-between">
+						<h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+							<span>📝</span>
+							<span>채팅 히스토리</span>
+						</h3>
+						<span class="text-xs px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full font-medium">
+							{filteredChats?.length || 0}
+						</span>
+					</div>
+				</div>
+
 				<!-- 채팅 히스토리 표시 -->
 				{#if filteredChats && filteredChats.length > 0}
 					<div class="py-2 px-2">

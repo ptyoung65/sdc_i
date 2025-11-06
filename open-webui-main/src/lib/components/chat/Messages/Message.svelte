@@ -97,6 +97,9 @@
 				{readOnly}
 				{editCodeBlock}
 				{topPadding}
+				on:openEdmFileList
+				on:openDocumentList
+				on:edmFeedback
 			/>
 		{:else}
 			<MultiResponseMessages
@@ -121,6 +124,9 @@
 				{readOnly}
 				{editCodeBlock}
 				{topPadding}
+				on:openEdmFileList
+				on:openDocumentList
+				on:edmFeedback
 			/>
 		{/if}
 	{/if}

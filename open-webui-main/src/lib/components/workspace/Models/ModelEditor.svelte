@@ -51,6 +51,10 @@
 	let id = '';
 	let name = '';
 
+	let modelType = 'external'; // 'internal' 또는 'external'
+	let apiUrl = ''; // 모델 접속 URL
+	let apiKey = ''; // 모델 API Key
+
 	let enableDescription = true;
 
 	$: if (!edit) {
@@ -147,6 +151,11 @@
 
 		info.access_control = accessControl;
 		info.meta.capabilities = capabilities;
+		info.meta.model_type = modelType;
+
+		// API URL과 API Key는 비어있으면 null로 저장 (연결 설정의 기본값 사용)
+		info.meta.api_url = apiUrl?.trim() === '' ? null : apiUrl;
+		info.meta.api_key = apiKey?.trim() === '' ? null : apiKey;
 
 		if (enableDescription) {
 			info.meta.description = info.meta.description.trim() === '' ? null : info.meta.description;
@@ -284,6 +293,23 @@
 
 			capabilities = { ...capabilities, ...(model?.meta?.capabilities ?? {}) };
 			defaultFeatureIds = model?.meta?.defaultFeatureIds ?? [];
+
+			// 모델 타입 로드 (내부/외부 구분)
+			// 내부: SDC 회사 내부 모델
+			// 외부: MCP 서버를 통해 외부 LLM 서버로 연결
+			if (model?.meta?.model_type) {
+				modelType = model.meta.model_type;
+			} else {
+				modelType = 'external'; // 기본값
+			}
+
+			// API URL 및 API Key 로드
+			if (model?.meta?.api_url) {
+				apiUrl = model.meta.api_url;
+			}
+			if (model?.meta?.api_key) {
+				apiKey = model.meta.api_key;
+			}
 
 			if ('access_control' in model) {
 				accessControl = model.access_control;
@@ -564,6 +590,72 @@
 								bind:value={info.meta.description}
 							/>
 						{/if}
+					</div>
+
+					<div class="my-1">
+						<div class=" text-sm font-semibold mb-2">{$i18n.t('Model Type')}</div>
+						<div class="flex gap-4">
+							<label class="flex items-center gap-2 cursor-pointer">
+								<input
+									type="radio"
+									bind:group={modelType}
+									value="internal"
+									class="w-4 h-4"
+								/>
+								<span class="text-sm">내부 (SDC 회사 내부 모델)</span>
+							</label>
+							<label class="flex items-center gap-2 cursor-pointer">
+								<input
+									type="radio"
+									bind:group={modelType}
+									value="external"
+									class="w-4 h-4"
+								/>
+								<span class="text-sm">외부 (MCP 서버 경유 외부 LLM)</span>
+							</label>
+						</div>
+						<div class="text-xs text-gray-500 dark:text-gray-400 mt-2 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+							{#if modelType === 'internal'}
+								<div class="font-medium mb-1">SDC 회사 내부 모델</div>
+								<div>회사 내부에서 운영하는 LLM 모델입니다.</div>
+								<div class="mt-1">✓ 접속 URL과 API Key가 필요합니다.</div>
+							{:else}
+								<div class="font-medium mb-1">외부 모델 (MCP 서버 경유)</div>
+								<div>MCP 서버를 통해 외부 LLM 서버로 메시지를 전송/수신합니다.</div>
+								<div class="mt-1">✓ 접속 URL과 API Key가 필요합니다.</div>
+							{/if}
+						</div>
+					</div>
+
+					<!-- API URL 및 API Key 입력 필드 -->
+					<div class="my-2.5">
+						<div class="flex flex-col gap-2">
+							<div>
+								<div class="text-sm font-semibold mb-1.5">접속 URL (선택사항)</div>
+								<input
+									class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-none"
+									type="text"
+									bind:value={apiUrl}
+									placeholder="비워두면 연결 설정의 기본 URL 사용"
+								/>
+								<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+									이 모델 전용 API URL. 비워두면 연결 설정의 기본값이 적용됩니다.
+								</div>
+							</div>
+
+							<div>
+								<div class="text-sm font-semibold mb-1.5">API Key (선택사항)</div>
+								<input
+									class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-none"
+									type="password"
+									bind:value={apiKey}
+									placeholder="비워두면 연결 설정의 기본 API Key 사용"
+								/>
+								<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+									이 모델 전용 API Key. 비워두면 연결 설정의 기본값이 적용됩니다. (암호화되어 저장)
+								</div>
+							</div>
+						</div>
 					</div>
 
 					<div class=" mt-2 my-1">

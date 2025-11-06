@@ -27,7 +27,7 @@
 			title: '지식용어 사전',
 			icon: '📚',
 			suggestions: [
-				'우리회사 PCCB 절차는 어떻게 되',
+				'우리회사 PCCB 절차는 어떻게 돼',
 				'Rfzen, Rpsc와 관련된 WSD는 어떤 뜻이야'
 			]
 		}

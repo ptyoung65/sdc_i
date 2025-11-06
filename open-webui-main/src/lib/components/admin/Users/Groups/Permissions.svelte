@@ -46,7 +46,8 @@
 			web_search: true,
 			image_generation: true,
 			code_interpreter: true,
-			notes: true
+			notes: true,
+			external_search: false
 		}
 	};
 
@@ -631,6 +632,22 @@
 				<Switch bind:state={permissions.features.notes} />
 			</div>
 			{#if defaultPermissions?.features?.notes && !permissions.features.notes}
+				<div>
+					<div class="text-xs text-gray-500">
+						{$i18n.t('This is a default user permission and will remain enabled.')}
+					</div>
+				</div>
+			{/if}
+		</div>
+
+		<div class="flex flex-col w-full">
+			<div class="flex w-full justify-between my-1">
+				<div class=" self-center text-xs font-medium">
+					외부 검색
+				</div>
+				<Switch bind:state={permissions.features.external_search} />
+			</div>
+			{#if defaultPermissions?.features?.external_search && !permissions.features.external_search}
 				<div>
 					<div class="text-xs text-gray-500">
 						{$i18n.t('This is a default user permission and will remain enabled.')}

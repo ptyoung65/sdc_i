@@ -33,6 +33,10 @@
 	let adminConfig = null;
 	let webhookUrl = '';
 
+	// 기본 모델 설정
+	let defaultInternalModel = '';
+	let defaultExternalModel = '';
+
 	// LDAP
 	let ENABLE_LDAP = false;
 	let LDAP_SERVER = {
@@ -82,7 +86,12 @@
 		await updateLdapConfig(localStorage.token, ENABLE_LDAP);
 		await updateLdapServerHandler();
 
+		// 기본 모델 설정 저장
+		localStorage.setItem('defaultInternalModel', defaultInternalModel);
+		localStorage.setItem('defaultExternalModel', defaultExternalModel);
+
 		if (res) {
+			toast.success($i18n.t('기본 모델 설정이 저장되었습니다'));
 			saveHandler();
 		} else {
 			toast.error($i18n.t('Failed to update settings'));
@@ -109,6 +118,10 @@
 
 		const ldapConfig = await getLdapConfig(localStorage.token);
 		ENABLE_LDAP = ldapConfig.ENABLE_LDAP;
+
+		// 기본 모델 설정 로드
+		defaultInternalModel = localStorage.getItem('defaultInternalModel') || '';
+		defaultExternalModel = localStorage.getItem('defaultExternalModel') || '';
 	});
 </script>
 
@@ -178,6 +191,46 @@
 						</div>
 					</div>
 
+					<!-- 기본 모델 설정 -->
+					<div class="mb-2.5">
+						<div class="mb-1 text-xs font-medium">기본 모델 설정</div>
+						<div class="text-xs text-gray-500 mb-2">
+							카테고리 선택 해제 시 자동으로 복원될 기본 모델을 선택하세요
+						</div>
+
+						<div class="space-y-2">
+							<!-- 내부 기본 모델 -->
+							<div>
+								<label class="block text-xs font-medium mb-1">내부 기본 모델 ID</label>
+								<input
+									class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-none"
+									type="text"
+									bind:value={defaultInternalModel}
+									placeholder="예: gpt-oss"
+								/>
+								<div class="text-xs text-gray-500 mt-1">
+									내부 모델 사용 시 기본 모델 ID (예: gpt-oss, qwen3)
+								</div>
+							</div>
+
+							<!-- 외부 기본 모델 -->
+							<div>
+								<label class="block text-xs font-medium mb-1">외부 기본 모델 ID</label>
+								<input
+									class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-none"
+									type="text"
+									bind:value={defaultExternalModel}
+									placeholder="예: gpt-4.1"
+								/>
+								<div class="text-xs text-gray-500 mt-1">
+									외부 모델 사용 시 기본 모델 ID (예: gpt-4.1, perplexity)
+								</div>
+							</div>
+						</div>
+					</div>
+
+					{#if false}
+					<!-- Help section - Hidden as requested -->
 					<div class="mb-2.5">
 						<div class="flex w-full justify-between items-center">
 							<div class="text-xs pr-2">
@@ -223,7 +276,10 @@
 							</div>
 						</div>
 					</div>
+					{/if}
 
+					{#if false}
+					<!-- License section - Hidden as requested -->
 					<div class="mb-2.5">
 						<div class="flex w-full justify-between items-center">
 							<div class="text-xs pr-2">
@@ -277,6 +333,7 @@
 							</button> -->
 						</div>
 					</div>
+					{/if}
 				</div>
 
 				<div class="mb-3">

@@ -186,6 +186,35 @@
 										</div>
 									{/if}
 
+									{#if selectedUser?.dept_nm || selectedUser?.dept_cd}
+										<div class="flex flex-col w-full">
+											<div class=" mb-1 text-xs text-gray-500">부서 정보</div>
+
+											<div class="flex-1 text-sm break-all mb-1">
+												{#if selectedUser.dept_nm}
+													<span class="text-gray-700 dark:text-gray-300">{selectedUser.dept_nm}</span>
+												{/if}
+												{#if selectedUser.dept_cd}
+													<span class="text-gray-500 text-xs ml-1">({selectedUser.dept_cd})</span>
+												{/if}
+											</div>
+										</div>
+									{/if}
+
+									{#if selectedUser?.external_search_enabled !== undefined}
+										<div class="flex flex-col w-full">
+											<div class=" mb-1 text-xs text-gray-500">외부 검색</div>
+
+											<div class="flex-1 text-sm mb-1">
+												{#if selectedUser.external_search_enabled}
+													<span class="text-green-600 dark:text-green-400">✓ 가능</span>
+												{:else}
+													<span class="text-gray-400">불가능</span>
+												{/if}
+											</div>
+										</div>
+									{/if}
+
 									<div class="flex flex-col w-full">
 										<div class=" mb-1 text-xs text-gray-500">{$i18n.t('New Password')}</div>
 

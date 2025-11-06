@@ -18,6 +18,9 @@
 	import DocumentDuplicate from '$lib/components/icons/DocumentDuplicate.svelte';
 	import Bookmark from '$lib/components/icons/Bookmark.svelte';
 	import BookmarkSlash from '$lib/components/icons/BookmarkSlash.svelte';
+	import Clipboard from '$lib/components/icons/Clipboard.svelte';
+	import ListBullet from '$lib/components/icons/ListBullet.svelte';
+	import Tag from '$lib/components/icons/Tag.svelte';
 	import {
 		getChatById,
 		getChatPinnedStatusById,
@@ -48,6 +51,8 @@
 
 	let chat = null;
 	let showFullMessages = false;
+	let showTagsModal = false;
+	let showOverviewModal = false;
 
 	const pinHandler = async () => {
 		await toggleChatPinnedStatusById(localStorage.token, chatId);
@@ -254,6 +259,31 @@
 		}
 	};
 
+	const copyToClipboard = async () => {
+		const chat = await getChatById(localStorage.token, chatId);
+		if (!chat) {
+			toast.error($i18n.t('Failed to load chat'));
+			return;
+		}
+
+		const chatText = await getChatAsText(chat);
+
+		try {
+			await navigator.clipboard.writeText(chatText);
+			toast.success($i18n.t('Chat copied to clipboard'));
+		} catch (error) {
+			console.error('Failed to copy to clipboard:', error);
+			toast.error($i18n.t('Failed to copy to clipboard'));
+		}
+	};
+
+	const showOverview = async () => {
+		chat = await getChatById(localStorage.token, chatId);
+		if (chat) {
+			showOverviewModal = true;
+		}
+	};
+
 	$: if (show) {
 		checkPinned();
 	}
@@ -280,6 +310,122 @@
 	</div>
 {/if}
 
+<!-- 개요 모달 -->
+{#if showOverviewModal && chat}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+		on:click={() => {
+			showOverviewModal = false;
+		}}
+	>
+		<div
+			class="bg-white dark:bg-gray-900 rounded-2xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto"
+			on:click={(e) => e.stopPropagation()}
+		>
+			<div class="flex justify-between items-center mb-4">
+				<h2 class="text-xl font-semibold">{$i18n.t('Chat Overview')}</h2>
+				<button
+					class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+					on:click={() => {
+						showOverviewModal = false;
+					}}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke-width="2"
+						stroke="currentColor"
+						class="w-5 h-5"
+					>
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+
+			<div class="space-y-3">
+				<div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+					<span class="font-medium">{$i18n.t('Title')}:</span>
+					<span>{chat.chat.title}</span>
+				</div>
+
+				{#if chat.chat.messages && chat.chat.messages.length > 0}
+					<div>
+						<div class="font-medium text-sm text-gray-600 dark:text-gray-400 mb-2">
+							{$i18n.t('Messages')} ({chat.chat.messages.length})
+						</div>
+						<div class="space-y-2 max-h-96 overflow-y-auto">
+							{#each chat.chat.messages.slice(0, 5) as message, idx}
+								<div class="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+									<div class="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+										{message.role.toUpperCase()}
+									</div>
+									<div class="text-sm line-clamp-3">
+										{message.content}
+									</div>
+								</div>
+							{/each}
+							{#if chat.chat.messages.length > 5}
+								<div class="text-xs text-center text-gray-500 dark:text-gray-400">
+									... {$i18n.t('and')} {chat.chat.messages.length - 5} {$i18n.t('more messages')}
+								</div>
+							{/if}
+						</div>
+					</div>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- 태그 모달 -->
+{#if showTagsModal}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+		on:click={() => {
+			showTagsModal = false;
+		}}
+	>
+		<div
+			class="bg-white dark:bg-gray-900 rounded-2xl p-6 max-w-md w-full mx-4"
+			on:click={(e) => e.stopPropagation()}
+		>
+			<div class="flex justify-between items-center mb-4">
+				<h2 class="text-xl font-semibold">{$i18n.t('Manage Tags')}</h2>
+				<button
+					class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+					on:click={() => {
+						showTagsModal = false;
+					}}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke-width="2"
+						stroke="currentColor"
+						class="w-5 h-5"
+					>
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+
+			<div class="mt-4">
+				<Tags
+					{chatId}
+					on:add={() => {
+						dispatch('change');
+					}}
+					on:delete={() => {
+						dispatch('change');
+					}}
+				/>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <Dropdown
 	bind:show
 	on:change={(e) => {
@@ -300,17 +446,16 @@
 			align="start"
 			transition={flyAndScale}
 		>
-			{#if $user?.role === 'admin' || ($user.permissions?.chat?.share ?? true)}
-				<DropdownMenu.Item
-					class="flex gap-2 items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800  rounded-xl"
-					on:click={() => {
-						shareHandler();
-					}}
-				>
-					<Share strokeWidth="1.5" />
-					<div class="flex items-center">{$i18n.t('Share')}</div>
-				</DropdownMenu.Item>
-			{/if}
+			<!-- 1. 개요 (Overview) -->
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+				on:click={() => {
+					showOverview();
+				}}
+			>
+				<ListBullet strokeWidth="1.5" />
+				<div class="flex items-center">{$i18n.t('Overview')}</div>
+			</DropdownMenu.Item>
 
 			<DropdownMenu.Sub>
 				<DropdownMenu.SubTrigger
@@ -356,6 +501,18 @@
 				</DropdownMenu.SubContent>
 			</DropdownMenu.Sub>
 
+			<!-- 3. 복사 (Copy to Clipboard) -->
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+				on:click={() => {
+					copyToClipboard();
+				}}
+			>
+				<Clipboard strokeWidth="1.5" />
+				<div class="flex items-center">{$i18n.t('Copy')}</div>
+			</DropdownMenu.Item>
+
+			<!-- 4. 이름 변경 (Rename) -->
 			<DropdownMenu.Item
 				class="flex gap-2 items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
 				on:click={() => {
@@ -368,38 +525,13 @@
 
 			<hr class="border-gray-50 dark:border-gray-800 my-1" />
 
-			<DropdownMenu.Item
-				class="flex gap-2 items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
-				on:click={() => {
-					pinHandler();
-				}}
-			>
-				{#if pinned}
-					<BookmarkSlash strokeWidth="1.5" />
-					<div class="flex items-center">{$i18n.t('Unpin')}</div>
-				{:else}
-					<Bookmark strokeWidth="1.5" />
-					<div class="flex items-center">{$i18n.t('Pin')}</div>
-				{/if}
-			</DropdownMenu.Item>
-
-			<DropdownMenu.Item
-				class="flex gap-2 items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
-				on:click={() => {
-					cloneChatHandler();
-				}}
-			>
-				<DocumentDuplicate strokeWidth="1.5" />
-				<div class="flex items-center">{$i18n.t('Clone')}</div>
-			</DropdownMenu.Item>
-
+			<!-- 5. 이동 (Move to Folder) -->
 			{#if chatId}
 				<DropdownMenu.Sub>
 					<DropdownMenu.SubTrigger
 						class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl select-none w-full"
 					>
 						<Folder />
-
 						<div class="flex items-center">{$i18n.t('Move')}</div>
 					</DropdownMenu.SubTrigger>
 					<DropdownMenu.SubContent
@@ -415,7 +547,6 @@
 								}}
 							>
 								<Folder />
-
 								<div class="flex items-center">{folder?.name ?? 'Folder'}</div>
 							</DropdownMenu.Item>
 						{/each}
@@ -423,18 +554,73 @@
 				</DropdownMenu.Sub>
 			{/if}
 
+			<!-- 6. 보관 (Archive) -->
 			<DropdownMenu.Item
-				class="flex gap-2 items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
 				on:click={() => {
-					archiveChatHandler();
+					archiveChatHandler(chatId);
 				}}
 			>
 				<ArchiveBox strokeWidth="1.5" />
 				<div class="flex items-center">{$i18n.t('Archive')}</div>
 			</DropdownMenu.Item>
 
+			<!-- 7. Tag 추가 (Add Tags) -->
 			<DropdownMenu.Item
-				class="flex  gap-2  items-center px-3 py-1.5 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+				on:click={() => {
+					showTagsModal = true;
+				}}
+			>
+				<Tag strokeWidth="1.5" />
+				<div class="flex items-center">{$i18n.t('Add Tags')}</div>
+			</DropdownMenu.Item>
+
+			<hr class="border-gray-50 dark:border-gray-800 my-1" />
+
+			<!-- 기타 기능 (공유, 고정, 복제) -->
+			{#if $user?.role === 'admin' || ($user.permissions?.chat?.share ?? true)}
+				<DropdownMenu.Item
+					class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+					on:click={() => {
+						shareHandler();
+					}}
+				>
+					<Share strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Share')}</div>
+				</DropdownMenu.Item>
+			{/if}
+
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+				on:click={() => {
+					pinHandler();
+				}}
+			>
+				{#if pinned}
+					<BookmarkSlash strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Unpin')}</div>
+				{:else}
+					<Bookmark strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Pin')}</div>
+				{/if}
+			</DropdownMenu.Item>
+
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
+				on:click={() => {
+					cloneChatHandler(chatId);
+				}}
+			>
+				<DocumentDuplicate strokeWidth="1.5" />
+				<div class="flex items-center">{$i18n.t('Clone')}</div>
+			</DropdownMenu.Item>
+
+			<hr class="border-gray-50 dark:border-gray-800 my-1" />
+
+			<!-- 삭제 (Delete) -->
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl"
 				on:click={() => {
 					deleteHandler();
 				}}
