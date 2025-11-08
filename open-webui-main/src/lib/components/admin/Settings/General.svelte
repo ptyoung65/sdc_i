@@ -1,14 +1,15 @@
 <script lang="ts">
 	import DOMPurify from 'dompurify';
 
-	import { getVersionUpdates, getWebhookUrl, updateWebhookUrl } from '$lib/apis';
+	import { getVersionUpdates, getWebhookUrl, updateWebhookUrl, getModels, getBackendConfig } from '$lib/apis';
 	import {
 		getAdminConfig,
 		getLdapConfig,
 		getLdapServer,
 		updateAdminConfig,
 		updateLdapConfig,
-		updateLdapServer
+		updateLdapServer,
+		updateDefaultModels
 	} from '$lib/apis/auths';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -36,6 +37,9 @@
 	// 기본 모델 설정
 	let defaultInternalModel = '';
 	let defaultExternalModel = '';
+	let allModels = [];
+	let internalModels = [];
+	let externalModels = [];
 
 	// LDAP
 	let ENABLE_LDAP = false;
@@ -52,6 +56,74 @@
 		use_tls: false,
 		certificate_path: '',
 		ciphers: ''
+	};
+
+	// 모델 타입 판단 함수 (내부/외부)
+	const getModelType = (model) => {
+		console.log('[getModelType] Checking model:', model.id, 'info.meta.model_type:', model?.info?.meta?.model_type);
+
+		// 1. info.meta.model_type이 있으면 그것을 사용 (API 응답 구조)
+		if (model?.info?.meta?.model_type) {
+			console.log(`[getModelType] ${model.id} → ${model.info.meta.model_type} (from info.meta)`);
+			return model.info.meta.model_type;
+		}
+
+		// 2. meta.model_type이 있으면 그것을 사용 (폴백)
+		if (model?.meta?.model_type) {
+			console.log(`[getModelType] ${model.id} → ${model.meta.model_type} (from meta)`);
+			return model.meta.model_type;
+		}
+
+		// 3. ID 패턴으로 판단
+		const modelId = model?.id || '';
+		console.log(`[getModelType] ${model.id} → pattern matching...`);
+
+		// 내부 모델 패턴: qwen, ollama, 또는 external_llm이 없는 것
+		const internalPatterns = [
+			/^qwen/i,
+			/^ollama/i,
+			/^llama/i,
+			/^mistral/i,
+			/^gemma/i
+		];
+
+		// 외부 모델 패턴: external_llm, gpt, anthropic 등
+		const externalPatterns = [
+			/^external_llm/i,
+			/^gpt-/i,
+			/^claude/i,
+			/^anthropic/i
+		];
+
+		// 외부 패턴에 매칭되면 external
+		if (externalPatterns.some(pattern => pattern.test(modelId))) {
+			return 'external';
+		}
+
+		// 내부 패턴에 매칭되면 internal
+		if (internalPatterns.some(pattern => pattern.test(modelId))) {
+			return 'internal';
+		}
+
+		// 기본값: external
+		return 'external';
+	};
+
+	const loadModels = async () => {
+		try {
+			// Use base: false to get full model info including metadata
+			// connections: null means don't fetch external OpenAI connections
+			// base: false means get full /api/models not /api/models/base
+			// refresh: true forces a refresh of the model list
+			allModels = await getModels(localStorage.token, null, false, true);
+			console.log('[loadModels] Loaded models:', allModels.length, 'total');
+			internalModels = allModels.filter(m => getModelType(m) === 'internal');
+			externalModels = allModels.filter(m => getModelType(m) === 'external');
+			console.log('[loadModels] Internal models:', internalModels.length, ', External models:', externalModels.length);
+		} catch (error) {
+			console.error('모델 목록 로드 실패:', error);
+			toast.error('모델 목록을 불러오는데 실패했습니다');
+		}
 	};
 
 	const checkForVersionUpdates = async () => {
@@ -86,9 +158,38 @@
 		await updateLdapConfig(localStorage.token, ENABLE_LDAP);
 		await updateLdapServerHandler();
 
-		// 기본 모델 설정 저장
-		localStorage.setItem('defaultInternalModel', defaultInternalModel);
-		localStorage.setItem('defaultExternalModel', defaultExternalModel);
+		// 기본 모델 설정을 PostgreSQL에 저장
+		try {
+			console.log('[updateHandler] Saving default models:', {
+				internal: defaultInternalModel,
+				external: defaultExternalModel
+			});
+
+			const defaultModelsRes = await updateDefaultModels(
+				localStorage.token,
+				defaultInternalModel,
+				defaultExternalModel
+			);
+
+			if (defaultModelsRes) {
+				console.log('[updateHandler] Default models saved successfully');
+
+				// PostgreSQL 저장 성공 후 $config 스토어 업데이트
+				config.set({
+					...$config,
+					default_internal_model: defaultInternalModel,
+					default_external_model: defaultExternalModel
+				});
+			} else {
+				console.error('[updateHandler] Failed to save default models to PostgreSQL');
+				toast.error('기본 모델 저장에 실패했습니다');
+				return;
+			}
+		} catch (error) {
+			console.error('[updateHandler] Error saving default models:', error);
+			toast.error(`기본 모델 저장 오류: ${error}`);
+			return;
+		}
 
 		if (res) {
 			toast.success($i18n.t('기본 모델 설정이 저장되었습니다'));
@@ -113,15 +214,35 @@
 			})(),
 			(async () => {
 				LDAP_SERVER = await getLdapServer(localStorage.token);
+			})(),
+			(async () => {
+				await loadModels();
 			})()
 		]);
 
 		const ldapConfig = await getLdapConfig(localStorage.token);
 		ENABLE_LDAP = ldapConfig.ENABLE_LDAP;
 
-		// 기본 모델 설정 로드
-		defaultInternalModel = localStorage.getItem('defaultInternalModel') || '';
-		defaultExternalModel = localStorage.getItem('defaultExternalModel') || '';
+		// 기본 모델 설정을 PostgreSQL에서 로드
+		try {
+			// Use exportConfig to get the full config including default models
+			const { exportConfig } = await import('$lib/apis/configs');
+			const fullConfig = await exportConfig(localStorage.token);
+
+			console.log('[onMount] Loaded full config:', fullConfig);
+
+			if (fullConfig) {
+				defaultInternalModel = fullConfig.default_internal_model || '';
+				defaultExternalModel = fullConfig.default_external_model || '';
+
+				console.log('[onMount] Loaded default models:', {
+					internal: defaultInternalModel,
+					external: defaultExternalModel
+				});
+			}
+		} catch (error) {
+			console.error('기본 모델 설정 로드 실패:', error);
+		}
 	});
 </script>
 
@@ -201,29 +322,35 @@
 						<div class="space-y-2">
 							<!-- 내부 기본 모델 -->
 							<div>
-								<label class="block text-xs font-medium mb-1">내부 기본 모델 ID</label>
-								<input
+								<label class="block text-xs font-medium mb-1">내부 기본 모델</label>
+								<select
 									class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-none"
-									type="text"
 									bind:value={defaultInternalModel}
-									placeholder="예: gpt-oss"
-								/>
+								>
+									<option value="">선택하세요</option>
+									{#each internalModels as model}
+										<option value={model.id}>{model.name || model.id}</option>
+									{/each}
+								</select>
 								<div class="text-xs text-gray-500 mt-1">
-									내부 모델 사용 시 기본 모델 ID (예: gpt-oss, qwen3)
+									내부 모델 사용 시 자동으로 선택될 기본 모델
 								</div>
 							</div>
 
 							<!-- 외부 기본 모델 -->
 							<div>
-								<label class="block text-xs font-medium mb-1">외부 기본 모델 ID</label>
-								<input
+								<label class="block text-xs font-medium mb-1">외부 기본 모델</label>
+								<select
 									class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-none"
-									type="text"
 									bind:value={defaultExternalModel}
-									placeholder="예: gpt-4.1"
-								/>
+								>
+									<option value="">선택하세요</option>
+									{#each externalModels as model}
+										<option value={model.id}>{model.name || model.id}</option>
+									{/each}
+								</select>
 								<div class="text-xs text-gray-500 mt-1">
-									외부 모델 사용 시 기본 모델 ID (예: gpt-4.1, perplexity)
+									외부 모델 사용 시 자동으로 선택될 기본 모델
 								</div>
 							</div>
 						</div>
