@@ -31,6 +31,32 @@ export const importConfig = async (token: string, config) => {
 	return res;
 };
 
+export const updateConfigPartial = async (token: string, partialConfig: object) => {
+	let error = null;
+
+	// First get current config
+	const currentConfig = await exportConfig(token);
+
+	// Merge with partial config
+	const newConfig = {
+		...currentConfig,
+		...partialConfig
+	};
+
+	// Save using import endpoint
+	const res = await importConfig(token, newConfig);
+
+	if (!res) {
+		error = 'Failed to update config';
+	}
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
 export const exportConfig = async (token: string) => {
 	let error = null;
 

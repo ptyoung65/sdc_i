@@ -82,6 +82,35 @@ export const updateAdminConfig = async (token: string, body: object) => {
 	return res;
 };
 
+export const updateDefaultModels = async (token: string, internalModel: string, externalModel: string) => {
+	let error = null;
+
+	console.log('[updateDefaultModels] Saving to config:', {
+		default_internal_model: internalModel,
+		default_external_model: externalModel
+	});
+
+	// Use the configs import/export endpoints to update the full config
+	const { updateConfigPartial } = await import('$lib/apis/configs');
+
+	const res = await updateConfigPartial(token, {
+		default_internal_model: internalModel,
+		default_external_model: externalModel
+	});
+
+	if (!res) {
+		error = 'Failed to update default models';
+	}
+
+	if (error) {
+		throw error;
+	}
+
+	console.log('[updateDefaultModels] Success! Config updated');
+
+	return res;
+};
+
 export const getSessionUser = async (token: string) => {
 	let error = null;
 
