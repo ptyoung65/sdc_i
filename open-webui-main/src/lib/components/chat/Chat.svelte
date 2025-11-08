@@ -327,34 +327,28 @@
 
 	// 기본 모델 ID (관리자 설정에서 지정 - PostgreSQL $config 사용)
 	const getDefaultInternalModelId = () => {
-		// Wait for database load to complete before showing error
+		// Wait for database load to complete
 		if (!defaultModelsLoaded) {
-			console.warn('⏳ [getDefaultInternalModelId] 기본 모델 로드 중... 잠시만 기다려주세요.');
+			console.warn('⏳ [getDefaultInternalModelId] 기본 모델 로드 중...');
 			return '';
 		}
 
-		const defaultModel = $config?.default_internal_model;
-		if (!defaultModel) {
-			console.error('❌ 내부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.');
-			toast.error('❌ 내부 기본 모델이 설정되지 않았습니다.');
-			return '';
-		}
+		// Return value from config store (updated in onMount from database)
+		const defaultModel = $config?.default_internal_model || '';
+		console.log('[getDefaultInternalModelId] Returning:', defaultModel);
 		return defaultModel;
 	};
 
 	const getDefaultExternalModelId = () => {
-		// Wait for database load to complete before showing error
+		// Wait for database load to complete
 		if (!defaultModelsLoaded) {
-			console.warn('⏳ [getDefaultExternalModelId] 기본 모델 로드 중... 잠시만 기다려주세요.');
+			console.warn('⏳ [getDefaultExternalModelId] 기본 모델 로드 중...');
 			return '';
 		}
 
-		const defaultModel = $config?.default_external_model;
-		if (!defaultModel) {
-			console.error('❌ 외부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.');
-			toast.error('❌ 외부 기본 모델이 설정되지 않았습니다.');
-			return '';
-		}
+		// Return value from config store (updated in onMount from database)
+		const defaultModel = $config?.default_external_model || '';
+		console.log('[getDefaultExternalModelId] Returning:', defaultModel);
 		return defaultModel;
 	};
 
@@ -511,10 +505,37 @@
 	};
 
 	// Update selected models when model type changes
-	$: if ($modelType === 'internal') {
-		selectedModels = [getDefaultInternalModelId()];
-	} else if ($modelType === 'external') {
-		selectedModels = [getDefaultExternalModelId()];
+	// Only update after database default models are loaded
+	$: if (defaultModelsLoaded && $modelType === 'internal') {
+		const defaultModel = getDefaultInternalModelId();
+		if (defaultModel) {
+			selectedModels = [defaultModel];
+			console.log('[Reactive] Applied internal default model:', defaultModel);
+		}
+	} else if (defaultModelsLoaded && $modelType === 'external') {
+		const defaultModel = getDefaultExternalModelId();
+		if (defaultModel) {
+			selectedModels = [defaultModel];
+			console.log('[Reactive] Applied external default model:', defaultModel);
+		}
+	}
+
+	// 사용자 롤일 때 모델 선택 드롭다운 비활성화
+	$: if ($user?.role === 'user') {
+		isModelSelectorDisabled = true;
+		console.log('[Reactive] User role detected - model selector disabled');
+	} else {
+		// 관리자는 EDM/대사우 필터가 활성화되지 않은 경우에만 활성화
+		// EDM/대사우 필터 활성화 시 비활성화는 각 필터 핸들러에서 처리
+		const hasEdm = $selectedCategories && $selectedCategories.includes('edm');
+		const hasDaesawoo = $selectedCategories && $selectedCategories.some(cat =>
+			['guide', 'helpdesk', 'dictionary', 'etc'].includes(cat)
+		);
+
+		if (!hasEdm && !hasDaesawoo) {
+			isModelSelectorDisabled = false;
+			console.log('[Reactive] Admin role detected - model selector enabled');
+		}
 	}
 
 	let history = {
@@ -935,7 +956,7 @@
 
 	onMount(async () => {
 		loading = true;
-		console.log('mounted');
+		console.log('[DEBUG-CHAT] onMount STARTED');
 
 		// Initialize model type and sidebars
 		modelType.set('internal');
@@ -943,27 +964,51 @@
 		// Load all models for dropdown (General.svelte와 동일한 로직)
 		await loadModels();
 
-		// 기본 모델 설정을 PostgreSQL에서 로드
+		// 기본 모델 설정을 PostgreSQL에서 로드 (General.svelte와 동일한 패턴)
+	console.log('[DEBUG-CHAT] About to load default models from DB');
 	if (localStorage.token) {
 		try {
 			// Use exportConfig to get the full config including default models
+			console.log('[DEBUG-CHAT] localStorage.token exists, importing exportConfig');
 			const { exportConfig } = await import('$lib/apis/configs');
+			console.log('[DEBUG-CHAT] Calling exportConfig()');
 			const fullConfig = await exportConfig(localStorage.token);
 
-			console.log('[onMount] Loaded full config:', fullConfig);
+			console.log('[DEBUG-CHAT] Loaded full config:', fullConfig);
 
 			if (fullConfig) {
 				defaultInternalModel = fullConfig.default_internal_model || '';
 				defaultExternalModel = fullConfig.default_external_model || '';
 
-				console.log('[onMount] Loaded default models:', {
-					internal: defaultInternalModel,
-					external: defaultExternalModel
+				// Update config store with loaded values from database
+				config.set({
+					...$config,
+					default_internal_model: defaultInternalModel,
+					default_external_model: defaultExternalModel
 				});
 
+				console.log('[onMount] Loaded default models:', {
+					internal: defaultInternalModel,
+					external: defaultExternalModel,
+					userRole: $user?.role
+				});
+
+				// Show toast to admin if default models are not set in database
+				if ($user?.role === 'admin') {
+					if (!defaultInternalModel) {
+						toast.error('내부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.');
+					}
+					if (!defaultExternalModel) {
+						toast.error('외부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.');
+					}
+				}
 			}
 		} catch (error) {
 			console.error('기본 모델 설정 로드 실패:', error);
+			// 관리자만 오류 토스트 표시
+			if ($user?.role === 'admin') {
+				toast.error('기본 모델 설정을 불러오는데 실패했습니다. 관리자 설정을 확인해주세요.');
+			}
 		}
 	} else {
 		console.log('[onMount] No token found, skipping config load');

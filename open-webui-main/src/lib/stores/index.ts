@@ -251,6 +251,9 @@ type Config = {
 	default_locale: string;
 	default_models: string;
 	default_prompt_suggestions: PromptSuggestion[];
+	// 기본 모델 설정 (PostgreSQL에서 로드)
+	default_internal_model?: string;
+	default_external_model?: string;
 	features: {
 		auth: boolean;
 		auth_trusted_header: boolean;
