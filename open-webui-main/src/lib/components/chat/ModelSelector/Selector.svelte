@@ -61,6 +61,11 @@
 	export let pinModelHandler: (modelId: string) => void = () => {};
 	export let disabled = false;
 
+	// 사용자 역할에 따라 드롭다운 비활성화 여부 결정
+	// 관리자: 항상 활성화, 사용자: 항상 비활성화
+	$: isUserRole = $user?.role === 'user';
+	$: isDropdownDisabled = disabled || isUserRole;
+
 	let tagsContainerElement;
 
 	let show = false;
@@ -400,18 +405,18 @@
 	<DropdownMenu.Trigger
 		class="relative w-full {($settings?.highContrastMode ?? false)
 			? ''
-			: 'outline-hidden focus:outline-hidden'} {disabled ? 'opacity-50 cursor-not-allowed' : ''}"
+			: 'outline-hidden focus:outline-hidden'} {isDropdownDisabled ? 'opacity-50 cursor-not-allowed' : ''}"
 		aria-label={placeholder}
 		id="model-selector-{id}-button"
-		{disabled}
+		disabled={isDropdownDisabled}
 	>
 		<div
 			class="flex w-full text-left px-0.5 bg-transparent truncate {triggerClassName} justify-between {($settings?.highContrastMode ??
 			false)
 				? 'dark:placeholder-gray-100 placeholder-gray-800'
-				: 'placeholder-gray-400'} {disabled ? 'pointer-events-none' : ''}"
+				: 'placeholder-gray-400'} {isDropdownDisabled ? 'pointer-events-none' : ''}"
 			on:mouseenter={async () => {
-				if (!disabled) {
+				if (!isDropdownDisabled) {
 					models.set(
 						await getModels(
 							localStorage.token,

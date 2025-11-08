@@ -71,7 +71,8 @@
 		chatAction,
 		generateMoACompletion,
 		stopTask,
-		getTaskIdsByChatId
+		getTaskIdsByChatId,
+		getModels
 	} from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
 	import { uploadFile } from '$lib/apis/files';
@@ -165,11 +166,11 @@
 				}
 
 				if (edmModel) {
-					// 모델 고정 및 선택기 비활성화
+					// 모델 고정 및 선택기 비활성화 (일반 사용자만 비활성화, 관리자는 활성화 유지)
 					if (selectedModels[0] !== edmModel.id) {
 						selectedModels = [edmModel.id];
 					}
-					isModelSelectorDisabled = true;
+					isModelSelectorDisabled = $user?.role === 'user';
 
 					console.log('✅ [EDM Filter] EDM 문서활용 활성화 - 모델 고정 및 비활성화', {
 						timestamp: new Date().toISOString(),
@@ -196,7 +197,7 @@
 					isModelSelectorDisabled = false;
 				} else if (selectedModels[0] !== daesawooModel.id) {
 					selectedModels = [daesawooModel.id];
-					isModelSelectorDisabled = true;
+					isModelSelectorDisabled = $user?.role === 'user';
 					console.log('✅ 대사우 Assistant → daesawoo 파이프라인 자동 선택:', daesawooModel.name);
 				}
 			} else {
@@ -241,13 +242,120 @@
 	let showSecurityWarning = false;
 	let pendingModelType = null;
 
-	// 기본 모델 ID (관리자 설정에서 지정)
+	// 모델 리스트 관리 (General.svelte와 동일한 로직)
+	let allModels = [];
+	let internalModels = [];
+	let externalModels = [];
+
+	// Default models from PostgreSQL config (loaded in onMount)
+	let defaultInternalModel = '';
+	let defaultExternalModel = '';
+	let defaultModelsLoaded = false;
+
+	// 모델 타입 판단 함수 (General.svelte와 동일)
+	const getModelType = (model) => {
+		console.log('[getModelType] Checking model:', model.id, 'info.meta.model_type:', model?.info?.meta?.model_type);
+
+		// 1. info.meta.model_type이 있으면 그것을 사용 (API 응답 구조)
+		if (model?.info?.meta?.model_type) {
+			console.log(`[getModelType] ${model.id} → ${model.info.meta.model_type} (from info.meta)`);
+			return model.info.meta.model_type;
+		}
+
+		// 2. meta.model_type이 있으면 그것을 사용 (폴백)
+		if (model?.meta?.model_type) {
+			console.log(`[getModelType] ${model.id} → ${model.meta.model_type} (from meta)`);
+			return model.meta.model_type;
+		}
+
+		// 3. ID 패턴으로 판단
+		const modelId = model?.id || '';
+		console.log(`[getModelType] ${model.id} → pattern matching...`);
+
+		// 내부 모델 패턴: qwen, ollama, 또는 external_llm이 없는 것
+		const internalPatterns = [
+			/^qwen/i,
+			/^ollama/i,
+			/^llama/i,
+			/^mistral/i,
+			/^gemma/i
+		];
+
+		// 외부 모델 패턴: external_llm, gpt, anthropic 등
+		const externalPatterns = [
+			/^external_llm/i,
+			/^gpt-/i,
+			/^claude/i,
+			/^anthropic/i
+		];
+
+		// 외부 패턴에 매칭되면 external
+		if (externalPatterns.some(pattern => pattern.test(modelId))) {
+			return 'external';
+		}
+
+		// 내부 패턴에 매칭되면 internal
+		if (internalPatterns.some(pattern => pattern.test(modelId))) {
+			return 'internal';
+		}
+
+		// 기본값: external
+		return 'external';
+	};
+
+	// 모델 목록 로드 (General.svelte와 동일)
+	const loadModels = async () => {
+		try {
+			// Use base: false to get full model info including metadata
+			// connections: null means don't fetch external OpenAI connections
+			// base: false means get full /api/models not /api/models/base
+			// refresh: true forces a refresh of the model list
+			allModels = await getModels(localStorage.token, null, false, true);
+			console.log('[loadModels] Loaded models:', allModels.length, 'total');
+
+			// Update the global $models store for ModelSelector component
+			models.set(allModels);
+
+			internalModels = allModels.filter(m => getModelType(m) === 'internal');
+			externalModels = allModels.filter(m => getModelType(m) === 'external');
+			console.log('[loadModels] Internal models:', internalModels.length, ', External models:', externalModels.length);
+		} catch (error) {
+			console.error('모델 목록 로드 실패:', error);
+			toast.error('모델 목록을 불러오는데 실패했습니다');
+		}
+	};
+
+	// 기본 모델 ID (관리자 설정에서 지정 - PostgreSQL $config 사용)
 	const getDefaultInternalModelId = () => {
-		return localStorage.getItem('defaultInternalModel') || 'gpt-oss';
+		// Wait for database load to complete before showing error
+		if (!defaultModelsLoaded) {
+			console.warn('⏳ [getDefaultInternalModelId] 기본 모델 로드 중... 잠시만 기다려주세요.');
+			return '';
+		}
+
+		const defaultModel = $config?.default_internal_model;
+		if (!defaultModel) {
+			console.error('❌ 내부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.');
+			toast.error('❌ 내부 기본 모델이 설정되지 않았습니다.');
+			return '';
+		}
+		return defaultModel;
 	};
 
 	const getDefaultExternalModelId = () => {
-		return localStorage.getItem('defaultExternalModel') || 'gpt-4.1';
+		// Wait for database load to complete before showing error
+		if (!defaultModelsLoaded) {
+			console.warn('⏳ [getDefaultExternalModelId] 기본 모델 로드 중... 잠시만 기다려주세요.');
+			return '';
+		}
+
+		const defaultModel = $config?.default_external_model;
+		if (!defaultModel) {
+			console.error('❌ 외부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.');
+			toast.error('❌ 외부 기본 모델이 설정되지 않았습니다.');
+			return '';
+		}
+		return defaultModel;
 	};
 
 	// Category boxes for internal model
@@ -343,6 +451,13 @@
 			// Direct switch to internal model
 			modelType.set(newType);
 			console.log('[Chat] Switched to internal model');
+
+			// 내부 기본 모델로 자동 변경
+			const defaultModelId = getDefaultInternalModelId();
+			if (defaultModelId && selectedModels[0] !== defaultModelId) {
+				selectedModels = [defaultModelId];
+				console.log('✅ [내부모델 버튼] 내부 기본 모델로 자동 변경:', defaultModelId);
+			}
 		}
 	};
 
@@ -355,6 +470,13 @@
 		console.log('[Chat] modelType set to:', pendingModelType);
 		showSecurityWarning = false;
 		pendingModelType = null;
+
+		// 외부 기본 모델로 자동 변경
+		const defaultModelId = getDefaultExternalModelId();
+		if (defaultModelId && selectedModels[0] !== defaultModelId) {
+			selectedModels = [defaultModelId];
+			console.log('✅ [외부모델 버튼] 외부 기본 모델로 자동 변경:', defaultModelId);
+		}
 
 		// External model 사용 시 새 채팅 초기화
 		// initNewChat을 호출하지만 temporaryChatEnabled가 true로 설정되지 않도록 보장
@@ -818,6 +940,46 @@
 		// Initialize model type and sidebars
 		modelType.set('internal');
 
+		// Load all models for dropdown (General.svelte와 동일한 로직)
+		await loadModels();
+
+		// 기본 모델 설정을 PostgreSQL에서 로드
+	if (localStorage.token) {
+		try {
+			// Use exportConfig to get the full config including default models
+			const { exportConfig } = await import('$lib/apis/configs');
+			const fullConfig = await exportConfig(localStorage.token);
+
+			console.log('[onMount] Loaded full config:', fullConfig);
+
+			if (fullConfig) {
+				defaultInternalModel = fullConfig.default_internal_model || '';
+				defaultExternalModel = fullConfig.default_external_model || '';
+
+				console.log('[onMount] Loaded default models:', {
+					internal: defaultInternalModel,
+					external: defaultExternalModel
+				});
+
+			}
+		} catch (error) {
+			console.error('기본 모델 설정 로드 실패:', error);
+		}
+	} else {
+		console.log('[onMount] No token found, skipping config load');
+	}
+
+	// Mark default models as loaded (either successfully loaded or skipped)
+	defaultModelsLoaded = true;
+
+		// 로드한 기본 모델을 selectedModels에 적용
+		if ($modelType === 'internal' && defaultInternalModel) {
+			selectedModels = [defaultInternalModel];
+			console.log('[onMount] Applied internal model to selectedModels:', selectedModels);
+		} else if ($modelType === 'external' && defaultExternalModel) {
+			selectedModels = [defaultExternalModel];
+			console.log('[onMount] Applied external model to selectedModels:', selectedModels);
+		}
 
 		// Initial setup for right sidebar
 		await tick();
