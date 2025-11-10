@@ -249,6 +249,14 @@
 						</div>
 					</th>
 
+					<th scope="col" class="px-2.5 py-2">
+						{$i18n.t('Question')}
+					</th>
+
+					<th scope="col" class="px-2.5 py-2">
+						{$i18n.t('Response')}
+					</th>
+
 					<th
 						scope="col"
 						class="px-2.5 py-2 text-right cursor-pointer select-none w-fit"
@@ -350,15 +358,45 @@
 							</div>
 						</td>
 
+						<td class="px-3 py-1 text-gray-900 dark:text-gray-100 max-w-xs">
+							<div class="truncate" title={(() => {
+								const messages = feedback?.snapshot?.chat?.chat?.messages || [];
+								const userMsg = messages.find(m => m?.role === 'user');
+								return userMsg?.content || '-';
+							})()}>
+								{(() => {
+									const messages = feedback?.snapshot?.chat?.chat?.messages || [];
+									const userMsg = messages.find(m => m?.role === 'user');
+									const content = userMsg?.content || '-';
+									return content.length > 80 ? content.substring(0, 80) + '...' : content;
+								})()}
+							</div>
+						</td>
+
+						<td class="px-3 py-1 text-gray-900 dark:text-gray-100 max-w-xs">
+							<div class="truncate" title={(() => {
+								const messages = feedback?.snapshot?.chat?.chat?.messages || [];
+								const assistantMsg = messages.find(m => m?.role === 'assistant');
+								return assistantMsg?.content || '-';
+							})()}>
+								{(() => {
+									const messages = feedback?.snapshot?.chat?.chat?.messages || [];
+									const assistantMsg = messages.find(m => m?.role === 'assistant');
+									const content = assistantMsg?.content || '-';
+									return content.length > 80 ? content.substring(0, 80) + '...' : content;
+								})()}
+							</div>
+						</td>
+
 						{#if feedback?.data?.rating}
 							<td class="px-3 py-1 text-right font-medium text-gray-900 dark:text-white w-max">
 								<div class=" flex justify-end">
-									{#if feedback?.data?.rating.toString() === '1'}
-										<Badge type="info" content={$i18n.t('Won')} />
+									{#if feedback?.data?.rating.toString() === '10'}
+										<Badge type="success" content={$i18n.t('Good')} />
+									{:else if ['1', '-1'].includes(feedback?.data?.rating.toString())}
+										<Badge type="error" content={$i18n.t('Bad')} />
 									{:else if feedback?.data?.rating.toString() === '0'}
-										<Badge type="muted" content={$i18n.t('Draw')} />
-									{:else if feedback?.data?.rating.toString() === '-1'}
-										<Badge type="error" content={$i18n.t('Lost')} />
+										<Badge type="muted" content={$i18n.t('Unknown')} />
 									{/if}
 								</div>
 							</td>

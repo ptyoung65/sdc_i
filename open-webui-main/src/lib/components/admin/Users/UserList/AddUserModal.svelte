@@ -69,13 +69,22 @@
 				const reader = new FileReader();
 
 				reader.onload = async (e) => {
-					const csv = e.target.result;
+					let csv = e.target.result;
+
+					// BOM 제거 (UTF-8 BOM: \uFEFF)
+					if (csv.charCodeAt(0) === 0xFEFF) {
+						csv = csv.substring(1);
+					}
+
 					const rows = csv.split('\n');
 
 					let userCount = 0;
 
 					for (const [idx, row] of rows.entries()) {
-						const columns = row.split(',').map((col) => col.trim());
+						// CSV 파싱 개선: 큰따옴표로 감싼 필드 처리
+						const columns = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g)?.map((col) =>
+							col.replace(/^"|"$/g, '').trim()
+						) || [];
 						console.debug(idx, columns);
 
 						if (idx > 0) {
@@ -269,7 +278,8 @@
 									)}
 									<a
 										class="underline dark:text-gray-200"
-										href="{WEBUI_BASE_URL}/static/user-import.csv"
+										href="/user-import.csv"
+										download="user-import.csv"
 									>
 										{$i18n.t('Click here to download user import template file.')}
 									</a>

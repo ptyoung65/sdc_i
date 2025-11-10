@@ -3,6 +3,7 @@ Simplified API with RAG integration for document-based chat
 """
 from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
 import os
@@ -106,7 +107,14 @@ app = FastAPI(title="SDC Backend - Simple", version="0.1.0")
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://192.168.122.177:3000",
+        "http://192.168.0.14:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2533,6 +2541,407 @@ async def get_document_chunks(user_id: str, document_id: str):
 async def health_check():
     """Health check"""
     return {"status": "ok"}
+
+# ==================== 평가 데이터 API ====================
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from fastapi.responses import StreamingResponse
+import io
+import csv
+
+def get_pg_connection():
+    """PostgreSQL 연결"""
+    return psycopg2.connect(
+        host=os.getenv("POSTGRES_HOST", "localhost"),
+        port=int(os.getenv("POSTGRES_PORT", "5433")),
+        database=os.getenv("POSTGRES_DB", "sdc_dev"),
+        user=os.getenv("POSTGRES_USER", "sdc_dev_user"),
+        password=os.getenv("POSTGRES_PASSWORD", "sdc_dev_pass_2025")
+    )
+
+@app.get("/api/evaluations")
+async def get_evaluations(
+    limit: int = 100,
+    offset: int = 0,
+    rating: Optional[str] = None  # "good", "bad", or None for all
+):
+    """
+    평가 데이터 조회 API
+    - limit: 조회할 데이터 수 (기본 100)
+    - offset: 시작 위치 (기본 0)
+    - rating: 평가 필터 ("good", "bad", None)
+    """
+    try:
+        conn = get_pg_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # 기본 쿼리
+        query = """
+            SELECT
+                f.id,
+                f.user_id,
+                u.name as user_name,
+                f.data->>'model_id' as model_id,
+                f.snapshot->'chat'->'chat'->'messages' as messages,
+                f.data->>'rating' as rating,
+                f.data->>'reason' as reason,
+                f.data->>'comment' as comment,
+                f.created_at
+            FROM feedback f
+            LEFT JOIN "user" u ON f.user_id = u.id
+            WHERE f.type = 'rating'
+        """
+
+        # 평가 필터 추가
+        if rating == "good":
+            query += " AND (f.data->>'rating')::int = 1"
+        elif rating == "bad":
+            query += " AND (f.data->>'rating')::int = -1"
+
+        query += " ORDER BY f.created_at DESC LIMIT %s OFFSET %s"
+
+        cursor.execute(query, (limit, offset))
+        results = cursor.fetchall()
+
+        # 데이터 가공
+        evaluations = []
+        for row in results:
+            # 메시지 추출
+            messages = row.get('messages', [])
+            user_message = ""
+            assistant_message = ""
+
+            if isinstance(messages, list) and len(messages) > 0:
+                # 사용자 메시지 찾기
+                for msg in messages:
+                    if isinstance(msg, dict):
+                        if msg.get('role') == 'user':
+                            user_message = msg.get('content', '')
+                        elif msg.get('role') == 'assistant':
+                            assistant_message = msg.get('content', '')
+
+            # 평가 타입 변환
+            rating_value = row.get('rating')
+            evaluation_type = "bad" if rating_value == '-1' or rating_value == -1 else "good" if rating_value == '1' or rating_value == 1 else "unknown"
+
+            # 평가 일시 변환 (Unix timestamp to datetime)
+            created_timestamp = row.get('created_at', 0)
+            created_at = datetime.fromtimestamp(created_timestamp).strftime('%Y-%m-%d %H:%M:%S') if created_timestamp else ''
+
+            evaluations.append({
+                "id": row.get('id'),
+                "model": row.get('model_id', 'N/A'),
+                "user_name": row.get('user_name', 'Unknown'),
+                "user_id": row.get('user_id', 'N/A'),
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+                "evaluation": evaluation_type,
+                "reason": row.get('reason', ''),
+                "comment": row.get('comment', ''),
+                "created_at": created_at
+            })
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "success": True,
+            "total": len(evaluations),
+            "data": evaluations
+        }
+
+    except Exception as e:
+        print(f"❌ [EVALUATIONS] Error fetching evaluations: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/evaluations/csv")
+async def download_evaluations_csv():
+    """
+    평가 데이터를 CSV로 다운로드
+    """
+    try:
+        conn = get_pg_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # 전체 데이터 조회
+        query = """
+            SELECT
+                f.id,
+                f.user_id,
+                u.name as user_name,
+                f.data->>'model_id' as model_id,
+                f.snapshot->'chat'->'chat'->'messages' as messages,
+                f.data->>'rating' as rating,
+                f.data->>'reason' as reason,
+                f.data->>'comment' as comment,
+                f.created_at
+            FROM feedback f
+            LEFT JOIN "user" u ON f.user_id = u.id
+            WHERE f.type = 'rating'
+            ORDER BY f.created_at DESC
+        """
+
+        cursor.execute(query)
+        results = cursor.fetchall()
+
+        # CSV 생성
+        output = io.StringIO()
+        csv_writer = csv.writer(output)
+
+        # 헤더
+        csv_writer.writerow([
+            '모델 구분',
+            '사용자명',
+            '사용자 ID',
+            '메시지 입력 내용',
+            '응답 내용',
+            'Good/Bad',
+            '평가 입력 종류',
+            '평가 입력 상세내용',
+            '평가 일시'
+        ])
+
+        # 데이터
+        for row in results:
+            # 메시지 추출
+            messages = row.get('messages', [])
+            user_message = ""
+            assistant_message = ""
+
+            if isinstance(messages, list) and len(messages) > 0:
+                for msg in messages:
+                    if isinstance(msg, dict):
+                        if msg.get('role') == 'user':
+                            user_message = msg.get('content', '')
+                        elif msg.get('role') == 'assistant':
+                            assistant_message = msg.get('content', '')
+
+            # 평가 타입 변환
+            rating_value = row.get('rating')
+            evaluation_type = "Bad" if rating_value == '-1' or rating_value == -1 else "Good" if rating_value == '1' or rating_value == 1 else "Unknown"
+
+            # 평가 일시 변환
+            created_timestamp = row.get('created_at', 0)
+            created_at = datetime.fromtimestamp(created_timestamp).strftime('%Y-%m-%d %H:%M:%S') if created_timestamp else ''
+
+            csv_writer.writerow([
+                row.get('model_id', 'N/A'),
+                row.get('user_name', 'Unknown'),
+                row.get('user_id', 'N/A'),
+                user_message,
+                assistant_message,
+                evaluation_type,
+                row.get('reason', ''),
+                row.get('comment', ''),
+                created_at
+            ])
+
+        cursor.close()
+        conn.close()
+
+        # CSV 다운로드 응답
+        output.seek(0)
+
+        # UTF-8 BOM 추가 (Excel에서 한글 깨짐 방지)
+        csv_content = '\ufeff' + output.getvalue()
+
+        return StreamingResponse(
+            iter([csv_content.encode('utf-8')]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=evaluations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            }
+        )
+
+    except Exception as e:
+        print(f"❌ [EVALUATIONS-CSV] Error generating CSV: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ========================================
+# Evaluations2 API (신규)
+# ========================================
+
+@app.get("/api/v1/evaluations2/feedbacks/all/detailed")
+async def get_all_detailed_feedbacks():
+    """
+    평가 데이터 상세 조회 API (Evaluations2 페이지용)
+    - 모든 평가 데이터를 상세하게 반환
+    """
+    try:
+        conn = get_pg_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # 전체 데이터 조회
+        query = """
+            SELECT
+                f.id,
+                f.user_id,
+                u.name as user_name,
+                f.data->>'model_id' as model_id,
+                f.snapshot->'chat'->'chat'->'messages' as messages,
+                f.data->>'rating' as rating,
+                f.data->>'reason' as reason,
+                f.data->>'comment' as comment,
+                f.created_at
+            FROM feedback f
+            LEFT JOIN "user" u ON f.user_id = u.id
+            WHERE f.type = 'rating'
+            ORDER BY f.created_at DESC
+        """
+
+        cursor.execute(query)
+        results = cursor.fetchall()
+
+        # 데이터 가공
+        evaluations = []
+        for row in results:
+            # 메시지 추출
+            messages = row.get('messages', [])
+            user_message = ""
+            assistant_message = ""
+
+            if isinstance(messages, list) and len(messages) > 0:
+                for msg in messages:
+                    if isinstance(msg, dict):
+                        if msg.get('role') == 'user':
+                            user_message = msg.get('content', '')
+                        elif msg.get('role') == 'assistant':
+                            assistant_message = msg.get('content', '')
+
+            # 평가 타입 변환
+            rating_value = row.get('rating')
+            evaluation_type = "bad" if rating_value == '-1' or rating_value == -1 else "good" if rating_value == '1' or rating_value == 1 else "unknown"
+
+            # 평가 일시 변환
+            created_timestamp = row.get('created_at', 0)
+            created_at = datetime.fromtimestamp(created_timestamp).strftime('%Y-%m-%d %H:%M:%S') if created_timestamp else ''
+
+            evaluations.append({
+                "id": row.get('id'),
+                "model": row.get('model_id', 'N/A'),
+                "user_name": row.get('user_name', 'Unknown'),
+                "user_id": row.get('user_id', 'N/A'),
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+                "evaluation": evaluation_type,
+                "reason": row.get('reason', ''),
+                "comment": row.get('comment', ''),
+                "created_at": created_at
+            })
+
+        cursor.close()
+        conn.close()
+
+        return evaluations
+
+    except Exception as e:
+        print(f"❌ [EVALUATIONS2] Error fetching detailed feedbacks: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/evaluations2/feedbacks/all/csv")
+async def export_all_feedbacks_csv():
+    """
+    평가 데이터를 CSV로 다운로드 (Evaluations2 페이지용)
+    """
+    try:
+        conn = get_pg_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # 전체 데이터 조회
+        query = """
+            SELECT
+                f.id,
+                f.user_id,
+                u.name as user_name,
+                f.data->>'model_id' as model_id,
+                f.snapshot->'chat'->'chat'->'messages' as messages,
+                f.data->>'rating' as rating,
+                f.data->>'reason' as reason,
+                f.data->>'comment' as comment,
+                f.created_at
+            FROM feedback f
+            LEFT JOIN "user" u ON f.user_id = u.id
+            WHERE f.type = 'rating'
+            ORDER BY f.created_at DESC
+        """
+
+        cursor.execute(query)
+        results = cursor.fetchall()
+
+        # CSV 생성
+        output = io.StringIO()
+        csv_writer = csv.writer(output)
+
+        # 헤더
+        csv_writer.writerow([
+            'ID',
+            'Model',
+            'User Name',
+            'User ID',
+            'User Message',
+            'Assistant Message',
+            'Evaluation',
+            'Reason',
+            'Comment',
+            'Created At'
+        ])
+
+        # 데이터
+        for row in results:
+            # 메시지 추출
+            messages = row.get('messages', [])
+            user_message = ""
+            assistant_message = ""
+
+            if isinstance(messages, list) and len(messages) > 0:
+                for msg in messages:
+                    if isinstance(msg, dict):
+                        if msg.get('role') == 'user':
+                            user_message = msg.get('content', '')
+                        elif msg.get('role') == 'assistant':
+                            assistant_message = msg.get('content', '')
+
+            # 평가 타입 변환
+            rating_value = row.get('rating')
+            evaluation_type = "Bad" if rating_value == '-1' or rating_value == -1 else "Good" if rating_value == '1' or rating_value == 1 else "Unknown"
+
+            # 평가 일시 변환
+            created_timestamp = row.get('created_at', 0)
+            created_at = datetime.fromtimestamp(created_timestamp).strftime('%Y-%m-%d %H:%M:%S') if created_timestamp else ''
+
+            csv_writer.writerow([
+                row.get('id'),
+                row.get('model_id', 'N/A'),
+                row.get('user_name', 'Unknown'),
+                row.get('user_id', 'N/A'),
+                user_message,
+                assistant_message,
+                evaluation_type,
+                row.get('reason', ''),
+                row.get('comment', ''),
+                created_at
+            ])
+
+        cursor.close()
+        conn.close()
+
+        # CSV 다운로드 응답
+        output.seek(0)
+
+        # UTF-8 BOM 추가 (Excel에서 한글 깨짐 방지)
+        csv_content = '\ufeff' + output.getvalue()
+
+        return StreamingResponse(
+            iter([csv_content.encode('utf-8')]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=evaluations2_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            }
+        )
+
+    except Exception as e:
+        print(f"❌ [EVALUATIONS2-CSV] Error generating CSV: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

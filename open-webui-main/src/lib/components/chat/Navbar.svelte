@@ -70,6 +70,19 @@
 	// 오른쪽 Controls가 닫혔을 때만 토글 버튼 표시 (내부/외부 모델 모두)
 	$: showRightControlsToggle = !$showControls;
 
+	// 모델명 간소화 함수 (버전 정보 제거)
+	const simplifyModelName = (modelName: string): string => {
+		// qwen2-1.5b-instruct -> qwen2
+		// gpt-4-turbo-preview -> gpt
+		// claude-3-opus-20240229 -> claude
+		// 첫 번째 하이픈 앞 부분만 반환
+		const parts = modelName.split('-');
+		return parts[0];
+	};
+
+	// 모델 목록을 간소화된 이름으로 변환
+	$: simplifiedModels = selectedModels.map(simplifyModelName);
+
 	// Theme toggle function
 	const applyTheme = (_theme: string) => {
 		let themeToApply = _theme === 'oled-dark' ? 'dark' : _theme === 'her' ? 'light' : _theme;
@@ -175,13 +188,15 @@
 					{#if $modelType === 'external'}
 						<!-- 외부 모델: ModelSelector를 통해 다중 모델 선택 가능 -->
 						<div class="flex items-center gap-2 px-2">
+							<span class="text-sm font-medium text-gray-600 dark:text-gray-400">외부:</span>
 							<ModelSelector bind:selectedModels {showModelSelector} disabled={modelSelectorDisabled} />
 						</div>
 					{:else}
-						<!-- 내부 모델: 기존 방식 (텍스트 표시) -->
+						<!-- 내부 모델: 간단 표시 (내부 표시 + 모델명) -->
 						<div class="flex items-center gap-2 px-2">
+							<span class="text-sm font-medium text-gray-600 dark:text-gray-400">내부:</span>
 							<span class="text-sm font-semibold text-gray-700 dark:text-gray-200 truncate">
-								내부 모델: {selectedModels.length > 0 ? selectedModels.join(', ') : 'None'}
+								{simplifiedModels.length > 0 ? simplifiedModels.join(', ') : 'None'}
 							</span>
 						</div>
 					{/if}

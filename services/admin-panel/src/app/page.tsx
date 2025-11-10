@@ -49,6 +49,10 @@ interface DocumentChunk {
 
 export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState('documents');
+
+  // Evaluations state
+  const [evaluations, setEvaluations] = useState<any[]>([]);
+  const [evaluationsLoading, setEvaluationsLoading] = useState(false);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -616,6 +620,16 @@ export default function AdminPanel() {
             }`}
           >
             🛡️ Arthur AI Guardrails
+          </button>
+          <button
+            onClick={() => setActiveTab('evaluations2')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'evaluations2'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            📊 평가2
           </button>
         </div>
 
@@ -1222,6 +1236,16 @@ export default function AdminPanel() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'evaluations2' && (
+          <div className="space-y-6">
+            <iframe
+              src="/evaluations2"
+              className="w-full h-[calc(100vh-200px)] border-0 rounded-lg shadow-sm"
+              title="평가2 페이지"
+            />
           </div>
         )}
       </div>

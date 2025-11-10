@@ -68,7 +68,7 @@ export const banners: Writable<Banner[]> = writable([]);
 export const settings: Writable<Settings> = writable({});
 
 export const showSidebar = writable(true);
-export const showRightSidebar = writable(true);
+export const showRightSidebar = writable(false);
 export const showSearch = writable(false);
 export const showSettings = writable(false);
 export const showShortcuts = writable(false);

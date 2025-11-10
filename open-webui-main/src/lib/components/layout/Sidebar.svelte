@@ -41,7 +41,8 @@
 		updateChatFolderIdById,
 		importChat,
 		createNewChat,
-		deleteAllChats
+		deleteAllChats,
+		deleteChatById
 	} from '$lib/apis/chats';
 	import { createNewFolder, getFolders, updateFolderParentIdById } from '$lib/apis/folders';
 	import { WEBUI_BASE_URL } from '$lib/constants';
@@ -475,27 +476,35 @@
 		window.location.href = '/';
 	};
 
-	// 새로운 채팅 세션 생성 (API 사용)
+	// 새로운 채팅 세션 생성 (빈 채팅 삭제 후 홈으로 이동)
 	const createNewChatSession = async () => {
 		try {
-			const newChat = {
-				id: uuidv4(),
-				title: $i18n.t('New Chat'),
-				models: [],
-				messages: [],
-				history: { messages: {}, currentId: null },
-				tags: [],
-				timestamp: Math.floor(Date.now() / 1000)
-			};
+			// 🗑️ 현재 채팅이 비어있으면 삭제 (Ultra-Think 분석 기반)
+			if ($chatId && !$temporaryChatEnabled) {
+				try {
+					console.log('🔍 [Sidebar] 현재 채팅 체크:', $chatId);
+					const currentChat = await getChatById(localStorage.token, $chatId);
 
-			await createNewChat(localStorage.token, newChat, null);
+					if (currentChat) {
+						// messages 배열에서 user 메시지 확인
+						const messages = currentChat.chat?.messages || currentChat.messages || [];
+						const hasUserMessages = messages.some(msg => msg.role === 'user');
 
-			// 채팅 리스트 새로고침
-			await initChatList();
+						if (!hasUserMessages || messages.length === 0) {
+							console.log('🗑️ [Sidebar] 빈 채팅 삭제:', $chatId);
+							await deleteChatById(localStorage.token, $chatId);
+							await initChatList();
+						} else {
+							console.log('✅ [Sidebar] 메시지 있음, 유지:', $chatId);
+						}
+					}
+				} catch (e) {
+					console.log('⚠️ [Sidebar] 이전 채팅 확인 실패 (무시):', e.message);
+				}
+			}
 
-			// 새 채팅으로 이동
+			// 새 채팅으로 이동 (채팅은 Chat.svelte에서 생성됨)
 			goto('/');
-			newChatHandler();
 
 			toast.success('새 채팅 세션이 생성되었습니다.');
 		} catch (error) {

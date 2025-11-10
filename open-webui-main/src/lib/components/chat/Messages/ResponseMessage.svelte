@@ -832,13 +832,16 @@
 		id="message-{message.id}"
 		dir={$settings.chatDirection}
 	>
-		<div class={`shrink-0 ltr:mr-3 rtl:ml-3`}>
-			<ProfileImage
-				src={model?.info?.meta?.profile_image_url ??
-					($i18n.language === 'dg-DG' ? `/doge.png` : `${WEBUI_BASE_URL}/static/favicon.png`)}
-				className={'size-8'}
-			/>
-		</div>
+		{#if false}
+			<!-- 프로필 아이콘 숨김 -->
+			<div class={`shrink-0 ltr:mr-3 rtl:ml-3`}>
+				<ProfileImage
+					src={model?.info?.meta?.profile_image_url ??
+						($i18n.language === 'dg-DG' ? `/doge.png` : `${WEBUI_BASE_URL}/static/favicon.png`)}
+					className={'size-8'}
+				/>
+			</div>
+		{/if}
 
 		<div class="flex-auto w-0 pl-1 relative">
 			<Name>

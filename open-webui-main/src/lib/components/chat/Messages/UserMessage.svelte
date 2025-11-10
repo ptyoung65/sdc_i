@@ -125,7 +125,8 @@
 	dir={$settings.chatDirection}
 	id="message-{message.id}"
 >
-	{#if !($settings?.chatBubble ?? true)}
+	{#if false}
+		<!-- 프로필 아이콘 숨김 -->
 		<div class={`shrink-0 ltr:mr-3 rtl:ml-3 mt-1`}>
 			<ProfileImage
 				src={message.user

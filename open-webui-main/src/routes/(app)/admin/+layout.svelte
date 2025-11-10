@@ -61,35 +61,42 @@
 					>
 						<a
 							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/users')
-								? ''
+								? 'text-gray-600 dark:text-gray-400'
 								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
 							href="/admin">{$i18n.t('Users')}</a
 						>
 
 						<!-- <a
 							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/analytics')
-								? ''
+								? 'text-gray-600 dark:text-gray-400'
 								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
 							href="/admin/analytics">{$i18n.t('Analytics')}</a
 						> -->
 
 						<a
-							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/evaluations')
-								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/evaluations') && !$page.url.pathname.includes('/admin/evaluations2')
+								? 'text-gray-600 dark:text-gray-400'
+								: 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'} transition"
 							href="/admin/evaluations">{$i18n.t('Evaluations')}</a
 						>
 
 						<a
+							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/evaluations2')
+								? 'text-gray-600 dark:text-gray-400'
+								: 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'} transition"
+							href="/admin/evaluations2">{$i18n.t('Evaluations 2')}</a
+						>
+
+						<a
 							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/functions')
-								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+								? 'text-gray-600 dark:text-gray-400'
+								: 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'} transition"
 							href="/admin/functions">{$i18n.t('Functions')}</a
 						>
 
 						<a
 							class="min-w-fit p-1.5 {$page.url.pathname.includes('/admin/settings')
-								? ''
+								? 'text-gray-600 dark:text-gray-400'
 								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
 							href="/admin/settings">{$i18n.t('Settings')}</a
 						>
