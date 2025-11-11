@@ -12,6 +12,7 @@
 	// 지식화 진행 상태
 	let knowledgingStatus = 'idle'; // 'idle' | 'processing' | 'completed'
 	let knowledgingProgress = 0;
+	let uploadedFiles = []; // 업로드된 파일 결과 목록
 
 	// 문서 타입별 아이콘
 	const getFileIcon = (fileType: string) => {
@@ -79,18 +80,37 @@
 			return;
 		}
 
-		knowledgingStatus = 'processing';
-		knowledgingProgress = 0;
+		try {
+			// EDM 파일 정보를 메시지로 변환
+			const files = selectedDocs.map((doc) => ({
+				objid: doc.FILE_ID || doc.id || doc.OBJID,
+				fileLastVerSno: doc.FILE_LAST_VER_SNO || doc.fileLastVerSno || 1,
+				requestUser: doc.REQUEST_USER || doc.requestUser || 'system@example.com',
+				fileName: doc.FILE_NAME || doc.fileName || '알 수 없는 파일'
+			}));
 
-		// 지식화 진행 시뮬레이션
-		const totalDocs = selectedDocs.length;
-		for (let i = 0; i < totalDocs; i++) {
-			await new Promise((resolve) => setTimeout(resolve, 500)); // 실제로는 API 호출
-			knowledgingProgress = Math.round(((i + 1) / totalDocs) * 100);
+			console.log('🔵 [지식화] 채팅으로 전송', { filesCount: files.length, files });
+
+			// 파일 정보를 JSON으로 인코딩하여 메시지에 포함
+			const filesJson = JSON.stringify(files);
+
+			// Custom event를 발생시켜 채팅 컴포넌트로 메시지 전달
+			const event = new CustomEvent('edm-knowledge-request', {
+				detail: {
+					files: files,
+					message: `EDM 파일 ${files.length}개를 지식화합니다.`
+				}
+			});
+			window.dispatchEvent(event);
+
+			// 모달 닫기
+			show = false;
+
+			toast.success(`${files.length}개 파일 지식화를 시작합니다. 채팅 화면을 확인하세요.`);
+		} catch (error) {
+			console.error('❌ [지식화] 오류:', error);
+			toast.error(`지식화 실패: ${error.message}`);
 		}
-
-		knowledgingStatus = 'completed';
-		toast.success(`${selectedDocs.length}건의 문서가 지식화되었습니다.`);
 	};
 
 	// 모달 닫기

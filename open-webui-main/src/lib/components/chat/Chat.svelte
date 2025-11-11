@@ -95,7 +95,7 @@
 	import EdmIntegration from './EdmIntegration.svelte';
 	import EdmFileListModal from './EdmFileListModal.svelte';
 	import EdmDocumentArea from './EdmDocumentArea.svelte';
-	import RightSidebar, { selectedCategories, getDisplayCategoriesFromIds } from '../layout/RightSidebar.svelte';
+	import RightSidebar, { selectedCategories, getDisplayCategoriesFromIds, DISPLAY_CATEGORIES } from '../layout/RightSidebar.svelte';
 	import { getFunctions } from '$lib/apis/functions';
 	import Image from '../common/Image.svelte';
 	import { updateFolderById } from '$lib/apis/folders';
@@ -114,9 +114,9 @@
 	let processing = '';
 	let messagesContainerElement: HTMLDivElement;
 
-	// 🔄 멀티턴 관리
-	const MAX_TURNS = 10; // 최대 턴 수 (사용자 메시지 + AI 응답 = 1턴)
-	let showMultiTurnModal = false; // 멀티턴 초과 팝업 표시 여부
+	// 🔄 멀티턴 관리 (해제됨)
+	// const MAX_TURNS = 10; // 최대 턴 수 (사용자 메시지 + AI 응답 = 1턴)
+	// let showMultiTurnModal = false; // 멀티턴 초과 팝업 표시 여부
 
 	let navbarElement;
 
@@ -207,20 +207,22 @@
 			// 카테고리가 선택되지 않으면 기본 모델로 복원
 			isModelSelectorDisabled = false;
 
-			// 기본 모델로 자동 전환
+			// 기본 모델로 자동 전환 (대사우 Assistant - internal만 사용)
 			if ($modelType === 'internal') {
 				const defaultModelId = getDefaultInternalModelId();
 				if (selectedModels[0] !== defaultModelId) {
 					selectedModels = [defaultModelId];
 					console.log('✅ [카테고리 해제] 내부 기본 모델로 복원:', defaultModelId);
 				}
-			} else if ($modelType === 'external') {
-				const defaultModelId = getDefaultExternalModelId();
-				if (selectedModels[0] !== defaultModelId) {
-					selectedModels = [defaultModelId];
-					console.log('✅ [카테고리 해제] 외부 기본 모델로 복원:', defaultModelId);
-				}
 			}
+			// External 모델 사용 안함 - 주석 처리
+			// else if ($modelType === 'external') {
+			// 	const defaultModelId = getDefaultExternalModelId();
+			// 	if (selectedModels[0] !== defaultModelId) {
+			// 		selectedModels = [defaultModelId];
+			// 		console.log('✅ [카테고리 해제] 외부 기본 모델로 복원:', defaultModelId);
+			// 	}
+			// }
 		}
 	}
 
@@ -303,22 +305,21 @@
 		return 'external';
 	};
 
-	// 모델 목록 로드 (General.svelte와 동일)
+	// 모델 목록 로드 (daesawoo 파이프라인만 찾음)
 	const loadModels = async () => {
 		try {
-			// Use base: false to get full model info including metadata
-			// connections: null means don't fetch external OpenAI connections
-			// base: false means get full /api/models not /api/models/base
-			// refresh: true forces a refresh of the model list
+			// daesawoo 파이프라인만 필요하므로 최소한의 모델만 로딩
 			allModels = await getModels(localStorage.token, null, false, true);
 			console.log('[loadModels] Loaded models:', allModels.length, 'total');
 
 			// Update the global $models store for ModelSelector component
 			models.set(allModels);
 
+			// 대사우 Assistant만 사용 - external 모델 필터링 주석 처리
 			internalModels = allModels.filter(m => getModelType(m) === 'internal');
-			externalModels = allModels.filter(m => getModelType(m) === 'external');
-			console.log('[loadModels] Internal models:', internalModels.length, ', External models:', externalModels.length);
+			// externalModels = allModels.filter(m => getModelType(m) === 'external');
+			externalModels = []; // 외부 모델 사용 안함
+			console.log('[loadModels] Internal models:', internalModels.length, ', External models 사용 안함');
 		} catch (error) {
 			console.error('모델 목록 로드 실패:', error);
 			toast.error('모델 목록을 불러오는데 실패했습니다');
@@ -339,18 +340,19 @@
 		return defaultModel;
 	};
 
-	const getDefaultExternalModelId = () => {
-		// Wait for database load to complete
-		if (!defaultModelsLoaded) {
-			console.warn('⏳ [getDefaultExternalModelId] 기본 모델 로드 중...');
-			return '';
-		}
+	// 대사우 Assistant만 사용 - external 모델 사용 안함
+	// const getDefaultExternalModelId = () => {
+	// 	// Wait for database load to complete
+	// 	if (!defaultModelsLoaded) {
+	// 		console.warn('⏳ [getDefaultExternalModelId] 기본 모델 로드 중...');
+	// 		return '';
+	// 	}
 
-		// Return value from config store (updated in onMount from database)
-		const defaultModel = $config?.default_external_model || '';
-		console.log('[getDefaultExternalModelId] Returning:', defaultModel);
-		return defaultModel;
-	};
+	// 	// Return value from config store (updated in onMount from database)
+	// 	const defaultModel = $config?.default_external_model || '';
+	// 	console.log('[getDefaultExternalModelId] Returning:', defaultModel);
+	// 	return defaultModel;
+	// };
 
 	// Category boxes for internal model
 	const categories = [
@@ -1031,6 +1033,25 @@
 
 		window.addEventListener('message', onMessageHandler);
 		$socket?.on('events', chatEventHandler);
+
+		// EDM 지식화 이벤트 리스너
+		const handleEdmKnowledgeRequest = async (event: CustomEvent) => {
+			const { files, message } = event.detail;
+			console.log('🔵 [Chat] EDM 지식화 이벤트 수신:', files);
+
+			// 파이프라인에 파일 정보 전달
+			const userMessage = {
+				role: 'user',
+				content: `EDM 파일 ${files.length}개를 지식화합니다.`,
+				edm_files: files
+			};
+
+			// 기존 submitPrompt 함수를 사용하여 메시지 전송
+			await submitPrompt('', '', { edmFiles: files });
+		};
+
+		window.addEventListener('edm-knowledge-request', handleEdmKnowledgeRequest);
+
 
 		// Expose submitPrompt for E2E testing
 		if (typeof window !== 'undefined') {
@@ -1976,28 +1997,44 @@
 	// Chat functions
 	//////////////////////////
 
-	const submitPrompt = async (userPrompt, { _raw = false } = {}) => {
+	const submitPrompt = async (userPrompt, { _raw = false, edmFiles = null } = {}) => {
 		console.log('[Chat] submitPrompt called:', userPrompt);
 		console.log('[Chat] Current chatId:', $chatId);
 		console.log('[Chat] temporaryChatEnabled:', $temporaryChatEnabled);
 		console.log('[Chat] selectedCategories:', $selectedCategories);
 
-		// 🔄 멀티턴 제한 체크 (사용자 메시지 개수 기반)
-		// 주의: 현재 입력 중인 메시지는 아직 history에 없으므로 +1 해서 체크
-		const currentUserMessageCount = Object.values(history.messages).filter(msg => msg.role === 'user').length;
-		const nextUserMessageCount = currentUserMessageCount + 1; // 지금 전송하려는 메시지 포함
+		// EDM 파일 지식화 요청인 경우
+		if (edmFiles && edmFiles.length > 0) {
+			console.log('🔵 [Chat] EDM 파일 지식화 요청:', edmFiles);
 
-		console.log(`🔄 [멀티턴] 현재 사용자 메시지: ${currentUserMessageCount}개, 전송 후: ${nextUserMessageCount}개/${MAX_TURNS}턴 제한`);
-		console.log(`🔄 [멀티턴] 전체 메시지: ${Object.keys(history.messages).length}개`);
+			// edm_download_pipe_streaming 파이프라인 선택
+			const edmPipeModel = $models.find(m => m.id === 'edm_download_pipe_streaming');
+			if (edmPipeModel) {
+				selectedModels = [edmPipeModel.id];
+				console.log('✅ [Chat] EDM 다운로드 파이프라인 자동 선택:', edmPipeModel.id);
+			}
 
-		if (nextUserMessageCount > MAX_TURNS) {
-			console.log(`⚠️ [멀티턴] 최대 턴 수(${MAX_TURNS}) 초과 - 팝업 표시`);
+			// 프롬프트 생성
+			userPrompt = `EDM 파일 ${edmFiles.length}개를 지식화합니다.`;
 
-			// 멀티턴 초과 팝업 표시
-			showMultiTurnModal = true;
-
-			return; // 현재 메시지 제출 중단
+			// 메시지 히스토리에 edm_files 추가 (파이프라인에서 사용)
+			if (!window.__edmFilesForPipeline) {
+				window.__edmFilesForPipeline = {};
+			}
+			const requestId = Date.now().toString();
+			window.__edmFilesForPipeline[requestId] = edmFiles;
 		}
+
+		// 🔄 멀티턴 제한 체크 (해제됨)
+		// const currentUserMessageCount = Object.values(history.messages).filter(msg => msg.role === 'user').length;
+		// const nextUserMessageCount = currentUserMessageCount + 1;
+		// console.log(`🔄 [멀티턴] 현재 사용자 메시지: ${currentUserMessageCount}개, 전송 후: ${nextUserMessageCount}개/${MAX_TURNS}턴 제한`);
+		// console.log(`🔄 [멀티턴] 전체 메시지: ${Object.keys(history.messages).length}개`);
+		// if (nextUserMessageCount > MAX_TURNS) {
+		// 	console.log(`⚠️ [멀티턴] 최대 턴 수(${MAX_TURNS}) 초과 - 팝업 표시`);
+		// 	showMultiTurnModal = true;
+		// 	return;
+		// }
 
 		// EDM 문서활용이 선택된 경우 모델에 따라 분기
 		// selectedCategories는 문자열 배열 ['edm', 'guide', ...] 형태
@@ -2357,146 +2394,53 @@
 		기존 EDM 전용 플로우 제거 끝 */
 
 		// 대사우 Assistant: 사용자 의도 분석 및 자동 분류
-		const isDaesawooAssistant = $selectedCategories.some(cat =>
-			['guide', 'helpdesk', 'dictionary', 'etc'].includes(cat)
-		);
-
-		if (isDaesawooAssistant) {
-			console.log('🤖 대사우 Assistant 모드 - 사용자 의도 분석 시작');
-
-			try {
-				// 1단계: LLM을 통한 사용자 의도 분석
-				const intentAnalysisPrompt = `다음 사용자 질문을 분석하여 3가지 카테고리 중 하나로 분류해주세요.
-
-카테고리:
-1. "회사생활가이드" - 회사 규정, 인사 제도, 복지, 근무 규칙 등 회사 생활 관련 질문
-2. "IT헬프데스크" - IT 시스템, 소프트웨어, 하드웨어, 네트워크 문제 등 기술 지원 관련 질문
-3. "지식용어사전" - 디스플레이 산업 기술 용어, 전문 용어의 정의나 설명을 묻는 질문
-4. "기타" - 위 3가지에 해당하지 않는 일반적인 질문
-
-질문: "${userPrompt}"
-
-응답 형식: JSON 형태로 카테고리만 반환 (예: {"category": "지식용어사전"})`;
-
-				// Qwen LLM에 의도 분석 요청
-				const intentResponse = await fetch('http://169.254.1.2:8000/api/generate', {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json'
-					},
-					body: JSON.stringify({
-						model: 'qwen2:1.5b-instruct',
-						prompt: intentAnalysisPrompt,
-						stream: false
-					}),
-					timeout: 10000
-				});
-
-				if (!intentResponse.ok) {
-					throw new Error(`Intent analysis failed: ${intentResponse.status}`);
-				}
-
-				const intentData = await intentResponse.json();
-				const intentText = intentData.response || '';
-				console.log('📊 의도 분석 결과:', intentText);
-
-				// JSON 파싱 (응답에서 category 추출)
-				let detectedCategory = 'etc'; // 기본값
-				try {
-					const jsonMatch = intentText.match(/\{[^}]+\}/);
-					if (jsonMatch) {
-						const parsed = JSON.parse(jsonMatch[0]);
-						const cat = parsed.category || parsed.카테고리 || '';
-						
-						// 카테고리 매핑
-						if (cat.includes('지식용어') || cat.includes('용어사전') || cat.includes('dictionary')) {
-							detectedCategory = 'dictionary';
-						} else if (cat.includes('회사생활') || cat.includes('가이드') || cat.includes('guide')) {
-							detectedCategory = 'guide';
-						} else if (cat.includes('IT') || cat.includes('헬프데스크') || cat.includes('helpdesk')) {
-							detectedCategory = 'helpdesk';
-						}
-					}
-				} catch (parseError) {
-					console.warn('⚠️ 의도 분석 JSON 파싱 실패, 기본값 사용:', parseError);
-				}
-
-				console.log('✅ 최종 분류:', detectedCategory);
-
-				// 2단계: 분류에 따른 처리
-				if (detectedCategory === 'dictionary') {
-					console.log('📚 지식용어 사전으로 분류 - dict_search function 사용');
-
-					// dict_search function을 찾아서 selectedModels로 설정
-					const dictFunction = $functions?.find(f => 
-						f.id === 'function_dict_search_rag' || 
-						f.id === 'dict_search_rag' || 
-						f.id === 'dict_serch'
-					);
-
-					if (dictFunction) {
-						selectedModels = [dictFunction.id];
-						console.log('✅ dict_search function으로 전환:', dictFunction.id);
-						// 일반 LLM 처리 플로우로 진행 (function이 자동으로 실행됨)
-					} else {
-						console.warn('⚠️ dict_search function을 찾을 수 없습니다.');
-						console.log('사용 가능한 functions:', $functions?.map(f => f.id));
-					}
-				} else if (detectedCategory === 'guide') {
-					console.log('📖 회사생활가이드로 분류 - 추후 구현 예정');
-					// TODO: 회사생활가이드 Milvus 컬렉션 검색
-				} else if (detectedCategory === 'helpdesk') {
-					console.log('🛠️ IT 헬프데스크로 분류 - 추후 구현 예정');
-					// TODO: IT 헬프데스크 Milvus 컬렉션 검색
-				} else {
-					console.log('❓ 기타 카테고리 - 일반 LLM으로 처리');
-				}
-
-			} catch (error) {
-				console.error('❌ 사용자 의도 분석 오류:', error);
-				// 오류 시 일반 LLM으로 처리 (아래 코드 계속 진행)
-			}
-		}
+		// 이전 의도 분석 로직 제거 - 파이프라인이 모든 처리를 담당
+		console.log('🚀 [submitPrompt] 대사우 파이프라인으로 직접 전달');
 
 
-		const _selectedModels = selectedModels.map((modelId) =>
-			$models.map((m) => m.id).includes(modelId) ? modelId : ''
-		);
+		// 다른 모델 체크 주석 처리 - 기본 모델만 사용
+		// const _selectedModels = selectedModels.map((modelId) =>
+		// 	$models.map((m) => m.id).includes(modelId) ? modelId : ''
+		// );
+		// if (JSON.stringify(selectedModels) !== JSON.stringify(_selectedModels)) {
+		// 	selectedModels = _selectedModels;
+		// }
 
-		if (JSON.stringify(selectedModels) !== JSON.stringify(_selectedModels)) {
-			selectedModels = _selectedModels;
-		}
-
-		if (userPrompt === '' && files.length === 0) {
+		// 빈 프롬프트 체크만 유지
+		if (userPrompt === '') {
 			toast.error($i18n.t('Please enter a prompt'));
 			return;
 		}
-		if (selectedModels.includes('')) {
-			toast.error($i18n.t('Model not selected'));
-			return;
-		}
 
-		if (
-			files.length > 0 &&
-			files.filter((file) => file.type !== 'image' && file.status === 'uploading').length > 0
-		) {
-			toast.error(
-				$i18n.t(`Oops! There are files still uploading. Please wait for the upload to complete.`)
-			);
-			return;
-		}
+		// 모델 선택 체크 제거 - 기본 모델 자동 사용
+		// if (selectedModels.includes('')) {
+		// 	toast.error($i18n.t('Model not selected'));
+		// 	return;
+		// }
 
-		if (
-			($config?.file?.max_count ?? null) !== null &&
-			files.length + chatFiles.length > $config?.file?.max_count
-		) {
-			toast.error(
-				$i18n.t(`You can only chat with a maximum of {{maxCount}} file(s) at a time.`, {
-					maxCount: $config?.file?.max_count
-				})
-			);
-			return;
-		}
+		// 파일 업로드 체크 제거
+		// if (
+		// 	files.length > 0 &&
+		// 	files.filter((file) => file.type !== 'image' && file.status === 'uploading').length > 0
+		// ) {
+		// 	toast.error(
+		// 		$i18n.t(`Oops! There are files still uploading. Please wait for the upload to complete.`)
+		// 	);
+		// 	return;
+		// }
+
+		// 파일 개수 제한 체크 제거
+		// if (
+		// 	($config?.file?.max_count ?? null) !== null &&
+		// 	files.length + chatFiles.length > $config?.file?.max_count
+		// ) {
+		// 	toast.error(
+		// 		$i18n.t(`You can only chat with a maximum of {{maxCount}} file(s) at a time.`, {
+		// 			maxCount: $config?.file?.max_count
+		// 		})
+		// 	);
+		// 	return;
+		// }
 
 		if (history?.currentId) {
 			const lastMessage = history.messages[history.currentId];
@@ -2524,34 +2468,30 @@
 			)
 		);
 
-		// 선택된 카테고리에서 Knowledge Base 추가
-		if ($selectedCategories.length > 0) {
-		// EDM 선택 여부를 metadata로 전달 (chatFiles에 추가하지 않음)
-		const hasEdm = $selectedCategories.includes("edm");
-		if (hasEdm) {
-			console.log("🔵 [EDM 선택됨] metadata로 전달");
-		}
-		// EDM이 아닌 knowledge base만 chatFiles에 추가
-		$selectedCategories.filter(id => id !== "edm").forEach(categoryId => {
-				// Knowledge Base를 collection 타입으로 chatFiles에 추가
-				// EDM의 경우 collection_name 사용, 그 외는 name 사용
-				const collectionName = categoryId;
-				chatFiles.push({
-					type: 'collection',
-					id: categoryId,
-					name: categoryId,
-					collection_name: collectionName
-				});
-				console.log('🔵 [Knowledge Base 추가]', {
-					timestamp: new Date().toISOString(),
-					action: 'add_collection',
-					categoryId: categoryId,
-					categoryName: categoryId,
-					collectionName: collectionName,
-					totalChatFiles: chatFiles.length
-				});
-			});
-		}
+		// Knowledge Base 추가 기능 주석 처리 - 기본 모델만 사용
+		// if ($selectedCategories.length > 0) {
+		// 	const hasEdm = $selectedCategories.includes("edm");
+		// 	if (hasEdm) {
+		// 		console.log("🔵 [EDM 선택됨] metadata로 전달");
+		// 	}
+		// 	$selectedCategories.filter(id => id !== "edm").forEach(categoryId => {
+		// 		const collectionName = categoryId;
+		// 		chatFiles.push({
+		// 			type: 'collection',
+		// 			id: categoryId,
+		// 			name: categoryId,
+		// 			collection_name: collectionName
+		// 		});
+		// 		console.log('🔵 [Knowledge Base 추가]', {
+		// 			timestamp: new Date().toISOString(),
+		// 			action: 'add_collection',
+		// 			categoryId: categoryId,
+		// 			categoryName: categoryId,
+		// 			collectionName: collectionName,
+		// 			totalChatFiles: chatFiles.length
+		// 		});
+		// 	});
+		// }
 
 		chatFiles = chatFiles.filter(
 			// Remove duplicates
@@ -3422,8 +3362,8 @@
 	}}
 />
 
-<!-- 🔄 멀티턴 초과 팝업 -->
-<EventConfirmDialog
+<!-- 🔄 멀티턴 초과 팝업 (해제됨) -->
+<!-- <EventConfirmDialog
 	bind:show={showMultiTurnModal}
 	title="대화 턴 제한 초과"
 	message={`대화 턴이 ${MAX_TURNS}회를 초과했습니다.\n\n새 채팅 세션을 시작하시겠습니까?`}
@@ -3437,7 +3377,7 @@
 		console.log('🔄 [멀티턴 팝업] 취소 버튼 클릭');
 		showMultiTurnModal = false;
 	}}
-/>
+/> -->
 
 <div
 	class="h-screen max-h-[100dvh] w-full flex flex-col"
@@ -3776,14 +3716,77 @@
 																			<button
 																				class="w-full text-left px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700"
 																				on:click={async () => {
-																					selectedCategories.set([category]);
-																					console.log('🔵 샘플 질문 클릭 - 카테고리:', category.name);
+																					// 🎯 카테고리별 처리
+																					if (category.id === 'edm' || category.id === 'guide' || category.id === 'helpdesk') {
+																						// EDM 문서활용 또는 대사우 Assistant 카테고리
+																						// RightSidebar 체크박스와 완전히 동일한 기능 구현
+																						let displayCategory = null;
 
-																					// 모든 카테고리 동일하게 처리: 입력창에 샘플 질문 채우기
-																					prompt = sample;
-																					await tick();
-																					if (messageInput) {
-																						await messageInput.setText(sample);
+																						if (category.id === 'edm') {
+																							// EDM 문서활용 → DISPLAY_CATEGORIES[0]
+																							displayCategory = DISPLAY_CATEGORIES[0];
+																						} else if (category.id === 'guide' || category.id === 'helpdesk') {
+																							// 대사우 Assistant → DISPLAY_CATEGORIES[1]
+																							displayCategory = DISPLAY_CATEGORIES[1];
+																						}
+
+																						if (displayCategory) {
+																							const { actualIds } = displayCategory;
+
+																							// 모든 실제 ID가 선택되어 있는지 확인
+																							const allSelected = actualIds.every(id => $selectedCategories.includes(id));
+
+																							console.log('🔵 샘플 질문 클릭 - 카테고리:', category.name);
+																							console.log('📋 매핑된 표시 카테고리:', displayCategory.name);
+																							console.log('🔢 실제 ID 목록:', actualIds);
+																							console.log('✓ 현재 선택 상태:', allSelected);
+
+																							if (allSelected) {
+																								// 모두 선택 해제
+																								selectedCategories.update(cats => {
+																									const filtered = cats.filter(id => !actualIds.includes(id));
+																									console.log('❌ 선택 해제 후:', filtered);
+																									return filtered;
+																								});
+																							} else {
+																								// 모두 선택 (중복 제거)
+																								selectedCategories.update(cats => {
+																									const newCats = [...cats];
+																									actualIds.forEach(id => {
+																										if (!newCats.includes(id)) {
+																											newCats.push(id);
+																										}
+																									});
+																									console.log('✅ 선택 후:', newCats);
+																									return newCats;
+																								});
+																							}
+																						}
+
+																						// 메시지 입력창에 샘플 질문 채우기
+																						prompt = sample;
+																						await tick();
+																						if (messageInput) {
+																							await messageInput.setText(sample);
+																						}
+																					} else {
+																						// 그 이외 카드 버튼 (보고서 초안 작성, Code 개발 지원, 외부정보검색 등)
+																						// 내부검색 기본모델 적용
+																						console.log('🔵 일반 카테고리 샘플 질문 클릭 - 카테고리:', category.name);
+
+																						// 내부 기본 모델로 자동 설정
+																						const defaultModelId = getDefaultInternalModelId();
+																						if (defaultModelId) {
+																							selectedModels = [defaultModelId];
+																							console.log('✅ 내부 기본 모델 자동 적용:', defaultModelId);
+																						}
+
+																						// 메시지 입력창에 샘플 질문만 채우기 (전송은 사용자가 직접)
+																						prompt = sample;
+																						await tick();
+																						if (messageInput) {
+																							await messageInput.setText(sample);
+																						}
 																					}
 																				}}
 																			>
