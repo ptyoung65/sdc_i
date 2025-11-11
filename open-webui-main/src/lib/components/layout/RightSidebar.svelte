@@ -130,19 +130,17 @@
 						}"
 				>
 					<div class="flex items-start gap-3">
-						<!-- 선택 체크박스 -->
+						<!-- 선택 라디오 버튼 -->
 						<div class="flex-shrink-0 pt-0.5">
 							<div
-								class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-200
+								class="w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all duration-200
 									{isDisplayCategorySelected(category)
 										? 'bg-blue-500 border-blue-500 scale-105'
 										: 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'
 									}"
 							>
 								{#if isDisplayCategorySelected(category)}
-									<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-white" transition:fade={{duration: 150}}>
-										<path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd" />
-									</svg>
+									<div class="w-2.5 h-2.5 rounded-full bg-white" transition:fade={{duration: 150}}></div>
 								{/if}
 							</div>
 						</div>
@@ -166,12 +164,13 @@
 		<!-- 하단 정보 -->
 		<div class="px-3 py-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
 			{#if selected.length > 0}
+				{@const selectedCategory = displayCategories.find(cat => isDisplayCategorySelected(cat))}
 				<p class="text-xs text-blue-600 dark:text-blue-400 text-center font-medium">
-					✓ {selected.length}개 카테고리 선택됨
+					✓ {selectedCategory?.name || '선택됨'}
 				</p>
 			{:else}
 				<p class="text-xs text-gray-500 dark:text-gray-400 text-center">
-					카테고리를 선택하여 검색 범위를 설정하세요
+					카테고리를 선택하세요 (하나만 선택 가능)
 				</p>
 			{/if}
 		</div>
