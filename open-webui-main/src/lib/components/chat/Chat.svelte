@@ -3716,62 +3716,27 @@
 																			<button
 																				class="w-full text-left px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700"
 																				on:click={async () => {
-																	// 🎯 카테고리별 처리
+																	// 🎯 카테고리별 처리 - 항상 첫번째 처리로 동작
 																	if (category.id === 'edm' || category.id === 'guide' || category.id === 'helpdesk') {
 																		// EDM 문서활용 또는 대사우 Assistant 카테고리
+																		console.log('🔵 EDM/대사우 샘플 질문 클릭 - 카테고리:', category.name);
 
-																		// 1. 클릭한 카드버튼의 목표 모델 ID 확인
-																		let targetModelId = null;
+																		// 카테고리에 맞는 displayCategory 찾기
 																		let displayCategory = null;
-
 																		if (category.id === 'edm') {
-																			// EDM 카드 → edm_search_pipe 목표
-																			displayCategory = DISPLAY_CATEGORIES[0];
-																			const edmModel = $models.find(m =>
-																				m.id === 'edm_search_pipe' || m.id?.includes('edm_search')
-																			);
-																			targetModelId = edmModel?.id;
-																			console.log('🔍 EDM 모델 찾기:', edmModel, '/ ID:', targetModelId);
+																			displayCategory = DISPLAY_CATEGORIES[0];  // EDM 문서활용
 																		} else if (category.id === 'guide' || category.id === 'helpdesk') {
-																			// 대사우 카드 → daesawoo 목표
-																			displayCategory = DISPLAY_CATEGORIES[1];
-																			const daesawooModel = $models.find(m =>
-																				m.id?.includes('daesawoo') || m.name?.includes('daesawoo')
-																			);
-																			targetModelId = daesawooModel?.id;
-																			console.log('🔍 대사우 모델 찾기:', daesawooModel, '/ ID:', targetModelId);
+																			displayCategory = DISPLAY_CATEGORIES[1];  // 대사우 Assistant
 																		}
 
-																		// 2. 현재 선택된 모델 확인
-																		const currentModelId = selectedModels[0];
-
-																		console.log('🔵 샘플 질문 클릭 - 카테고리:', category.name);
-																		console.log('🔍 모델 비교 - 현재:', currentModelId, '/ 목표:', targetModelId);
-
-																		// 3. 모델 비교하여 처리
-																		if (targetModelId && currentModelId === targetModelId) {
-																			// 같은 영역 → 메시지만 변경 (selectedCategories 업데이트 안함)
-																			console.log('✅ 같은 영역 - 메시지만 변경');
-																		} else {
-																			// 다른 영역 또는 targetModelId를 못찾음 → selectedCategories 업데이트 (모델 변경 트리거)
-																			console.log('🔄 다른 영역 - 모델 변경 및 메시지 변경');
-
-																			if (displayCategory) {
-																				const { actualIds } = displayCategory;
-																				selectedCategories.update(cats => {
-																					const newCats = [...cats];
-																					actualIds.forEach(id => {
-																						if (!newCats.includes(id)) {
-																							newCats.push(id);
-																						}
-																					});
-																					console.log('✅ 카테고리 업데이트:', newCats);
-																					return newCats;
-																				});
-																			}
+																		// selectedCategories 무조건 업데이트 (reactive statement가 모델 변경)
+																		if (displayCategory) {
+																			const { actualIds } = displayCategory;
+																			selectedCategories.set(actualIds);  // 직접 설정 (기존 카테고리 초기화)
+																			console.log('✅ 카테고리 설정:', actualIds);
 																		}
 
-																		// 메시지 입력창에 샘플 질문 채우기 (항상 실행)
+																		// 메시지 입력창에 샘플 질문 채우기
 																		prompt = sample;
 																		await tick();
 																		if (messageInput) {
@@ -3779,28 +3744,20 @@
 																		}
 																	} else {
 																		// 그 이외 카드 버튼 (보고서 초안 작성, Code 개발 지원, 외부정보검색 등)
-
-																		// 1. 목표 모델 확인 (내부 기본 모델)
-																		const defaultModelId = getDefaultInternalModelId();
-
-																		// 2. 현재 모델 확인
-																		const currentModelId = selectedModels[0];
-
 																		console.log('🔵 일반 카테고리 샘플 질문 클릭 - 카테고리:', category.name);
-																		console.log('🔍 모델 비교 - 현재:', currentModelId, '/ 목표(기본):', defaultModelId);
 
-																		// 3. 모델 비교하여 처리
-																		if (currentModelId !== defaultModelId) {
-																			// 다른 모델이면 변경
-																			if (defaultModelId) {
-																				selectedModels = [defaultModelId];
-																				console.log('🔄 내부 기본 모델로 변경:', defaultModelId);
-																			}
-																		} else {
-																			console.log('✅ 이미 기본 모델 - 메시지만 변경');
+																		// selectedCategories 초기화 (카테고리 선택 해제)
+																		selectedCategories.set([]);
+																		console.log('✅ 카테고리 초기화 (선택 해제)');
+
+																		// 내부 기본 모델로 무조건 설정
+																		const defaultModelId = getDefaultInternalModelId();
+																		if (defaultModelId) {
+																			selectedModels = [defaultModelId];
+																			console.log('✅ 내부 기본 모델 설정:', defaultModelId);
 																		}
 
-																		// 메시지 입력창에 샘플 질문 채우기 (항상 실행)
+																		// 메시지 입력창에 샘플 질문 채우기
 																		prompt = sample;
 																		await tick();
 																		if (messageInput) {
