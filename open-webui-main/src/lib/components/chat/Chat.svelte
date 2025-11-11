@@ -313,7 +313,7 @@
 			console.log('[loadModels] Loaded models:', allModels.length, 'total');
 
 			// Update the global $models store for ModelSelector component
-			models.set(allModels);
+			models.set(allModels.filter(m => getModelType(m) === 'internal'));
 
 			// 대사우 Assistant만 사용 - external 모델 필터링 주석 처리
 			internalModels = allModels.filter(m => getModelType(m) === 'internal');
@@ -382,7 +382,8 @@
 			samples: [
 				'육아휴직 신청 방법 알려 줘',
 				'연간 패밀리넷 사용 가능 금액 알려 줘'
-			]
+			],
+			comingSoon: true
 		},
 		{
 			id: 'helpdesk',
@@ -391,6 +392,16 @@
 			samples: [
 				'Knox 비밀번호 초기화 방법 알려 줘',
 				'Wave 운영팀 내선 번호 알려 줘'
+			],
+			comingSoon: true
+		},
+		{
+			id: 'dictionary',
+			name: '대사우 Assistant [지식용어 사전]',
+			description: '지식용어 사전',
+			samples: [
+				'OLED 용어 설명해 줘',
+				'디스플레이 전문용어 찾아 줘'
 			]
 		},
 		{
@@ -401,17 +412,14 @@
 				'Python으로 엑셀을 읽는 코드 만들어 줘',
 				'SQL 쿼리 중복데이터 제거하는 방법'
 			]
-		},
-		{
-			id: 'search',
-			name: '외부정보검색',
-			description: '',
-			samples: [
-				'삼성 디스플레이 관련 최근 뉴스 보여 줘',
-				'AI 기반 업무혁신 사례 찾아 줘'
-			]
 		}
 	];
+
+	// 준비중인 카테고리가 선택되었는지 확인하는 reactive statement
+	$: hasComingSoonCategory = $selectedCategories.some(catId => {
+		const category = categories.find(c => c.id === catId);
+		return category?.comingSoon === true;
+	});
 
 	// selectedCategories는 RightSidebar.svelte에서 import한 store 사용
 	let showEdmFileListModal = false; // EDM 파일리스트 팝업 표시 여부
@@ -3542,7 +3550,7 @@
 											<!-- 3개 카테고리 카드 -->
 											<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
 												<!-- 회사생활가이드 -->
-												<div class="flex flex-col gap-2 p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+												<div class="flex flex-col gap-2 p-4 rounded-xl bg-gray-100 dark:bg-gray-800/60 border-2 border-gray-300 dark:border-gray-600 shadow-sm opacity-40 pointer-events-none cursor-not-allowed">
 													<div class="flex items-center gap-2 mb-2">
 														<span class="text-2xl">📋</span>
 														<h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
@@ -3551,36 +3559,25 @@
 													</div>
 													<div class="flex flex-col gap-2">
 														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
-															on:click={async () => {
-																const sampleText = '육아휴직 신청 방법 알려 줘.';
-																prompt = sampleText;
-																await tick();
-																if (messageInput) { await messageInput.setText(sampleText); }
-															}}
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
+															disabled
 														>
-															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+															<div class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
 																육아휴직 신청 방법 알려 줘.
 															</div>
 														</button>
 														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
-															on:click={async () => {
-																const sampleText = '연간 패밀리넷 사용 가능 금액 알려 줘';
-																prompt = sampleText;
-																await tick();
-																if (messageInput) { await messageInput.setText(sampleText); }
-															}}
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
+															disabled
 														>
-															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+															<div class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
 																연간 패밀리넷 사용 가능 금액 알려 줘
 															</div>
 														</button>
 													</div>
 												</div>
-
 												<!-- IT Help Desk -->
-												<div class="flex flex-col gap-2 p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+												<div class="flex flex-col gap-2 p-4 rounded-xl bg-gray-100 dark:bg-gray-800/60 border-2 border-gray-300 dark:border-gray-600 shadow-sm opacity-40 pointer-events-none cursor-not-allowed">
 													<div class="flex items-center gap-2 mb-2">
 														<span class="text-2xl">💻</span>
 														<h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
@@ -3589,28 +3586,18 @@
 													</div>
 													<div class="flex flex-col gap-2">
 														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
-															on:click={async () => {
-																const sampleText = 'Knox 비밀번호 초기화 방법 알려 줘.';
-																prompt = sampleText;
-																await tick();
-																if (messageInput) { await messageInput.setText(sampleText); }
-															}}
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
+															disabled
 														>
-															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+															<div class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
 																Knox 비밀번호 초기화 방법 알려 줘.
 															</div>
 														</button>
 														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
-															on:click={async () => {
-																const sampleText = 'Wave 운영팀 내선 번호 알려 줘.';
-																prompt = sampleText;
-																await tick();
-																if (messageInput) { await messageInput.setText(sampleText); }
-															}}
+															class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
+															disabled
 														>
-															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
+															<div class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
 																Wave 운영팀 내선 번호 알려 줘.
 															</div>
 														</button>
@@ -3663,8 +3650,10 @@
 												<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 													{#each categories as category}
 													<div
-														class="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 dark:border-gray-700"
-													>
+																							class="{category.comingSoon 
+																								? 'bg-gray-100 dark:bg-gray-800/60 rounded-xl shadow-md transition-all duration-300 overflow-hidden border-2 border-gray-300 dark:border-gray-600 opacity-40 pointer-events-none cursor-not-allowed' 
+																								: 'bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 dark:border-gray-700'}"
+																																														>
 														<div class="p-6">
 															<!-- Category header -->
 															<div class="flex items-center gap-3 mb-4">
@@ -3714,10 +3703,17 @@
 																	<div class="space-y-2">
 																		{#each category.samples as sample}
 																			<button
-																				class="w-full text-left px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700"
+																				class="w-full text-left px-3 py-2 text-sm transition-colors border rounded-lg {category.comingSoon ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 cursor-not-allowed opacity-40 pointer-events-none' : 'bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700'}"
+																disabled={category.comingSoon}
 																				on:click={async () => {
-																	// 🎯 카테고리별 처리 - 항상 첫번째 처리로 동작
-																	if (category.id === 'edm' || category.id === 'guide' || category.id === 'helpdesk') {
+																// 준비중 카테고리 체크
+																if (category.comingSoon) {
+																	toast.error('🚧 아직 준비중입니다');
+																	return;
+																}
+
+																// 🎯 카테고리별 처리 - 항상 첫번째 처리로 동작
+																if (category.id === 'edm' || category.id === 'dictionary' || category.id === 'guide' || category.id === 'helpdesk') {
 																		// EDM 문서활용 또는 대사우 Assistant 카테고리
 																		console.log('🔵 EDM/대사우 샘플 질문 클릭 - 카테고리:', category.name);
 
@@ -3725,7 +3721,7 @@
 																		let displayCategory = null;
 																		if (category.id === 'edm') {
 																			displayCategory = DISPLAY_CATEGORIES[0];  // EDM 문서활용
-																		} else if (category.id === 'guide' || category.id === 'helpdesk') {
+																		} else if (category.id === 'dictionary' || category.id === 'guide' || category.id === 'helpdesk') {
 																			displayCategory = DISPLAY_CATEGORIES[1];  // 대사우 Assistant
 																		}
 
@@ -3780,71 +3776,6 @@
 									</div>
 									{/if}
 								{:else}
-									<!-- 외부모델: 외부정보검색 카테고리 카드 표시 -->
-									<div class="w-full max-w-6xl p-6 mx-auto">
-										<div class="w-full">
-											<div class="grid grid-cols-1 md:grid-cols-1 gap-6 max-w-md mx-auto">
-												{#each categories.filter(c => c.id === 'search') as category}
-												<div
-													class="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 dark:border-gray-700"
-												>
-													<div class="p-6">
-														<!-- Category header -->
-														<div class="flex items-center gap-3 mb-4">
-															<!-- 카테고리 아이콘 -->
-															<div class="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg shadow-sm flex-shrink-0">
-																{#if category.id === 'edm'}
-																	<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-																		<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-																	</svg>
-																{:else if category.id === 'guide'}
-																	<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-																		<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-																	</svg>
-																{:else if category.id === 'helpdesk'}
-																	<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-																		<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"></path>
-																	</svg>
-																{/if}
-															</div>
-
-															<h3 class="text-xl font-bold text-gray-800 dark:text-gray-100">
-																{#if category.name.includes('[')}
-																	{category.name.split('[')[0].trim()}
-																{:else}
-																	{category.name}
-																{/if}
-															</h3>
-														</div>
-
-
-														<!-- Sample questions -->
-														<div class="space-y-2">
-															{#each category.samples as sample}
-																<button
-																	class="w-full text-left px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700"
-																	on:click={async () => {
-																		selectedCategories.set([category]);
-																		console.log('🔵 외부모델 샘플 질문 클릭 - 카테고리:', category.name);
-
-																		// 입력창에 샘플 질문 채우기
-																		prompt = sample;
-																		await tick();
-																		if (messageInput) {
-																			await messageInput.setText(sample);
-																		}
-																	}}
-																>
-																	<span class="text-gray-700 dark:text-gray-300">{sample}</span>
-																</button>
-															{/each}
-														</div>
-													</div>
-												</div>
-												{/each}
-											</div>
-										</div>
-									</div>
 								{/if}
 							</div>
 						{/if}
@@ -3872,6 +3803,7 @@
 								{stopResponse}
 								{createMessagePair}
 								modelSelectorDisabled={isModelSelectorDisabled}
+								submitDisabled={hasComingSoonCategory}
 								onChange={(data) => {
 									if (!$temporaryChatEnabled) {
 										saveDraft(data, $chatId);

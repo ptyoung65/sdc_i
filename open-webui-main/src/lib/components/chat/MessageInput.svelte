@@ -110,6 +110,8 @@
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
 
+	export let submitDisabled = false;
+
 	let showInputVariablesModal = false;
 	let inputVariablesModalCallback = (variableValues) => {};
 	let inputVariables = {};
@@ -1561,11 +1563,11 @@
 												<Tooltip content={$i18n.t('Send message')}>
 													<button
 														id="send-message-button"
-														class="{!(prompt === '' && files.length === 0)
+														class="{!submitDisabled && !(prompt === '' && files.length === 0)
 															? 'text-gray-900 dark:text-white hover:text-black dark:hover:text-gray-200'
 															: 'text-gray-400 dark:text-gray-600'} transition rounded-full p-1.5 self-center"
 														type="submit"
-														disabled={prompt === '' && files.length === 0}
+														disabled={submitDisabled || (prompt === '' && files.length === 0)}
 													>
 														<svg
 															xmlns="http://www.w3.org/2000/svg"
