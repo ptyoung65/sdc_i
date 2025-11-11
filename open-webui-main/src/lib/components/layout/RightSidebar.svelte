@@ -70,24 +70,13 @@
 		console.log('🔵 카테고리 클릭:', displayCategory.name, '현재 선택:', allSelected);
 
 		if (allSelected) {
-			// 모두 선택 해제
-			selectedCategories.update(cats => {
-				const filtered = cats.filter(id => !actualIds.includes(id));
-				console.log('❌ 선택 해제 후:', filtered);
-				return filtered;
-			});
+			// 이미 선택된 카테고리 → 선택 해제
+			selectedCategories.set([]);
+			console.log('❌ 선택 해제');
 		} else {
-			// 모두 선택 (중복 제거)
-			selectedCategories.update(cats => {
-				const newCats = [...cats];
-				actualIds.forEach(id => {
-					if (!newCats.includes(id)) {
-						newCats.push(id);
-					}
-				});
-				console.log('✅ 선택 후:', newCats);
-				return newCats;
-			});
+			// 다른 카테고리 → 기존 선택 모두 해제하고 새로 선택 (라디오 버튼 동작)
+			selectedCategories.set(actualIds);
+			console.log('✅ 선택:', actualIds);
 		}
 	};
 
