@@ -3727,10 +3727,11 @@
 																		if (category.id === 'edm') {
 																			// EDM 카드 → edm_search_pipe 목표
 																			displayCategory = DISPLAY_CATEGORIES[0];
-																			const edmModel = availableModels.find(m =>
+																			const edmModel = $models.find(m =>
 																				m.id === 'edm_search_pipe' || m.id?.includes('edm_search')
 																			);
 																			targetModelId = edmModel?.id;
+																			console.log('🔍 EDM 모델 찾기:', edmModel, '/ ID:', targetModelId);
 																		} else if (category.id === 'guide' || category.id === 'helpdesk') {
 																			// 대사우 카드 → daesawoo 목표
 																			displayCategory = DISPLAY_CATEGORIES[1];
@@ -3738,6 +3739,7 @@
 																				m.id?.includes('daesawoo') || m.name?.includes('daesawoo')
 																			);
 																			targetModelId = daesawooModel?.id;
+																			console.log('🔍 대사우 모델 찾기:', daesawooModel, '/ ID:', targetModelId);
 																		}
 
 																		// 2. 현재 선택된 모델 확인
@@ -3747,11 +3749,11 @@
 																		console.log('🔍 모델 비교 - 현재:', currentModelId, '/ 목표:', targetModelId);
 
 																		// 3. 모델 비교하여 처리
-																		if (currentModelId === targetModelId) {
+																		if (targetModelId && currentModelId === targetModelId) {
 																			// 같은 영역 → 메시지만 변경 (selectedCategories 업데이트 안함)
 																			console.log('✅ 같은 영역 - 메시지만 변경');
 																		} else {
-																			// 다른 영역 → selectedCategories 업데이트 (모델 변경 트리거)
+																			// 다른 영역 또는 targetModelId를 못찾음 → selectedCategories 업데이트 (모델 변경 트리거)
 																			console.log('🔄 다른 영역 - 모델 변경 및 메시지 변경');
 
 																			if (displayCategory) {
