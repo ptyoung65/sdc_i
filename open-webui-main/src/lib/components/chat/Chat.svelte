@@ -3741,26 +3741,23 @@
 																							console.log('🔢 실제 ID 목록:', actualIds);
 																							console.log('✓ 현재 선택 상태:', allSelected);
 
-																							if (allSelected) {
-																								// 모두 선택 해제
-																								selectedCategories.update(cats => {
-																									const filtered = cats.filter(id => !actualIds.includes(id));
-																									console.log('❌ 선택 해제 후:', filtered);
-																									return filtered;
+																						if (allSelected) {
+																							// 🎯 이미 선택된 상태 → 유지 (모델 변경 없음)
+																							console.log('✅ 이미 선택된 상태 유지 - 모델 변경 안함:', actualIds);
+																							// selectedCategories를 업데이트하지 않음 → reactive statement 실행 안됨
+																						} else {
+																							// 선택 안된 경우만 선택 (중복 제거)
+																							selectedCategories.update(cats => {
+																								const newCats = [...cats];
+																								actualIds.forEach(id => {
+																									if (!newCats.includes(id)) {
+																										newCats.push(id);
+																									}
 																								});
-																							} else {
-																								// 모두 선택 (중복 제거)
-																								selectedCategories.update(cats => {
-																									const newCats = [...cats];
-																									actualIds.forEach(id => {
-																										if (!newCats.includes(id)) {
-																											newCats.push(id);
-																										}
-																									});
-																									console.log('✅ 선택 후:', newCats);
-																									return newCats;
-																								});
-																							}
+																								console.log('✅ 선택 후:', newCats);
+																								return newCats;
+																							});
+																						}
 																						}
 
 																						// 메시지 입력창에 샘플 질문 채우기
