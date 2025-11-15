@@ -280,7 +280,10 @@
 			/^ollama/i,
 			/^llama/i,
 			/^mistral/i,
-			/^gemma/i
+			/^gemma/i,
+			/_pipe/i,        // 파이프라인 패턴 추가
+			/^edm_/i,        // EDM 파이프라인
+			/^daesawoo/i     // daesawoo 파이프라인
 		];
 
 		// 외부 모델 패턴: external_llm, gpt, anthropic 등
@@ -891,6 +894,21 @@
 							messageId: message.id,
 							savedFiles: message.info.edmFileList.length
 						});
+					} else if (eventType === 'attachFiles') {
+						// 📎 파일 첨부 이벤트 (지식화된 파일을 입력창에 첨부)
+						console.log('[Chat] 📎 attachFiles 이벤트 수신 from pipe:', {
+							filesCount: eventDetail?.files?.length ?? 0,
+							files: eventDetail?.files
+						});
+
+						// files 배열에 추가 (문서첨부처럼 표시)
+						if (eventDetail?.files && Array.isArray(eventDetail.files)) {
+							files = [...files, ...eventDetail.files];
+							console.log('[Chat] ✅ 파일 첨부 완료:', {
+								totalFiles: files.length,
+								attachedFiles: files.map(f => f.filename || f.id)
+							});
+						}
 					} else {
 						console.log('[Chat] ⚠️ Unknown event type:', eventType, eventDetail);
 					}
@@ -1047,15 +1065,34 @@
 			const { files, message } = event.detail;
 			console.log('🔵 [Chat] EDM 지식화 이벤트 수신:', files);
 
-			// 파이프라인에 파일 정보 전달
-			const userMessage = {
-				role: 'user',
-				content: `EDM 파일 ${files.length}개를 지식화합니다.`,
-				edm_files: files
-			};
+			// 사용 가능한 모든 모델 ID 확인
+			console.log('📋 [DEBUG] 사용 가능한 모델:', $models.map(m => m.id));
 
-			// 기존 submitPrompt 함수를 사용하여 메시지 전송
-			await submitPrompt('', '', { edmFiles: files });
+			// EDM 카테고리 임시 해제 (지식화는 edm_download_pipe_streaming 사용)
+			const originalCategories = [...$selectedCategories];
+			selectedCategories.set([]);
+
+			// edm_download_pipe_streaming 또는 dm_download_pipe_streaming 모델 찾기
+			let edmDownloadModel = $models.find(m =>
+				m.id === 'edm_download_pipe_streaming' ||
+				m.id === 'dm_download_pipe_streaming' ||
+				m.id === 'edm_download_pipe' ||
+				m.id.includes('edm_download') ||
+				m.id.includes('dm_download')
+			);
+
+			if (edmDownloadModel) {
+				selectedModels = [edmDownloadModel.id];
+				console.log('✅ [Chat] EDM 파일 다운로드 파이프라인 선택:', edmDownloadModel.id);
+			} else {
+				console.warn('⚠️ [Chat] EDM 다운로드 파이프라인을 찾을 수 없습니다. 기본 모델 사용');
+			}
+
+			// submitPrompt 호출
+			await submitPrompt(`EDM 파일 ${files.length}개를 지식화합니다.`, { edmFiles: files });
+
+			// 원래 카테고리 복원
+			selectedCategories.set(originalCategories);
 		};
 
 		window.addEventListener('edm-knowledge-request', handleEdmKnowledgeRequest);
@@ -2011,12 +2048,18 @@
 		console.log('[Chat] temporaryChatEnabled:', $temporaryChatEnabled);
 		console.log('[Chat] selectedCategories:', $selectedCategories);
 
+		// EDM 파일 지식화 요청용 변수
+		let currentEdmFiles = null;
+
 		// EDM 파일 지식화 요청인 경우
 		if (edmFiles && edmFiles.length > 0) {
 			console.log('🔵 [Chat] EDM 파일 지식화 요청:', edmFiles);
 
+			// 나중에 userMessage에 추가하기 위해 저장
+			currentEdmFiles = edmFiles;
+
 			// edm_download_pipe_streaming 파이프라인 선택
-			const edmPipeModel = $models.find(m => m.id === 'edm_download_pipe_streaming');
+			const edmPipeModel = $models.find(m => m.id === 'edm_download_pipe_streaming' || m.id === 'dm_download_pipe_streaming');
 			if (edmPipeModel) {
 				selectedModels = [edmPipeModel.id];
 				console.log('✅ [Chat] EDM 다운로드 파이프라인 자동 선택:', edmPipeModel.id);
@@ -2520,8 +2563,18 @@
 			content: userPrompt,
 			files: _files.length > 0 ? _files : undefined,
 			timestamp: Math.floor(Date.now() / 1000), // Unix epoch
-			models: selectedModels
+			models: selectedModels,
+			edm_files: currentEdmFiles // EDM 파일 지식화 요청 정보 추가
 		};
+
+		// EDM 파일 지식화 디버그 로그
+		if (currentEdmFiles && currentEdmFiles.length > 0) {
+			console.log('✅ [Chat] userMessage에 edm_files 추가됨:', {
+				filesCount: currentEdmFiles.length,
+				files: currentEdmFiles,
+				messageId: userMessageId
+			});
+		}
 
 		// Add message to history and Set currentId to messageId
 		history.messages[userMessageId] = userMessage;
@@ -2729,6 +2782,15 @@
 		const responseMessage = _history.messages[responseMessageId];
 		const userMessage = _history.messages[responseMessage.parentId];
 
+		// EDM 파일 지식화 요청 정보 추출
+		const edmFiles = userMessage?.edm_files || null;
+		if (edmFiles && edmFiles.length > 0) {
+			console.log('✅ [sendMessageSocket] EDM 파일 정보 발견:', {
+				filesCount: edmFiles.length,
+				files: edmFiles
+			});
+		}
+
 		const chatMessageFiles = _messages
 			.filter((message) => message.files)
 			.flatMap((message) => message.files);
@@ -2873,6 +2935,7 @@
 				},
 
 				files: (files?.length ?? 0) > 0 ? files : undefined,
+				edm_files: edmFiles && edmFiles.length > 0 ? edmFiles : undefined,
 
 				filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { downloadAndUploadEdmFiles } from '$lib/apis/edm-download';
 
 	onMount(() => {
 		console.log('🔵 [EdmFileListModal 팝업 표시]', {
@@ -117,7 +116,7 @@
 		selectedFiles = [];
 	}
 
-	// 파일 지식화 (다운로드 → Open WebUI가 자동 처리)
+	// 파일 지식화 (CustomEvent 방식으로 Chat.svelte에 위임)
 	async function handleApply() {
 		console.log('🔵 [지식화 버튼 클릭]', {
 			timestamp: new Date().toISOString(),
@@ -144,74 +143,33 @@
 		console.log("=" + "=".repeat(79));
 
 		try {
-			toast.info(`${selectedFileObjects.length}개 파일 다운로드 및 지식화 중...`);
-
 			// 다운로드 요청 데이터 구성
-			const downloadRequests = selectedFileObjects.map((file) => ({
+			const edmFiles = selectedFileObjects.map((file) => ({
 				objid: file.objid,
 				fileLastVerSno: file.fileLastVerSno || file.flieLasVerSno || 1,
-				requestUser: file.requestUser || 'system'
+				requestUser: file.requestUser || 'system',
+				fileName: file.objtNm
 			}));
 
-			console.log('📥 [다운로드 및 업로드 시작]', {
+			console.log('🔵 [CustomEvent 발생] edm-knowledge-request', {
 				timestamp: new Date().toISOString(),
-				filesCount: downloadRequests.length
+				filesCount: edmFiles.length,
+				files: edmFiles
 			});
 
-			// EDM 파일 다운로드 + Open WebUI Knowledge Base 업로드
-			// Open WebUI가 자동으로 파싱, 청킹, 임베딩, Milvus 저장 처리
-			const result = await downloadAndUploadEdmFiles(
-				downloadRequests,
-				localStorage.token || ''
-			);
-
-			console.log('✅ [처리 완료]', {
-				timestamp: new Date().toISOString(),
-				success: result.success,
-				processedFiles: result.processed_files
+			// CustomEvent를 발생시켜 Chat.svelte로 전달
+			const event = new CustomEvent('edm-knowledge-request', {
+				detail: {
+					files: edmFiles,
+					message: `EDM 파일 ${edmFiles.length}개를 지식화합니다.`
+				}
 			});
+			window.dispatchEvent(event);
 
-			// 결과 집계
-			const successFiles = result.processed_files.filter((f) => f.success);
-			const failedFiles = result.processed_files.filter((f) => !f.success);
-
-			if (successFiles.length > 0) {
-				toast.success(`✅ ${successFiles.length}개 파일 지식화 완료!`);
-				console.log('✅ [성공 파일]', successFiles);
-			}
-
-			if (failedFiles.length > 0) {
-				toast.warning(`⚠️ ${failedFiles.length}개 파일 처리 실패`);
-				failedFiles.forEach((failedFile) => {
-					console.error('❌ [파일 처리 실패]', {
-						objid: failedFile.objid,
-						fileName: failedFile.file_name,
-						error: failedFile.error
-					});
-				});
-			}
-
-			if (successFiles.length === 0) {
-				throw new Error('모든 파일 처리에 실패했습니다.');
-			}
-
-			// 성공 이벤트 발송 (Chat.svelte에서 처리)
-			console.log('🔵 [dispatch embed 이벤트]', {
-				timestamp: new Date().toISOString(),
-				action: 'dispatch_embed',
-				successFiles: successFiles
-			});
-
-			dispatch('embed', {
-				files: successFiles.map((f) => ({
-					objid: f.objid,
-					fileName: f.file_name,
-					fileId: f.file_id,
-					status: 'success'
-				}))
-			});
-
+			// 모달 닫기
 			close();
+
+			toast.success(`${edmFiles.length}개 파일 지식화를 시작합니다. 채팅 화면을 확인하세요.`);
 		} catch (error) {
 			console.error('❌ 파일 지식화 실패:', error);
 			toast.error(`파일 지식화 중 오류: ${error.message}`);

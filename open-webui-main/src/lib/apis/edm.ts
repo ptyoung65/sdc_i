@@ -14,7 +14,7 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 // ==================== MOCK MODE CONFIGURATION ====================
 // TODO: 실제 배포 시 MOCK_MODE를 false로 변경하세요
 // Mock 모드에서는 실제 n8n, Elasticsearch 없이 테스트 가능합니다
-const MOCK_MODE = true; // true: Mock 데이터 사용, false: 실제 API 사용
+const MOCK_MODE = false; // true: Mock 데이터 사용, false: 실제 API 사용
 
 // TODO: Mock 데이터는 실제 API 연동 후 제거하세요
 // Mock 데이터 import (MOCK_MODE = true일 때만 사용)
@@ -119,53 +119,18 @@ export const getEdmFileList = async (
 	workspaceId?: string,
 	token: string = ''
 ): Promise<EdmFileListResponse> => {
-	// ==================== MOCK MODE ====================
-	// TODO: MOCK_MODE를 false로 변경하면 실제 API 호출로 전환됩니다
-	if (MOCK_MODE) {
-		console.log('[MOCK] EDM 파일 리스트 조회 - Backend API 호출 - query:', query);
-		// Mock 모드에서도 Backend API를 호출 (Backend에서 Mock 데이터 반환)
-		try {
-			const res = await fetch(`/api/v1/edm/search`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					...(token && { Authorization: `Bearer ${token}` })
-				},
-				body: JSON.stringify({
-					query,
-					page: 1,
-					pageSize: 20
-				})
-			});
-
-			if (!res.ok) {
-				throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-			}
-
-			const data = await res.json();
-			console.log('[MOCK] Backend API 응답:', data);
-			return data;
-		} catch (error) {
-			console.error('[MOCK] Backend API 호출 실패, Frontend Mock 사용:', error);
-			await mockDelay(500);
-			return filterMockFilesByQuery(query);
-		}
-	}
-	// ==================== END MOCK MODE ====================
+	console.log('[EDM] 실제 파일 리스트 조회 - query:', query);
 
 	try {
-		const res = await fetch(`${N8N_BASE_URL}/webhook/edm-file-list`, {
+		// 백엔드 API 호출 - 실제 uploads 폴더 파일 목록 조회
+		const res = await fetch(`${WEBUI_API_BASE_URL}/edm/files`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
 				...(token && { Authorization: `Bearer ${token}` })
 			},
 			body: JSON.stringify({
-				elasticsearchUrl: ELASTICSEARCH_URL,
-				apiToken: API_TOKEN,
-				query,
-				userId,
-				workspaceId
+				query: query || ''
 			})
 		});
 
@@ -174,9 +139,11 @@ export const getEdmFileList = async (
 		}
 
 		const data = await res.json();
+		console.log('[EDM] 파일 리스트 조회 성공:', data);
+
 		return data;
 	} catch (error) {
-		console.error('[EDM API] 파일 리스트 조회 실패:', error);
+		console.error('[EDM] 파일 리스트 조회 실패:', error);
 		throw error;
 	}
 };

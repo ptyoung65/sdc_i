@@ -149,64 +149,80 @@ class Pipe:
             self._log(f"📋 [CHAT_ID] {chat_id}")
             self._log(f"📋 [USER_ID] {user_id}")
 
-            # 📥 [edm_search_pipe.py:145] Mock 데이터 사용 (테스트 모드)
+            # 📥 직접 uploads 폴더에서 파일 목록 가져오기
             self._log("=" * 80)
-            self._log("📥 [edm_search_pipe.py:145] Mock 데이터 사용 (테스트 모드)")
+            self._log("📥 [edm_search_pipe.py] 직접 파일 시스템에서 파일 검색")
 
-            # Mock 데이터
-            n8n_result = {
-                "documents": [
-                    {
-                        "doc_id": "DOC-2025-001",
-                        "title": "삼성디스플레이 회사생활가이드 - 제1장",
+            try:
+                import glob
+                uploads_dir = "/app/backend/data/uploads"
+
+                # 파일 검색 패턴
+                search_patterns = ["*.pdf", "*.docx", "*.xlsx", "*.txt", "*.doc", "*.pptx", "*.csv"]
+                all_files = []
+
+                for pattern in search_patterns:
+                    files = glob.glob(os.path.join(uploads_dir, f"**/{pattern}"), recursive=True)
+                    all_files.extend(files)
+
+                self._log(f"📁 전체 파일 수: {len(all_files)}개")
+
+                # 파일 메타데이터 생성
+                documents = []
+                for idx, file_path in enumerate(sorted(all_files), 1):
+                    if not os.path.isfile(file_path):
+                        continue
+
+                    file_stat = os.stat(file_path)
+                    file_size = file_stat.st_size
+                    file_name = os.path.basename(file_path)
+
+                    # UUID 추출
+                    parts = file_name.split('_')
+                    objid = parts[0] if parts else str(idx)
+                    actual_name = '_'.join(parts[1:]) if len(parts) > 1 else file_name
+
+                    # 검색어 필터링
+                    if query and query.lower() not in actual_name.lower():
+                        continue
+
+                    file_ext = os.path.splitext(file_name)[1].replace('.', '')
+
+                    documents.append({
+                        "doc_id": f"DOC-{idx:05d}",
+                        "title": actual_name,
                         "score": 0.95,
-                        "objid": "edm-obj-001",
-                        "objtNm": "회사생활가이드_제1장.pdf",
-                        "workspaceNm": "인사총무",
+                        "objid": objid,  # 실제 파일 UUID
+                        "objtNm": actual_name,
+                        "fileName": actual_name,
+                        "FILE_NAME": actual_name,
+                        "fileExtNm": file_ext,
+                        "workspaceNm": "기술문서팀",
                         "maxObjtSharePolicyId": "public",
-                        "objtSize": "2.5MB",
+                        "objtSize": f"{file_size / 1024:.1f}KB",
+                        "filesize": file_size,
                         "regDt": "2025-01-15",
-                        "contents": [
-                            "1.1 입사 절차 및 준비사항",
-                            "1.2 첫 출근일 안내",
-                            "1.3 회사 시설 이용 방법",
-                            "1.4 복리후생 제도 소개",
-                            "1.5 인사 규정 개요",
-                            "1.6 급여 및 복지 혜택",
-                            "1.7 근무 시간 및 휴가 제도",
-                            "1.8 교육 훈련 프로그램",
-                            "1.9 경력 개발 지원",
-                            "1.10 회사 문화 및 가치"
-                        ]
-                    },
-                    {
-                        "doc_id": "DOC-2025-002",
-                        "title": "디스플레이 용어사전 - 기술편",
-                        "score": 0.88,
-                        "objid": "edm-obj-002",
-                        "objtNm": "디스플레이_용어사전_기술편.docx",
-                        "workspaceNm": "기술개발",
-                        "maxObjtSharePolicyId": "internal",
-                        "objtSize": "1.8MB",
-                        "regDt": "2025-01-10",
-                        "contents": [
-                            "OLED (Organic Light Emitting Diode) - 유기발광다이오드",
-                            "TFT (Thin Film Transistor) - 박막트랜지스터",
-                            "LCD (Liquid Crystal Display) - 액정디스플레이",
-                            "AMOLED (Active Matrix OLED) - 능동형 유기발광다이오드",
-                            "백라이트 (Backlight) - 액정 패널 뒤에서 빛을 제공하는 광원",
-                            "해상도 (Resolution) - 화면에 표시되는 픽셀의 수",
-                            "리프레시율 (Refresh Rate) - 화면이 1초에 갱신되는 횟수",
-                            "명암비 (Contrast Ratio) - 가장 밝은 부분과 어두운 부분의 밝기 차이",
-                            "색재현율 (Color Gamut) - 디스플레이가 표현할 수 있는 색상 범위",
-                            "응답속도 (Response Time) - 픽셀이 색을 변경하는데 걸리는 시간"
-                        ]
-                    }
-                ],
-                "total_count": 2
-            }
+                        "filePath": file_path,  # 실제 파일 경로
+                        "contents": []
+                    })
 
-            # N8N 웹훅 호출 (Mock 사용 시 주석 처리)
+                    if len(documents) >= self.valves.max_results:
+                        break
+
+                n8n_result = {
+                    "documents": documents,
+                    "total_count": len(documents)
+                }
+                self._log(f"✅ 파일 시스템에서 {len(documents)}개 파일 로드 완료")
+
+            except Exception as e:
+                self._log(f"⚠️ 파일 검색 실패: {str(e)}")
+                n8n_result = {
+                    "documents": [],
+                    "total_count": 0
+                }
+
+            # N8N 웹훅 호출 (필요시 활성화)
             # n8n_result = self._call_n8n_webhook(
             #     query=query,
             #     categories=categories,

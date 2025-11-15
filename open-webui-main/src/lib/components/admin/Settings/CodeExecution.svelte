@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import { onMount, getContext } from 'svelte';
-	import { getCodeExecutionConfig, setCodeExecutionConfig } from '$lib/apis/configs';
+	import { getCodeExecutionConfig, setCodeExecutionConfig, getJupyterPresets } from '$lib/apis/configs';
 
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 
@@ -16,9 +16,31 @@
 	let config = null;
 
 	let engines = ['pyodide', 'jupyter'];
+	let jupyterPresets = getJupyterPresets();
+	let showExecutionPresets = false;
+	let showInterpreterPresets = false;
 
 	const submitHandler = async () => {
 		const res = await setCodeExecutionConfig(localStorage.token, config);
+	};
+
+	const applyJupyterPreset = (preset: any, isInterpreter: boolean = false) => {
+		if (isInterpreter) {
+			config.CODE_INTERPRETER_ENGINE = 'jupyter';
+			config.CODE_INTERPRETER_JUPYTER_URL = preset.url;
+			config.CODE_INTERPRETER_JUPYTER_AUTH = preset.auth;
+			config.CODE_INTERPRETER_JUPYTER_AUTH_TOKEN = preset.token;
+			config.CODE_INTERPRETER_JUPYTER_TIMEOUT = preset.timeout;
+			showInterpreterPresets = false;
+		} else {
+			config.CODE_EXECUTION_ENGINE = 'jupyter';
+			config.CODE_EXECUTION_JUPYTER_URL = preset.url;
+			config.CODE_EXECUTION_JUPYTER_AUTH = preset.auth;
+			config.CODE_EXECUTION_JUPYTER_AUTH_TOKEN = preset.token;
+			config.CODE_EXECUTION_JUPYTER_TIMEOUT = preset.timeout;
+			showExecutionPresets = false;
+		}
+		toast.success(`${preset.name} 설정이 적용되었습니다`);
 	};
 
 	onMount(async () => {
@@ -84,9 +106,36 @@
 
 					{#if config.CODE_EXECUTION_ENGINE === 'jupyter'}
 						<div class="mb-2.5 flex flex-col gap-1.5 w-full">
-							<div class="text-xs font-medium">
-								{$i18n.t('Jupyter URL')}
+							<div class="flex justify-between items-center">
+								<div class="text-xs font-medium">
+									{$i18n.t('Jupyter URL')}
+								</div>
+								<button
+									type="button"
+									class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
+									on:click={() => showExecutionPresets = !showExecutionPresets}
+								>
+									🔧 프리셋 선택
+								</button>
 							</div>
+
+							{#if showExecutionPresets}
+								<div class="flex flex-col gap-1 p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-800">
+									{#each jupyterPresets as preset}
+										<button
+											type="button"
+											class="text-left text-xs px-3 py-2 {preset.recommended ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'} hover:bg-blue-100 dark:hover:bg-blue-800/40 rounded border transition"
+											on:click={() => applyJupyterPreset(preset, false)}
+										>
+											<div class="font-medium {preset.recommended ? 'text-blue-700 dark:text-blue-300' : ''}">{preset.name}</div>
+											<div class="text-gray-500 text-[10px] mt-0.5">{preset.url}</div>
+											{#if preset.description}
+												<div class="{preset.recommended ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'} text-[9px] mt-0.5 italic">{preset.description}</div>
+											{/if}
+										</button>
+									{/each}
+								</div>
+							{/if}
 
 							<div class="flex w-full">
 								<div class="flex-1">
@@ -210,9 +259,36 @@
 
 						{#if config.CODE_INTERPRETER_ENGINE === 'jupyter'}
 							<div class="mb-2.5 flex flex-col gap-1.5 w-full">
-								<div class="text-xs font-medium">
-									{$i18n.t('Jupyter URL')}
+								<div class="flex justify-between items-center">
+									<div class="text-xs font-medium">
+										{$i18n.t('Jupyter URL')}
+									</div>
+									<button
+										type="button"
+										class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition"
+										on:click={() => showInterpreterPresets = !showInterpreterPresets}
+									>
+										🔧 프리셋 선택
+									</button>
 								</div>
+
+								{#if showInterpreterPresets}
+									<div class="flex flex-col gap-1 p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-800">
+										{#each jupyterPresets as preset}
+											<button
+												type="button"
+												class="text-left text-xs px-3 py-2 {preset.recommended ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'} hover:bg-blue-100 dark:hover:bg-blue-800/40 rounded border transition"
+												on:click={() => applyJupyterPreset(preset, true)}
+											>
+												<div class="font-medium {preset.recommended ? 'text-blue-700 dark:text-blue-300' : ''}">{preset.name}</div>
+												<div class="text-gray-500 text-[10px] mt-0.5">{preset.url}</div>
+												{#if preset.description}
+													<div class="{preset.recommended ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'} text-[9px] mt-0.5 italic">{preset.description}</div>
+												{/if}
+											</button>
+										{/each}
+									</div>
+								{/if}
 
 								<div class="flex w-full">
 									<div class="flex-1">

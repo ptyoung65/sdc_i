@@ -331,6 +331,34 @@ export const setCodeExecutionConfig = async (token: string, config: object) => {
 	return res;
 };
 
+export const getJupyterPresets = () => {
+	// 현재 접속 중인 서버 호스트명 (브라우저에서 자동 감지)
+	// Open WebUI와 Jupyter가 동일한 서버에서 실행되므로 현재 호스트 사용
+	const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+
+	return [
+		{
+			name: `⭐ Jupyter (${currentHost}) - 권장`,
+			env: 'current',
+			url: `http://${currentHost}:8888`,
+			token: 'jupyter-dev-token-2025',
+			auth: 'token',
+			timeout: 60,
+			description: 'Open WebUI와 동일한 서버 (자동 감지)',
+			recommended: true
+		},
+		{
+			name: 'Jupyter (localhost)',
+			env: 'local',
+			url: 'http://localhost:8888',
+			token: 'jupyter-dev-token-2025',
+			auth: 'token',
+			timeout: 60,
+			description: '로컬 개발 환경'
+		}
+	];
+};
+
 export const getModelsConfig = async (token: string) => {
 	let error = null;
 
