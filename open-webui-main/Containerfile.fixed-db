@@ -1,0 +1,14 @@
+FROM ghcr.io/open-webui/open-webui:main
+
+# Fix UnboundLocalError in db.py for remote database connections
+# Fix 1: Uncomment db = None initialization
+RUN sed -i '56s/^    # db = None$/    db = None/' /app/backend/open_webui/internal/db.py
+
+# Fix 2: Change assert to handle None case
+RUN sed -i '77s/^        assert db\.is_closed()/        assert db is None or db.is_closed()/' /app/backend/open_webui/internal/db.py
+
+# Verify the fixes
+RUN echo "=== Verifying Fix 1 (line 56) ===" && \
+    grep -A 2 "def handle_peewee_migration" /app/backend/open_webui/internal/db.py | head -3 && \
+    echo "=== Verifying Fix 2 (line 77) ===" && \
+    sed -n '77p' /app/backend/open_webui/internal/db.py
