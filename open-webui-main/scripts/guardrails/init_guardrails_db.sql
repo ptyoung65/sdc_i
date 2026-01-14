@@ -1,8 +1,9 @@
 -- =====================================================
 -- 가드레일 데이터베이스 초기화 스크립트
 -- 생성일: 2026-01-14
+-- 수정일: 2026-01-14 (미사용 테이블 13개 제거)
 -- 대상: guardrails_db
--- 테이블 수: 22개
+-- 테이블 수: 9개
 -- =====================================================
 
 -- 데이터베이스 생성 (필요시)
@@ -28,7 +29,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =====================================================
--- 2. 기본 테이블 생성
+-- 2. 기본 테이블 생성 (5개)
 -- =====================================================
 
 -- 2.1 guardrail_keywords: 키워드 관리
@@ -117,31 +118,8 @@ CREATE INDEX IF NOT EXISTS idx_check_logs_result ON guardrail_check_logs(check_r
 CREATE INDEX IF NOT EXISTS idx_check_logs_policy_id ON guardrail_check_logs(policy_id);
 CREATE INDEX IF NOT EXISTS idx_check_logs_date_result ON guardrail_check_logs(DATE(created_at), check_result);
 
--- 2.6 guardrail_filter_logs: 필터 실행 로그
-CREATE TABLE IF NOT EXISTS guardrail_filter_logs (
-    id BIGSERIAL PRIMARY KEY,
-    request_id VARCHAR(100),
-    user_id VARCHAR(255),
-    filter_type VARCHAR(30) NOT NULL,
-    input_text TEXT,
-    output_text TEXT,
-    is_modified BOOLEAN DEFAULT false,
-    is_blocked BOOLEAN DEFAULT false,
-    matched_policies JSONB,
-    matched_keywords TEXT[],
-    detection_score NUMERIC(5,4),
-    action_taken VARCHAR(30),
-    processing_time_ms INTEGER,
-    error_message TEXT,
-    metadata JSONB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_filter_logs_created_at ON guardrail_filter_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_filter_logs_user_id ON guardrail_filter_logs(user_id);
-CREATE INDEX IF NOT EXISTS idx_filter_logs_filter_type ON guardrail_filter_logs(filter_type);
-
 -- =====================================================
--- 3. 마스터 테이블 생성
+-- 3. 마스터 테이블 생성 (4개)
 -- =====================================================
 
 -- 3.1 guardrail_master_policy_types: 정책 유형 마스터
@@ -207,183 +185,7 @@ CREATE INDEX IF NOT EXISTS idx_master_action_types_code ON guardrail_master_acti
 CREATE INDEX IF NOT EXISTS idx_master_action_types_action_id ON guardrail_master_action_types(action_id);
 
 -- =====================================================
--- 4. 코드 테이블 생성
--- =====================================================
-
--- 4.1 guardrail_policy_types: 정책 유형 코드
-CREATE TABLE IF NOT EXISTS guardrail_policy_types (
-    code VARCHAR(20) PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- 4.2 guardrail_filter_types: 필터 유형 코드
-CREATE TABLE IF NOT EXISTS guardrail_filter_types (
-    code VARCHAR(20) PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- 4.3 guardrail_severity_levels: 심각도 코드
-CREATE TABLE IF NOT EXISTS guardrail_severity_levels (
-    code VARCHAR(20) PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    color VARCHAR(20),
-    priority INTEGER DEFAULT 0,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- 4.4 guardrail_action_types: 조치 유형 코드
-CREATE TABLE IF NOT EXISTS guardrail_action_types (
-    code VARCHAR(20) PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- 4.5 guardrail_categories: 카테고리 코드
-CREATE TABLE IF NOT EXISTS guardrail_categories (
-    id VARCHAR(100) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    policy_count INTEGER DEFAULT 0
-);
-
--- =====================================================
--- 5. 통계/분석 테이블 생성
--- =====================================================
-
--- 5.1 guardrail_daily_stats: 일별 통계
-CREATE TABLE IF NOT EXISTS guardrail_daily_stats (
-    id BIGSERIAL PRIMARY KEY,
-    stat_date DATE NOT NULL,
-    policy_id VARCHAR(100),
-    policy_name VARCHAR(255),
-    category VARCHAR(100),
-    total_checks INTEGER DEFAULT 0,
-    pass_count INTEGER DEFAULT 0,
-    block_count INTEGER DEFAULT 0,
-    warn_count INTEGER DEFAULT 0,
-    avg_detection_score NUMERIC(5,4),
-    avg_processing_time_ms INTEGER,
-    unique_users INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(stat_date, policy_id)
-);
-CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON guardrail_daily_stats(stat_date);
-CREATE INDEX IF NOT EXISTS idx_daily_stats_policy_id ON guardrail_daily_stats(policy_id);
-
--- 5.2 guardrail_hourly_stats: 시간별 통계
-CREATE TABLE IF NOT EXISTS guardrail_hourly_stats (
-    id BIGSERIAL PRIMARY KEY,
-    stat_hour TIMESTAMP NOT NULL,
-    total_checks INTEGER DEFAULT 0,
-    pass_count INTEGER DEFAULT 0,
-    block_count INTEGER DEFAULT 0,
-    warn_count INTEGER DEFAULT 0,
-    avg_processing_time_ms INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(stat_hour)
-);
-CREATE INDEX IF NOT EXISTS idx_hourly_stats_hour ON guardrail_hourly_stats(stat_hour);
-
--- 5.3 guardrail_keyword_stats: 키워드 통계
-CREATE TABLE IF NOT EXISTS guardrail_keyword_stats (
-    id BIGSERIAL PRIMARY KEY,
-    stat_date DATE NOT NULL,
-    keyword_id INTEGER,
-    keyword_text VARCHAR(255),
-    category VARCHAR(50),
-    detection_count INTEGER DEFAULT 0,
-    block_count INTEGER DEFAULT 0,
-    warn_count INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(stat_date, keyword_id)
-);
-CREATE INDEX IF NOT EXISTS idx_keyword_stats_date ON guardrail_keyword_stats(stat_date);
-CREATE INDEX IF NOT EXISTS idx_keyword_stats_keyword_id ON guardrail_keyword_stats(keyword_id);
-
--- 5.4 guardrail_user_violations: 사용자별 위반 통계
-CREATE TABLE IF NOT EXISTS guardrail_user_violations (
-    id BIGSERIAL PRIMARY KEY,
-    user_id VARCHAR(255) NOT NULL,
-    user_email VARCHAR(255),
-    stat_date DATE NOT NULL,
-    total_violations INTEGER DEFAULT 0,
-    block_count INTEGER DEFAULT 0,
-    warn_count INTEGER DEFAULT 0,
-    violation_categories JSONB,
-    last_violation_at TIMESTAMP,
-    risk_level VARCHAR(20) DEFAULT 'low',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, stat_date)
-);
-CREATE INDEX IF NOT EXISTS idx_user_violations_user_id ON guardrail_user_violations(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_violations_date ON guardrail_user_violations(stat_date);
-CREATE INDEX IF NOT EXISTS idx_user_violations_risk_level ON guardrail_user_violations(risk_level);
-
--- =====================================================
--- 6. 기타 테이블 생성
--- =====================================================
-
--- 6.1 guardrail_activities: 활동 로그
-CREATE TABLE IF NOT EXISTS guardrail_activities (
-    id BIGSERIAL PRIMARY KEY,
-    activity_type VARCHAR(50) NOT NULL,
-    entity_type VARCHAR(50),
-    entity_id VARCHAR(100),
-    user_id VARCHAR(255),
-    description TEXT,
-    old_value JSONB,
-    new_value JSONB,
-    ip_address VARCHAR(45),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_activities_created_at ON guardrail_activities(created_at);
-CREATE INDEX IF NOT EXISTS idx_activities_entity_type ON guardrail_activities(entity_type);
-CREATE INDEX IF NOT EXISTS idx_activities_user_id ON guardrail_activities(user_id);
-
--- 6.2 guardrail_validations: 검증 로그
-CREATE TABLE IF NOT EXISTS guardrail_validations (
-    id BIGSERIAL PRIMARY KEY,
-    validation_type VARCHAR(50) NOT NULL,
-    input_value TEXT,
-    is_valid BOOLEAN NOT NULL,
-    validation_result JSONB,
-    error_message TEXT,
-    processing_time_ms INTEGER,
-    user_id VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_validations_created_at ON guardrail_validations(created_at);
-CREATE INDEX IF NOT EXISTS idx_validations_type ON guardrail_validations(validation_type);
-
--- 6.3 guardrail_pii_patterns: PII 패턴 정의
-CREATE TABLE IF NOT EXISTS guardrail_pii_patterns (
-    id SERIAL PRIMARY KEY,
-    pattern_id VARCHAR(50) NOT NULL UNIQUE,
-    name VARCHAR(100) NOT NULL,
-    pattern TEXT NOT NULL,
-    description TEXT,
-    severity VARCHAR(20) DEFAULT 'high',
-    action_on_detect VARCHAR(20) DEFAULT 'warn',
-    is_active BOOLEAN DEFAULT true,
-    sort_order INTEGER DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_pii_patterns_active ON guardrail_pii_patterns(is_active);
-
--- =====================================================
--- 7. 트리거 생성
+-- 4. 트리거 생성
 -- =====================================================
 
 -- 마스터 테이블 업데이트 트리거
@@ -407,16 +209,11 @@ CREATE TRIGGER update_action_types_updated_at
     BEFORE UPDATE ON guardrail_master_action_types
     FOR EACH ROW EXECUTE FUNCTION update_master_updated_at();
 
-DROP TRIGGER IF EXISTS update_pii_patterns_updated_at ON guardrail_pii_patterns;
-CREATE TRIGGER update_pii_patterns_updated_at
-    BEFORE UPDATE ON guardrail_pii_patterns
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
 -- =====================================================
--- 8. 초기 데이터 삽입
+-- 5. 초기 데이터 삽입
 -- =====================================================
 
--- 8.1 guardrail_settings: 전역 설정
+-- 5.1 guardrail_settings: 전역 설정
 INSERT INTO guardrail_settings (setting_key, setting_value, description) VALUES
 ('guardrails_enabled', 'true', '기본 가드레일 활성화 여부'),
 ('korean_guardrails_enabled', 'true', '한국어 가드레일 활성화 여부'),
@@ -425,7 +222,7 @@ INSERT INTO guardrail_settings (setting_key, setting_value, description) VALUES
 ('logging_enabled', 'true', '로깅 기능 활성화 여부')
 ON CONFLICT (setting_key) DO NOTHING;
 
--- 8.2 guardrail_master_policy_types: 정책 유형 마스터
+-- 5.2 guardrail_master_policy_types: 정책 유형 마스터
 INSERT INTO guardrail_master_policy_types (code, type_id, name, description, is_active, sort_order) VALUES
 ('PT001', 'company', '회사정보 (Company)', '회사 관련 정보 보호 정책', true, 1),
 ('PT002', 'compliance', '규정준수 (Compliance)', '법률 및 규정 준수 관련 정책', true, 2),
@@ -434,7 +231,7 @@ INSERT INTO guardrail_master_policy_types (code, type_id, name, description, is_
 ('PT005', 'security', '보안 (Security)', '시스템 보안 관련 정책', true, 5)
 ON CONFLICT (code) DO NOTHING;
 
--- 8.3 guardrail_master_filter_types: 필터 유형 마스터
+-- 5.3 guardrail_master_filter_types: 필터 유형 마스터
 INSERT INTO guardrail_master_filter_types (code, type_id, name, description, is_active, sort_order) VALUES
 ('FT001', 'input_filter', '입력 필터', '사용자 입력 검증 필터', true, 1),
 ('FT002', 'output_filter', '출력 필터', 'AI 응답 출력 검증 필터', true, 2),
@@ -443,7 +240,7 @@ INSERT INTO guardrail_master_filter_types (code, type_id, name, description, is_
 ('FT005', 'custom', '커스텀', '사용자 정의 필터', true, 5)
 ON CONFLICT (code) DO NOTHING;
 
--- 8.4 guardrail_master_severity_levels: 심각도 마스터
+-- 5.4 guardrail_master_severity_levels: 심각도 마스터
 INSERT INTO guardrail_master_severity_levels (code, level_id, name, color, priority, description, is_active, sort_order) VALUES
 ('SV001', 'critical', 'Critical (치명적)', '#dc2626', 100, '즉시 조치 필요, 시스템 중단 가능', true, 1),
 ('SV002', 'high', 'High (높음)', '#ea580c', 75, '빠른 조치 필요', true, 2),
@@ -451,7 +248,7 @@ INSERT INTO guardrail_master_severity_levels (code, level_id, name, color, prior
 ('SV004', 'low', 'Low (낮음)', '#16a34a', 25, '경미한 이슈, 참고용', true, 4)
 ON CONFLICT (code) DO NOTHING;
 
--- 8.5 guardrail_master_action_types: 조치 유형 마스터
+-- 5.5 guardrail_master_action_types: 조치 유형 마스터
 INSERT INTO guardrail_master_action_types (code, action_id, name, description, is_active, sort_order) VALUES
 ('AT001', 'block', '차단 (Block)', '요청을 완전히 차단하고 에러 응답 반환', true, 1),
 ('AT002', 'warn', '경고 (Warn)', '경고 메시지와 함께 처리 계속', true, 2),
@@ -459,61 +256,7 @@ INSERT INTO guardrail_master_action_types (code, action_id, name, description, i
 ('AT004', 'replace', '대체 (Replace)', '민감 정보를 마스킹/대체 후 처리', true, 4)
 ON CONFLICT (code) DO NOTHING;
 
--- 8.6 guardrail_policy_types: 정책 유형 코드
-INSERT INTO guardrail_policy_types (code, name, description, is_active) VALUES
-('company', '회사정보', '회사 기밀 정보 보호 정책', true),
-('compliance', '규정준수', '법률 및 규정 준수 정책', true),
-('content', '콘텐츠', '콘텐츠 필터링 정책', true),
-('privacy', '개인정보', '개인정보 보호 정책', true),
-('security', '보안', '시스템 보안 정책', true)
-ON CONFLICT (code) DO NOTHING;
-
--- 8.7 guardrail_filter_types: 필터 유형 코드
-INSERT INTO guardrail_filter_types (code, name, description, is_active) VALUES
-('custom', '커스텀', '기본 제공 필터 외에 조직 특성에 맞는 맞춤형 규칙을 정의합니다.', true),
-('input_filter', '입력 필터', '사용자가 AI에게 보내는 질문/요청을 실시간으로 검사합니다.', true),
-('output_filter', '출력 필터', 'AI가 생성한 응답 내용을 전송 전에 검사합니다.', true),
-('pii_detection', 'PII 탐지', '개인식별정보(PII: Personally Identifiable Information)를 자동 탐지합니다.', true),
-('toxicity', '유해성 탐지', '유해하거나 부적절한 콘텐츠를 탐지합니다.', true)
-ON CONFLICT (code) DO NOTHING;
-
--- 8.8 guardrail_severity_levels: 심각도 코드
-INSERT INTO guardrail_severity_levels (code, name, description, color, priority, is_active) VALUES
-('critical', 'Critical', '즉시 차단이 필요한 치명적 위반입니다.', '#dc2626', 1, true),
-('high', 'High', '차단을 권장하는 높은 수준의 위반입니다.', '#f97316', 2, true),
-('medium', 'Medium', '경고 후 진행을 허용하는 중간 수준의 위반입니다.', '#eab308', 3, true),
-('low', 'Low', '로그 기록만 하고 진행을 허용하는 낮은 수준입니다.', '#22c55e', 4, true)
-ON CONFLICT (code) DO NOTHING;
-
--- 8.9 guardrail_action_types: 조치 유형 코드
-INSERT INTO guardrail_action_types (code, name, description, is_active) VALUES
-('block', '차단', '위반 콘텐츠를 완전히 차단하고 진행을 중단합니다.', true),
-('log_only', '로그만', '위반 내용을 로그에만 기록하고 요청/응답은 정상 진행합니다.', true),
-('replace', '대체', '위반 콘텐츠를 안전한 내용으로 자동 대체합니다.', true),
-('warn', '경고', '경고 메시지를 표시하고 사용자가 계속 진행할지 선택합니다.', true)
-ON CONFLICT (code) DO NOTHING;
-
--- 8.10 guardrail_categories: 카테고리 코드
-INSERT INTO guardrail_categories (id, name, description, policy_count) VALUES
-('company', '기업정보', '기업 기밀 정보 보호 정책 (영업비밀, 재무정보, 인사정보 등)', 0),
-('compliance', '컴플라이언스', '규정 준수 정책 (법률, 규제, 윤리 등)', 30),
-('content', '콘텐츠', '콘텐츠 필터링 정책 (스팸, 광고, 유해 콘텐츠 등)', 30),
-('privacy', '개인정보', '개인정보 보호 정책 (주민번호, 전화번호, 계좌번호 등)', 30),
-('security', '보안', '보안 관련 정책 (악성코드, 해킹, 취약점 등)', 30)
-ON CONFLICT (id) DO NOTHING;
-
--- 8.11 guardrail_pii_patterns: PII 패턴 정의
-INSERT INTO guardrail_pii_patterns (pattern_id, name, pattern, description, severity, action_on_detect, is_active, sort_order) VALUES
-('ssn', '주민등록번호', '\d{6}[-\s]?\d{7}', '주민등록번호 패턴 (XXXXXX-XXXXXXX)', 'critical', 'block', true, 1),
-('phone', '전화번호', '(01[0-9]|02|0[3-9][0-9])[-\s]?\d{3,4}[-\s]?\d{4}', '전화번호 패턴 (010-XXXX-XXXX)', 'high', 'warn', true, 2),
-('email', '이메일', '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '이메일 주소 패턴', 'high', 'warn', true, 3),
-('credit_card', '신용카드번호', '\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}', '신용카드 번호 패턴 (16자리)', 'critical', 'block', true, 4),
-('bank_account', '계좌번호', '\d{3,4}[-\s]?\d{2,4}[-\s]?\d{4,6}', '은행 계좌번호 패턴', 'high', 'warn', true, 5),
-('passport', '여권번호', '[A-Z]{1,2}\d{7,8}', '여권번호 패턴', 'high', 'warn', true, 6),
-('driver_license', '운전면허번호', '\d{2}-\d{2}-\d{6}-\d{2}', '운전면허번호 패턴', 'high', 'warn', true, 7)
-ON CONFLICT (pattern_id) DO NOTHING;
-
--- 8.12 guardrail_keywords: 키워드 (243개)
+-- 5.6 guardrail_keywords: 키워드 (243개)
 INSERT INTO guardrail_keywords (text, category, enabled) VALUES
 -- basic 카테고리 (욕설/비속어)
 ('욕설', 'basic', true),
@@ -769,4 +512,4 @@ ON CONFLICT DO NOTHING;
 -- =====================================================
 -- 완료 메시지
 -- =====================================================
-SELECT '가드레일 22개 테이블 및 초기 데이터 생성 완료' AS result;
+SELECT '가드레일 9개 테이블 및 초기 데이터 생성 완료' AS result;

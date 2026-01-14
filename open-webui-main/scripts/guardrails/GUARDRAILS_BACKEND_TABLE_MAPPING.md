@@ -3,6 +3,8 @@
 ## 개요
 이 문서는 가드레일 백엔드 서비스들과 `guardrails_db` 데이터베이스 테이블 간의 연관관계를 설명합니다.
 
+> **수정 이력**: 2026-01-14 - 미사용 테이블 13개 삭제 (22개 → 9개)
+
 ---
 
 ## 백엔드 서비스 구성
@@ -195,7 +197,7 @@ class GuardrailLog(Base):
 
 ## 3. 테이블별 백엔드 연관 요약
 
-### 기본 테이블 (6개)
+### 기본 테이블 (5개)
 
 | 테이블명 | Arthur (8001) | Monitoring (3001) | 용도 |
 |---------|--------------|-------------------|------|
@@ -204,7 +206,6 @@ class GuardrailLog(Base):
 | `guardrail_logs` | ✅ INSERT/SELECT | ❌ | 기본 검사 로그 |
 | `guardrail_policies` | ❌ | ✅ CRUD | 정책 정의 및 관리 |
 | `guardrail_check_logs` | ✅ INSERT | ✅ SELECT | 상세 검사 로그 (공유) |
-| `guardrail_filter_logs` | ❌ | ❌ | (확장용) |
 
 ### 마스터 테이블 (4개)
 
@@ -214,33 +215,6 @@ class GuardrailLog(Base):
 | `guardrail_master_filter_types` | ❌ | ✅ CRUD | 필터 유형 코드 |
 | `guardrail_master_severity_levels` | ❌ | ✅ CRUD | 심각도 레벨 |
 | `guardrail_master_action_types` | ❌ | ✅ CRUD | 조치 유형 |
-
-### 코드 테이블 (5개)
-
-| 테이블명 | Arthur (8001) | Monitoring (3001) | 용도 |
-|---------|--------------|-------------------|------|
-| `guardrail_policy_types` | ❌ | ❌ (참조) | 정책 유형 분류 |
-| `guardrail_filter_types` | ❌ | ❌ (참조) | 필터 유형 분류 |
-| `guardrail_severity_levels` | ❌ | ❌ (참조) | 심각도 표시 |
-| `guardrail_action_types` | ❌ | ❌ (참조) | 조치 유형 표시 |
-| `guardrail_categories` | ❌ | ❌ (참조) | 카테고리 분류 |
-
-### 통계/분석 테이블 (4개)
-
-| 테이블명 | Arthur (8001) | Monitoring (3001) | 용도 |
-|---------|--------------|-------------------|------|
-| `guardrail_daily_stats` | ❌ | ❌ (집계용) | 일별 통계 |
-| `guardrail_hourly_stats` | ❌ | ❌ (집계용) | 시간별 통계 |
-| `guardrail_keyword_stats` | ❌ | ❌ (집계용) | 키워드 통계 |
-| `guardrail_user_violations` | ❌ | ❌ (집계용) | 사용자 위반 통계 |
-
-### 기타 테이블 (3개)
-
-| 테이블명 | Arthur (8001) | Monitoring (3001) | 용도 |
-|---------|--------------|-------------------|------|
-| `guardrail_activities` | ❌ | ❌ (감사용) | 관리자 활동 로그 |
-| `guardrail_validations` | ❌ | ❌ (검증용) | 검증 결과 저장 |
-| `guardrail_pii_patterns` | ❌ (코드 정의) | ❌ | PII 패턴 정의 |
 
 ---
 

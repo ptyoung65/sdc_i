@@ -3,6 +3,8 @@
 ## 개요
 이 문서는 Open WebUI의 가드레일 관련 화면들과 `guardrails_db` 데이터베이스 테이블 간의 연관관계를 설명합니다.
 
+> **수정 이력**: 2026-01-14 - 미사용 테이블 13개 삭제 (22개 → 9개)
+
 ---
 
 ## 시스템 아키텍처
@@ -50,7 +52,7 @@
               │         guardrails_db             │
               │       (PostgreSQL 5433)           │
               │                                   │
-              │         22개 테이블               │
+              │          9개 테이블               │
               └───────────────────────────────────┘
 ```
 
@@ -144,7 +146,7 @@
 
 ## 테이블별 화면 연관관계
 
-### 기본 테이블 (6개)
+### 기본 테이블 (5개)
 
 | 테이블명 | 연관 화면 | 용도 |
 |---------|----------|------|
@@ -153,7 +155,6 @@
 | `guardrail_logs` | Guardrails 서비스 | 기본 검사 로그 |
 | `guardrail_policies` | 가드레일 관리 전체 | 정책 정의 및 관리 |
 | `guardrail_check_logs` | 대시보드, 정책 현황 | 상세 검사 로그, 통계 집계 |
-| `guardrail_filter_logs` | (확장용) | 필터 실행 상세 로그 |
 
 ### 마스터 테이블 (4개)
 
@@ -163,33 +164,6 @@
 | `guardrail_master_filter_types` | 기준정보 관리 > 필터유형 | 필터 유형 코드 정의 |
 | `guardrail_master_severity_levels` | 기준정보 관리 > 심각도 | 심각도 레벨 정의 |
 | `guardrail_master_action_types` | 기준정보 관리 > 동작유형 | 조치 유형 정의 |
-
-### 코드 테이블 (5개)
-
-| 테이블명 | 연관 화면 | 용도 |
-|---------|----------|------|
-| `guardrail_policy_types` | 정책 필터 드롭다운 | 정책 유형 필터 |
-| `guardrail_filter_types` | 필터 유형 드롭다운 | 필터 유형 분류 |
-| `guardrail_severity_levels` | 심각도 드롭다운 | 심각도 색상/우선순위 |
-| `guardrail_action_types` | 동작 유형 드롭다운 | 조치 유형 표시 |
-| `guardrail_categories` | 카테고리 필터 | 정책 카테고리 분류 |
-
-### 통계/분석 테이블 (4개)
-
-| 테이블명 | 연관 화면 | 용도 |
-|---------|----------|------|
-| `guardrail_daily_stats` | 대시보드 추이 차트 | 일별 통계 집계 |
-| `guardrail_hourly_stats` | 실시간 모니터링 | 시간별 통계 집계 |
-| `guardrail_keyword_stats` | 키워드 분석 | 키워드별 탐지 통계 |
-| `guardrail_user_violations` | 사용자 위반 현황 | 사용자별 위반 추적 |
-
-### 기타 테이블 (3개)
-
-| 테이블명 | 연관 화면 | 용도 |
-|---------|----------|------|
-| `guardrail_activities` | 활동 로그 (감사) | 관리자 활동 추적 |
-| `guardrail_validations` | 검증 로그 | 검증 결과 저장 |
-| `guardrail_pii_patterns` | PII 탐지 설정 | 개인정보 패턴 정의 |
 
 ---
 
