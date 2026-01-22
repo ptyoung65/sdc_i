@@ -633,6 +633,17 @@
 	const inputFilesHandler = async (inputFiles) => {
 		console.log('Input files handler called with:', inputFiles);
 
+		// ----- [2026-01-22] 허용된 파일 형식 정의 시작 -----
+		// 허용되는 파일 확장자: pptx, xlsx, docx, pdf
+		const ALLOWED_EXTENSIONS = ['pptx', 'xlsx', 'docx', 'pdf'];
+		const ALLOWED_MIME_TYPES = [
+			'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
+			'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
+			'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
+			'application/pdf' // pdf
+		];
+		// ----- [2026-01-22] 허용된 파일 형식 정의 종료 -----
+
 		if (
 			($config?.file?.max_count ?? null) !== null &&
 			files.length + inputFiles.length > $config?.file?.max_count
@@ -653,6 +664,25 @@
 				extension: file.name.split('.').at(-1)
 			});
 
+			// ----- [2026-01-22] 파일 형식 검증 시작 -----
+			// 허용된 파일 형식(pptx, xlsx, docx, pdf)만 업로드 가능
+			const fileExtension = file.name.split('.').pop()?.toLowerCase();
+			const isAllowedExtension = ALLOWED_EXTENSIONS.includes(fileExtension);
+			const isAllowedMimeType = ALLOWED_MIME_TYPES.includes(file.type);
+
+			if (!isAllowedExtension && !isAllowedMimeType) {
+				console.log('File type not allowed:', {
+					name: file.name,
+					extension: fileExtension,
+					mimeType: file.type
+				});
+				toast.error(
+					$i18n.t('지원하지 않는 파일 형식입니다.\n\n허용되는 형식: PDF, Word(docx), Excel(xlsx), PowerPoint(pptx)\n\n압축파일, 텍스트파일(txt, csv), 이미지, 동영상 등은 첨부할 수 없습니다.')
+				);
+				return;
+			}
+			// ----- [2026-01-22] 파일 형식 검증 종료 -----
+
 			if (
 				($config?.file?.max_size ?? null) !== null &&
 				file.size > ($config?.file?.max_size ?? 0) * 1024 * 1024
@@ -669,66 +699,11 @@
 				return;
 			}
 
-			if (file['type'].startsWith('image/')) {
-				if (visionCapableModels.length === 0) {
-					toast.error($i18n.t('Selected model(s) do not support image inputs'));
-					return;
-				}
-
-				const compressImageHandler = async (imageUrl, settings = {}, config = {}) => {
-					// Quick shortcut so we don’t do unnecessary work.
-					const settingsCompression = settings?.imageCompression ?? false;
-					const configWidth = config?.file?.image_compression?.width ?? null;
-					const configHeight = config?.file?.image_compression?.height ?? null;
-
-					// If neither settings nor config wants compression, return original URL.
-					if (!settingsCompression && !configWidth && !configHeight) {
-						return imageUrl;
-					}
-
-					// Default to null (no compression unless set)
-					let width = null;
-					let height = null;
-
-					// If user/settings want compression, pick their preferred size.
-					if (settingsCompression) {
-						width = settings?.imageCompressionSize?.width ?? null;
-						height = settings?.imageCompressionSize?.height ?? null;
-					}
-
-					// Apply config limits as an upper bound if any
-					if (configWidth && (width === null || width > configWidth)) {
-						width = configWidth;
-					}
-					if (configHeight && (height === null || height > configHeight)) {
-						height = configHeight;
-					}
-
-					// Do the compression if required
-					if (width || height) {
-						return await compressImage(imageUrl, width, height);
-					}
-					return imageUrl;
-				};
-
-				let reader = new FileReader();
-				reader.onload = async (event) => {
-					let imageUrl = event.target.result;
-
-					imageUrl = await compressImageHandler(imageUrl, $settings, $config);
-
-					files = [
-						...files,
-						{
-							type: 'image',
-							url: `${imageUrl}`
-						}
-					];
-				};
-				reader.readAsDataURL(file['type'] === 'image/heic' ? await convertHeicToJpeg(file) : file);
-			} else {
-				uploadFileHandler(file);
-			}
+			// ----- [2026-01-22] 허용된 파일만 업로드 처리 -----
+			// 위에서 파일 형식 검증을 통과한 파일만 여기까지 도달함
+			// (pptx, xlsx, docx, pdf 파일만 허용)
+			uploadFileHandler(file);
+			// ----- [2026-01-22] 허용된 파일만 업로드 처리 종료 -----
 		});
 	};
 
@@ -751,12 +726,10 @@
 		e.preventDefault();
 		console.log(e);
 
-		if (e.dataTransfer?.files) {
-			const inputFiles = Array.from(e.dataTransfer?.files);
-			if (inputFiles && inputFiles.length > 0) {
-				console.log(inputFiles);
-				inputFilesHandler(inputFiles);
-			}
+		// [2026-01-22] 드래그앤드롭으로 파일 첨부 비활성화
+		// 파일 업로드를 차단하고 사용자에게 알림
+		if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+			toast.error($i18n.t('파일 드래그앤드롭이 비활성화되어 있습니다. 문서첨부 버튼을 사용해주세요.'));
 		}
 
 		dragged = false;
@@ -1309,49 +1282,22 @@
 
 															const clipboardData = e.clipboardData || window.clipboardData;
 
+															// [2026-01-22] Ctrl+V로 파일/이미지 붙여넣기 비활성화
+															// 텍스트 붙여넣기만 허용
 															if (clipboardData && clipboardData.items) {
 																for (const item of clipboardData.items) {
 																	if (item.type.indexOf('image') !== -1) {
-																		const blob = item.getAsFile();
-																		const reader = new FileReader();
-
-																		reader.onload = function (e) {
-																			files = [
-																				...files,
-																				{
-																					type: 'image',
-																					url: `${e.target.result}`
-																				}
-																			];
-																		};
-
-																		reader.readAsDataURL(blob);
-																	} else if (item?.kind === 'file') {
-																		const file = item.getAsFile();
-																		if (file) {
-																			const _files = [file];
-																			await inputFilesHandler(_files);
-																			e.preventDefault();
-																		}
-																	} else if (item.type === 'text/plain') {
-																		if (($settings?.largeTextAsFile ?? false) && !shiftKey) {
-																			const text = clipboardData.getData('text/plain');
-
-																			if (text.length > PASTED_TEXT_CHARACTER_LIMIT) {
-																				e.preventDefault();
-																				const blob = new Blob([text], { type: 'text/plain' });
-																				const file = new File(
-																					[blob],
-																					`Pasted_Text_${Date.now()}.txt`,
-																					{
-																						type: 'text/plain'
-																					}
-																				);
-
-																				await uploadFileHandler(file, true);
-																			}
-																		}
+																		// 이미지 붙여넣기 차단
+																		e.preventDefault();
+																		toast.error($i18n.t('이미지 붙여넣기가 비활성화되어 있습니다. 문서첨부 버튼을 사용해주세요.'));
+																		return;
+																	} else if (item?.kind === 'file' && item.type !== 'text/plain') {
+																		// 파일 붙여넣기 차단 (텍스트 제외)
+																		e.preventDefault();
+																		toast.error($i18n.t('파일 붙여넣기가 비활성화되어 있습니다. 문서첨부 버튼을 사용해주세요.'));
+																		return;
 																	}
+																	// 텍스트는 기본 동작 허용 (별도 처리 없음)
 																}
 															}
 														}}
