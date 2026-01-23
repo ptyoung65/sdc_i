@@ -145,28 +145,31 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 컨테이너 이름
-DOCLING_CONTAINER="sdc-docling"
 OPENWEBUI_CONTAINER="sdc-open-webui"
 
 # 볼륨 이름
 OPENWEBUI_VOLUME="openwebui-data"
-DOCLING_VOLUME="docling-data"
 
 # HOST_IP 자동 감지 함수
+# 192.168.122.178을 우선으로 사용 (메인 서버 IP)
+# 11.93.33.10은 테스트 서버용 보조 IP
 detect_host_ip() {
-    local primary_ip=$(ip addr show 2>/dev/null | grep "noprefixroute" | grep -oP 'inet \K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | grep -v '192.168.122' | head -n1)
-
-    if [ -n "$primary_ip" ]; then
-        echo "$primary_ip"
+    # 192.168.122.178 우선 확인
+    local main_ip=$(ip addr show 2>/dev/null | grep -oP 'inet \K192\.168\.122\.178' | head -n1)
+    if [ -n "$main_ip" ]; then
+        echo "$main_ip"
         return
     fi
 
-    local detected_ip=$(ip addr show 2>/dev/null | grep "dynamic" | grep -oP 'inet \K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
-
-    if [ -z "$detected_ip" ]; then
-        detected_ip=$(ip addr show 2>/dev/null | grep -oP 'inet \K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | grep -v '127.0.0.1' | head -n1)
+    # 192.168.122.x 대역 확인
+    local detected_ip=$(ip addr show 2>/dev/null | grep -oP 'inet \K192\.168\.122\.[0-9]+' | head -n1)
+    if [ -n "$detected_ip" ]; then
+        echo "$detected_ip"
+        return
     fi
 
+    # 그 외 IP 확인
+    detected_ip=$(ip addr show 2>/dev/null | grep -oP 'inet \K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | grep -v '127.0.0.1' | head -n1)
     echo "$detected_ip"
 }
 
@@ -366,7 +369,7 @@ echo ""
 echo -e "${YELLOW}🗑️  기존 컨테이너 정리 중...${NC}"
 
 # PostgreSQL, Milvus는 제외 (원격 사용)
-CONTAINERS_TO_CLEAN="sdc-open-webui sdc-docling sdc-redis-dev"
+CONTAINERS_TO_CLEAN="sdc-open-webui sdc-redis-dev sdc-pipelines sdc-guardrails sdc-monitoring"
 
 for container in $CONTAINERS_TO_CLEAN; do
     if podman ps -a --format "{{.Names}}" | grep -q "^${container}$"; then
@@ -392,6 +395,9 @@ if ! podman volume exists sdc-redis-data 2>/dev/null; then
     podman volume create sdc-redis-data >/dev/null 2>&1
 fi
 
+# [2026-01-23] 네트워크 단순화: podman 네트워크만 사용
+# dify-network는 별도로 생성하지 않음 (dify-manager.sh에서 처리)
+
 podman run -d \
     --name sdc-redis-dev \
     --replace \
@@ -409,63 +415,129 @@ podman run -d \
 
 echo -e "${GREEN}✅ Redis 컨테이너 시작됨 (포트: 6380)${NC}"
 echo "   컨테이너명: sdc-redis-dev"
+echo "   네트워크: podman"
 echo ""
 
 ##############################################################################
-# 2. Docling 컨테이너 시작 (로컬)
+# 2. Pipelines 컨테이너 시작 (podman 네트워크)
 ##############################################################################
-echo -e "${YELLOW}📄 Docling 문서 파싱 컨테이너 시작 중 (로컬)...${NC}"
+echo -e "${YELLOW}🔄 Pipelines 컨테이너 시작 중...${NC}"
 
-echo -e "${BLUE}📁 Docling 작업 디렉토리 생성 중...${NC}"
-mkdir -p "$(pwd)/uploads" "$(pwd)/processed"
-echo -e "${GREEN}✅ 디렉토리 생성 완료: uploads, processed${NC}"
+podman run -d \
+    --name sdc-pipelines \
+    --replace \
+    --security-opt label=disable \
+    --network podman \
+    -p 0.0.0.0:9099:9099 \
+    -v ${SCRIPT_DIR}/pipelines:/app/pipelines:z \
+    -e PIPELINES_DIR=/app/pipelines \
+    -e PIPELINES_API_KEY="0p3n-w3bu!" \
+    --restart unless-stopped \
+    ghcr.io/open-webui/pipelines:main
 
-DOCLING_IMAGE="ghcr.io/docling-project/docling-serve-cpu:main"
+echo -e "${GREEN}✅ Pipelines 컨테이너 시작됨 (포트: 9099)${NC}"
+echo "   컨테이너명: sdc-pipelines"
+echo "   파이프라인 디렉토리: ${SCRIPT_DIR}/pipelines"
+echo "   네트워크: podman"
+echo ""
 
-if podman image exists ${DOCLING_IMAGE} 2>/dev/null || podman image exists localhost/docling:latest 2>/dev/null; then
-    if podman image exists ${DOCLING_IMAGE} 2>/dev/null; then
-        ACTUAL_IMAGE=${DOCLING_IMAGE}
-    else
-        ACTUAL_IMAGE="localhost/docling:latest"
-    fi
+##############################################################################
+# 3. Guardrails 컨테이너 시작 (podman 네트워크)
+##############################################################################
+# ----- 1227 guardrails 볼륨 마운트 추가 시작 -----
+# 📌 볼륨 마운트 설명:
+#   - 로컬: ${SCRIPT_DIR}/services/arthur-guardrails
+#   - 컨테이너: /app
+#   - 효과: 로컬 소스 코드 수정 시 재빌드 없이 컨테이너 재시작만으로 반영
+#   - 수정 파일: arthur_guardrails_service.py, database.py 등
+#   - 재시작 명령: podman restart sdc-guardrails
+# ----- 1227 guardrails 볼륨 마운트 추가 종료 -----
+echo -e "${YELLOW}🛡️  Guardrails 컨테이너 시작 중...${NC}"
 
-    MODEL_MOUNT_ARGS=""
-    if [ -d "$(pwd)/EasyOCR" ]; then
-        MODEL_MOUNT_ARGS="$MODEL_MOUNT_ARGS -v $(pwd)/EasyOCR:/root/.EasyOCR"
-        echo -e "${GREEN}✅ EasyOCR 모델 캐시 마운트${NC}"
-    fi
-    if [ -d "$(pwd)/docling-models/huggingface" ]; then
-        MODEL_MOUNT_ARGS="$MODEL_MOUNT_ARGS -v $(pwd)/docling-models/huggingface:/root/.cache/huggingface"
-        echo -e "${GREEN}✅ Huggingface 모델 캐시 마운트${NC}"
-    fi
+# 호스트 포트: 13010, 내부 포트: 8001
+podman run -d \
+    --name sdc-guardrails \
+    --replace \
+    --security-opt label=disable \
+    --network podman \
+    -p 0.0.0.0:13010:8001 \
+    -v ${SCRIPT_DIR}/services/arthur-guardrails:/app:Z \
+    -w /app \
+    -e HOST_IP="${REMOTE_DB_HOST}" \
+    -e DB_HOST="${REMOTE_DB_HOST}" \
+    -e DB_PORT="5433" \
+    -e DB_NAME="guardrails_db" \
+    -e DB_USER="sdc_dev_user" \
+    -e DB_PASSWORD="sdc_dev_pass_2025" \
+    -e DATABASE_URL="postgresql+asyncpg://sdc_dev_user:sdc_dev_pass_2025@${REMOTE_DB_HOST}:5433/guardrails_db" \
+    --restart unless-stopped \
+    localhost/sdc-arthur-guardrails:latest \
+    python arthur_guardrails_service.py --port 8001 --host 0.0.0.0
 
-    podman run -d \
-        --name ${DOCLING_CONTAINER} \
-        --replace \
-        --user root \
-        --security-opt label=disable \
-        --network podman \
-        -e UVICORN_PORT=8000 \
-        -e DOCLING_SERVE_ENABLE_UI=1 \
-        -e EASYOCR_LANGUAGES="ko,en,ch_sim" \
-        -v "$(pwd)/uploads:/app/uploads" \
-        -v "$(pwd)/processed:/app/processed" \
-        ${MODEL_MOUNT_ARGS} \
-        -p 5000:8000 \
-        --restart unless-stopped \
-        ${ACTUAL_IMAGE}
+echo -e "${GREEN}✅ Guardrails 컨테이너 시작됨 (포트: 13010 -> 8001)${NC}"
+echo "   컨테이너명: sdc-guardrails"
+echo "   볼륨 마운트: ${SCRIPT_DIR}/services/arthur-guardrails -> /app (재빌드 불필요)"
+echo "   네트워크: podman"
+echo ""
 
-    echo -e "${GREEN}✅ Docling 컨테이너 시작됨 (포트: 5000)${NC}"
-    echo "   컨테이너명: ${DOCLING_CONTAINER}"
-    echo "   이미지: ${ACTUAL_IMAGE}"
+##############################################################################
+# 4. Guardrails 데이터베이스 초기화 (테이블이 없을 경우에만)
+##############################################################################
+echo -e "${YELLOW}🛡️  Guardrails 데이터베이스 초기화 확인 중...${NC}"
+
+GUARDRAIL_INIT_SCRIPT="${SCRIPT_DIR}/scripts/sdc-guardrail-init.sh"
+
+if [ -f "${GUARDRAIL_INIT_SCRIPT}" ]; then
+    chmod +x "${GUARDRAIL_INIT_SCRIPT}"
+    # 테이블이 없을 경우에만 생성 (--force-init 옵션 없이 실행)
+    "${GUARDRAIL_INIT_SCRIPT}" --db-host "${REMOTE_DB_HOST}" --db-port 5433 || {
+        echo -e "${RED}❌ Guardrails 초기화 스크립트 실행 실패${NC}"
+        echo -e "${YELLOW}⚠️  계속 진행합니다...${NC}"
+    }
 else
-    echo -e "${YELLOW}⚠️  Docling 이미지가 없습니다.${NC}"
-    echo "   필요한 이미지: ${DOCLING_IMAGE}"
+    echo -e "${YELLOW}⚠️  Guardrails 초기화 스크립트가 없습니다: ${GUARDRAIL_INIT_SCRIPT}${NC}"
 fi
 echo ""
 
 ##############################################################################
-# 3. Open WebUI 컨테이너 준비
+# 5. Monitoring 컨테이너 시작
+# -----1222 대시보드 수정 시작 ------
+# -----1222 대시보드 수정 종료 ------
+##############################################################################
+# ----- 1225 monitoring-backend 볼륨 마운트 주석 추가 시작 -----
+# 📌 볼륨 마운트 설명:
+#   - 로컬: ${SCRIPT_DIR}/services/monitoring-backend
+#   - 컨테이너: /app
+#   - 효과: 로컬 소스 코드 수정 시 재빌드 없이 컨테이너 재시작만으로 반영
+#   - 수정 파일: main.py, queries.py 등
+#   - 재시작 명령: podman restart sdc-monitoring
+# ----- 1225 monitoring-backend 볼륨 마운트 주석 추가 종료 -----
+echo -e "${YELLOW}📊 Monitoring 컨테이너 시작 중...${NC}"
+
+podman run -d \
+    --name sdc-monitoring \
+    --replace \
+    --security-opt label=disable \
+    --network host \
+    -v ${SCRIPT_DIR}/services/monitoring-backend:/app:Z \
+    -w /app \
+    -e CORS_ORIGINS="http://${HOST_IP}:3000,http://localhost:3000,http://${HOST_IP_SECONDARY}:3000" \
+    -e DB_HOST="${REMOTE_DB_HOST}" \
+    -e DB_PORT="5433" \
+    -e DB_USER="sdc_dev_user" \
+    -e DB_PASSWORD="sdc_dev_pass_2025" \
+    -e DB_NAME="sdc_dev" \
+    --restart unless-stopped \
+    localhost/monitoring-backend:1.0 \
+    python main.py
+
+echo -e "${GREEN}✅ Monitoring 컨테이너 시작됨 (포트: 3001)${NC}"
+echo "   컨테이너명: sdc-monitoring"
+echo "   볼륨 마운트: ${SCRIPT_DIR}/services/monitoring-backend -> /app (재빌드 불필요)"
+echo ""
+
+##############################################################################
+# 6. Open WebUI 컨테이너 준비
 ##############################################################################
 echo -e "${YELLOW}🌐 Open WebUI 준비 중 (원격 DB 연결)...${NC}"
 
@@ -562,15 +634,19 @@ fi
 echo ""
 
 # Open WebUI 컨테이너 실행 (원격 DB 연결)
+# [2026.01.19] --network=host로 변경하여 실제 클라이언트 IP 획득 가능
+# [2026.01.19] PORT=${OPENWEBUI_PORT} 추가하여 기존 포트 유지 (기본값 3000)
+# [2026.01.19] PIPELINES_URLS: host.docker.internal → localhost 변경
 podman run -d \
     --name ${OPENWEBUI_CONTAINER} \
-    --network podman \
-    --add-host host.docker.internal:host-gateway \
-    -p ${PORT_MAPPING} \
+    --network=host \
+    -e PORT=${OPENWEBUI_PORT} \
     -e HOST_IP=${HOST_IP:-localhost} \
     -e DATABASE_URL=postgresql://sdc_dev_user:sdc_dev_pass_2025@${REMOTE_DB_HOST}:5433/sdc_dev \
     -e OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL} \
+    -e OPENAI_API_BASE_URLS="${OPENAI_API_BASE_URL};http://${HOST_IP}:9099" \
     -e OPENAI_API_KEY=${OPENAI_API_KEY} \
+    -e OPENAI_API_KEYS="${OPENAI_API_KEY};0p3n-w3bu!" \
     -e DEFAULT_MODELS=${DEFAULT_MODELS} \
     -e RAG_EMBEDDING_ENGINE=${RAG_EMBEDDING_ENGINE} \
     -e RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL} \
@@ -593,6 +669,8 @@ podman run -d \
     -e ENABLE_COMMUNITY_SHARING=${ENABLE_COMMUNITY_SHARING} \
     -e CHROMA_TELEMETRY=${CHROMA_TELEMETRY} \
     -e CHROMA_CLIENT_DISABLED=${CHROMA_CLIENT_DISABLED} \
+    -e PIPELINES_URLS="http://localhost:9099" \
+    -e PIPELINES_API_KEY="0p3n-w3bu!" \
     ${SSL_ENV_VARS} \
     -v ${OPENWEBUI_VOLUME}:/app/backend/data \
     ${CERT_MOUNT} \
@@ -606,6 +684,7 @@ podman run -d \
     -v $(pwd)/tsconfig.json:/app/tsconfig.json:Z \
     -v $(pwd)/tailwind.config.js:/app/tailwind.config.js:Z \
     -v $(pwd)/postcss.config.js:/app/postcss.config.js:Z \
+    -v $(pwd)/backend/open_webui/routers/configs.py:/app/backend/open_webui/routers/configs.py:Z \
     --restart unless-stopped \
     ${OPENWEBUI_IMAGE}
 
@@ -634,7 +713,9 @@ echo "   🧠 Milvus: ${REMOTE_DB_HOST}:19530"
 echo ""
 echo "로컬 서비스 포트:"
 echo "   🔄 Redis: localhost:6380"
-echo "   📄 Docling: http://localhost:5000"
+echo "   🔄 Pipelines: http://localhost:9099"
+echo "   🛡️  Guardrails: http://localhost:13010"
+echo "   📊 Monitoring: http://localhost:3001"
 echo "=================================="
 echo ""
 echo "환경 정보:"
@@ -645,5 +726,55 @@ echo ""
 echo "컨테이너 상태 확인:"
 podman ps --filter "name=sdc"
 echo ""
-echo "로그 확인: podman logs -f ${OPENWEBUI_CONTAINER}"
+
+##############################################################################
+# Dify 컨테이너 시작 옵션
+# [2026-01-23] 추가: SDC 컨테이너 시작 후 Dify 컨테이너도 함께 시작할지 선택
+##############################################################################
+echo ""
+echo -e "${BLUE}=================================${NC}"
+echo -e "${BLUE}  Dify 컨테이너 시작 옵션${NC}"
+echo -e "${BLUE}=================================${NC}"
+echo ""
+echo "Dify (AI Workflow Builder) 컨테이너를 함께 시작하시겠습니까?"
+echo "  - dify-sandbox"
+echo "  - dify-plugin-daemon"
+echo "  - dify-api"
+echo "  - dify-worker"
+echo "  - dify-web (포트: 9008)"
+echo ""
+read -p "Dify 컨테이너 시작? (y/N): " START_DIFY
+
+if [[ "$START_DIFY" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo -e "${YELLOW}🚀 Dify 컨테이너 시작 중...${NC}"
+    echo ""
+
+    # dify-manager.sh 실행
+    DIFY_MANAGER_PATH="${SCRIPT_DIR}/dify_add_con/dify-manager.sh"
+
+    if [ -f "${DIFY_MANAGER_PATH}" ]; then
+        cd "${SCRIPT_DIR}/dify_add_con" && ./dify-manager.sh start
+
+        echo ""
+        echo -e "${GREEN}✅ Dify 컨테이너 시작 완료!${NC}"
+        echo ""
+        echo "=================================="
+        echo "🌐 전체 서비스 접속 정보:"
+        echo "   - Open WebUI: http://${HOST_IP}:3000"
+        echo "   - Dify:       http://${HOST_IP}:9008"
+        echo "   - Pipelines:  http://${HOST_IP}:9099"
+        echo "   - Guardrails: http://${HOST_IP}:13010"
+        echo "   - Monitoring: http://${HOST_IP}:3001"
+        echo "=================================="
+    else
+        echo -e "${RED}❌ dify-manager.sh를 찾을 수 없습니다: ${DIFY_MANAGER_PATH}${NC}"
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}ℹ️  Dify 컨테이너 시작을 건너뜁니다.${NC}"
+    echo "   나중에 시작하려면: cd dify_add_con && ./dify-manager.sh start"
+    echo ""
+    echo "로그 확인: podman logs -f ${OPENWEBUI_CONTAINER}"
+fi
 echo ""
