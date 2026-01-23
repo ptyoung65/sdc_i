@@ -868,6 +868,8 @@ start_api() {
         -e CONSOLE_API_URL="http://${WEB_ACCESS_IP}:5001" \
         -e SERVICE_API_URL="http://${WEB_ACCESS_IP}:5001" \
         -e APP_WEB_URL="http://${WEB_ACCESS_IP}:${WEB_PORT}" \
+        -e CONSOLE_CORS_ALLOW_ORIGINS="http://${WEB_ACCESS_IP}:${WEB_PORT},http://${LOCAL_HOST_IP}:${WEB_PORT},http://localhost:${WEB_PORT},*" \
+        -e WEB_API_CORS_ALLOW_ORIGINS="http://${WEB_ACCESS_IP}:${WEB_PORT},http://${LOCAL_HOST_IP}:${WEB_PORT},http://localhost:${WEB_PORT},*" \
         -e DB_USERNAME="${DB_USERNAME}" \
         -e DB_PASSWORD="${DB_PASSWORD}" \
         -e DB_HOST="${DB_HOST}" \
