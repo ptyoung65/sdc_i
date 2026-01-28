@@ -26,7 +26,9 @@
 		models,
 		selectedFolder,
 		WEBUI_NAME,
-		modelType
+		modelType,
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 store 추가 -----
+		clearMessageInput
 	} from '$lib/stores';
 	import { onMount, getContext, tick, onDestroy } from 'svelte';
 
@@ -471,14 +473,28 @@
 	});
 
 	const newChatHandler = async () => {
-		// 완전한 페이지 리프레시로 모든 상태 초기화 (채팅 히스토리는 localStorage에 유지됨)
-		console.log('🔄 [Gen SDC 로고] 페이지 리프레시 - 모든 상태 초기화');
-		window.location.href = '/';
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 호출 -----
+		// 홈화면(Gen SDC 로고) 이동 시 메시지 입력창 내용 초기화
+		// 주의: goto()를 사용해야 store 값이 유지되어 트리거가 작동함
+		//       window.location.href는 페이지 새로고침으로 store가 초기화됨
+		clearMessageInput.update(n => n + 1);
+		console.log('🧹 [Sidebar] 메시지 입력창 초기화 트리거 (newChatHandler)');
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 호출 종료 -----
+
+		// SPA 라우팅으로 홈으로 이동 (store 값 유지)
+		console.log('🔄 [Gen SDC 로고] 홈으로 이동 - SPA 라우팅');
+		goto('/');
 	};
 
 	// 새로운 채팅 세션 생성 (빈 채팅 삭제 후 홈으로 이동)
 	const createNewChatSession = async () => {
 		try {
+			// ----- [2026.01.28] 메시지 입력창 초기화 트리거 호출 -----
+			// 새 채팅 세션 아이콘 클릭 시 메시지 입력창 내용 초기화
+			clearMessageInput.update(n => n + 1);
+			console.log('🧹 [Sidebar] 메시지 입력창 초기화 트리거 (createNewChatSession)');
+			// ----- [2026.01.28] 메시지 입력창 초기화 트리거 호출 종료 -----
+
 			// 🗑️ 현재 채팅이 비어있으면 삭제 (Ultra-Think 분석 기반)
 			if ($chatId && !$temporaryChatEnabled) {
 				try {
@@ -537,6 +553,12 @@
 	};
 
 	const itemClickHandler = async () => {
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 호출 -----
+		// 채팅 히스토리 항목 클릭 시 메시지 입력창 내용 초기화
+		clearMessageInput.update(n => n + 1);
+		console.log('🧹 [Sidebar] 메시지 입력창 초기화 트리거 (itemClickHandler)');
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 호출 종료 -----
+
 		selectedChatId = null;
 		chatId.set('');
 
@@ -709,27 +731,6 @@
 					</Tooltip>
 				</div>
 
-				<!-- 전체 채팅 삭제 버튼 -->
-				<div class="">
-					<Tooltip content="전체 삭제" placement="right">
-						<button
-							class=" cursor-pointer flex rounded-xl hover:bg-red-100 dark:hover:bg-red-900/30 transition group text-red-600 dark:text-red-400"
-							on:click={async (e) => {
-								e.stopImmediatePropagation();
-								e.preventDefault();
-
-								await deleteAllChatsHandler();
-							}}
-							draggable="false"
-							aria-label="전체 채팅 삭제"
-						>
-							<div class=" self-center flex items-center justify-center size-9">
-								<XMark className="size-4.5" />
-							</div>
-						</button>
-					</Tooltip>
-				</div>
-
 				<div class="">
 					<Tooltip content={$i18n.t('Search')} placement="right">
 						<button
@@ -745,6 +746,27 @@
 						>
 							<div class=" self-center flex items-center justify-center size-9">
 								<Search className="size-4.5" />
+							</div>
+						</button>
+					</Tooltip>
+				</div>
+
+				<!-- ⚠️ 전체 채팅 삭제 버튼 - 항상 액션 버튼 중 맨 마지막에 위치 (2026-01-15) -->
+				<div class="">
+					<Tooltip content="전체 삭제" placement="right">
+						<button
+							class=" cursor-pointer flex rounded-xl hover:bg-red-100 dark:hover:bg-red-900/30 transition group text-red-600 dark:text-red-400"
+							on:click={async (e) => {
+								e.stopImmediatePropagation();
+								e.preventDefault();
+
+								await deleteAllChatsHandler();
+							}}
+							draggable="false"
+							aria-label="전체 채팅 삭제"
+						>
+							<div class=" self-center flex items-center justify-center size-9">
+								<XMark className="size-4.5" />
 							</div>
 						</button>
 					</Tooltip>
@@ -838,6 +860,12 @@
 			</div>
 		</button>
 
+		<!-- ============================================ -->
+		<!-- [2026.01.28] 사용자 정보 아이콘 주석처리 시작 -->
+		<!-- 역할: 사이드바 닫혔을 때 하단에 표시되는 사용자 프로필 아이콘 -->
+		<!-- 요청: 사용자 정보 표시 부분 화면에서 숨김 처리 -->
+		<!-- ============================================ -->
+		<!--
 		<div>
 			<div>
 				<div class=" py-0.5">
@@ -867,6 +895,8 @@
 				</div>
 			</div>
 		</div>
+		-->
+		<!-- [2026.01.28] 사용자 정보 아이콘 주석처리 종료 -->
 	</div>
 {/if}
 
@@ -946,7 +976,27 @@
 					</button>
 				</Tooltip>
 
-				<!-- 전체 삭제 버튼 -->
+				<!-- 폴더 추가 버튼 - 주석처리 (2026-01-15) 새폴더 기능 비활성화 -->
+				<!--
+				<Tooltip content="새 폴더" placement="bottom">
+					<button
+						class="flex rounded-xl size-8.5 justify-center items-center hover:bg-gray-100/50 dark:hover:bg-gray-850/50 transition"
+						on:click={(e) => {
+							e.stopImmediatePropagation();
+							e.preventDefault();
+							showCreateFolderModal = true;
+						}}
+						aria-label="새 폴더"
+					>
+						<div class="self-center p-1.5">
+							<FolderIcon className="size-4.5" />
+						</div>
+					</button>
+				</Tooltip>
+				-->
+
+				<!-- [2026.01.19] 전체 삭제 버튼 - 항상 맨 오른쪽 끝에 위치 -->
+				<!-- 다른 버튼이 추가되어도 이 버튼은 항상 마지막에 위치해야 함 -->
 				<Tooltip content="전체 삭제" placement="bottom">
 					<button
 						class="flex rounded-xl size-8.5 justify-center items-center hover:bg-red-100/50 dark:hover:bg-red-900/30 transition text-red-600 dark:text-red-400"
@@ -963,23 +1013,6 @@
 					</button>
 				</Tooltip>
 
-				<!-- 폴더 추가 버튼 -->
-				<Tooltip content="새 폴더" placement="bottom">
-					<button
-						class="flex rounded-xl size-8.5 justify-center items-center hover:bg-gray-100/50 dark:hover:bg-gray-850/50 transition"
-						on:click={(e) => {
-							e.stopImmediatePropagation();
-							e.preventDefault();
-							showCreateFolderModal = true;
-						}}
-						aria-label="새 폴더"
-					>
-						<div class="self-center p-1.5">
-							<FolderIcon className="size-4.5" />
-						</div>
-					</button>
-				</Tooltip>
-
 				<div
 					class="{scrollTop > 0
 						? 'visible'
@@ -988,8 +1021,9 @@
 			</div>
 
 			<!-- 채팅 히스토리 및 폴더 컨텐츠 영역 -->
+			<!-- [2026.01.19] pb-16 추가: 하단 사용자 메뉴와 겹치지 않도록 패딩 추가 -->
 			<div
-				class="flex-1 flex flex-col overflow-y-auto scrollbar-hidden"
+				class="flex-1 flex flex-col overflow-y-auto scrollbar-hidden pb-16"
 				on:scroll={(e) => {
 					if (e.target.scrollTop === 0) {
 						scrollTop = 0;
@@ -1097,6 +1131,12 @@
 				{/if}
 			</div>
 
+			<!-- ============================================ -->
+			<!-- [2026.01.28] 사용자 정보 전체 표시 주석처리 시작 -->
+			<!-- 역할: 사이드바 열렸을 때 하단에 표시되는 사용자 프로필 및 이름 -->
+			<!-- 요청: 사용자 정보 표시 부분 화면에서 숨김 처리 -->
+			<!-- ============================================ -->
+			<!--
 			<div class="px-1.5 pt-1.5 pb-2 sticky bottom-0 z-10 -mt-3 sidebar">
 				<div
 					class=" sidebar-bg-gradient-to-t bg-linear-to-t from-white/90 via-gray-50/70 dark:from-gray-900/90 dark:via-gray-950/70 to-transparent from-40% pointer-events-none absolute inset-0 -z-10 -mt-6 backdrop-blur-sm"
@@ -1128,6 +1168,8 @@
 					{/if}
 				</div>
 			</div>
+			-->
+			<!-- [2026.01.28] 사용자 정보 전체 표시 주석처리 종료 -->
 		</div>
 	</div>
 {/if}

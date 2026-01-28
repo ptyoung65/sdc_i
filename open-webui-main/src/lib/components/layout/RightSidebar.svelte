@@ -19,6 +19,13 @@
 			color: 'bg-green-500',
 			description: '회사생활가이드, IT Help Desk, 용어사전 등',
 			actualIds: ['guide', 'helpdesk', 'dictionary', 'etc']
+		},
+		{
+			id: 'tavily',
+			name: '외부검색',
+			color: 'bg-purple-500',
+			description: 'Tavily 웹 검색을 통한 실시간 정보 검색',
+			actualIds: ['tavily']
 		}
 	];
 
@@ -37,13 +44,19 @@
 			displayCats.push(DISPLAY_CATEGORIES[1]); // 대사우 Assistant
 		}
 
+		// 외부검색 (Tavily) 체크
+		if (categoryIds.includes('tavily')) {
+			displayCats.push(DISPLAY_CATEGORIES[2]); // 외부검색
+		}
+
 		return displayCats;
 	}
 </script>
 
 <script lang="ts">
 	import { slide, fade } from 'svelte/transition';
-	import { showRightSidebar, modelType } from '$lib/stores';
+	// ----- [2026.01.28] 메시지 입력창 초기화 트리거 store 추가 -----
+	import { showRightSidebar, modelType, clearMessageInput } from '$lib/stores';
 
 	// 실제 카테고리 목록 (백엔드에서 사용)
 	const actualCategories = [
@@ -68,6 +81,12 @@
 		const allSelected = actualIds.every(id => $selectedCategories.includes(id));
 
 		console.log('🔵 카테고리 클릭:', displayCategory.name, '현재 선택:', allSelected);
+
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 호출 -----
+		// 오른쪽 사이드바에서 카테고리 항목 클릭 시 메시지 입력창 내용 초기화
+		clearMessageInput.update(n => n + 1);
+		console.log('🧹 [RightSidebar] 메시지 입력창 초기화 트리거 (toggleCategory)');
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 호출 종료 -----
 
 		if (allSelected) {
 			// 이미 선택된 카테고리 → 선택 해제

@@ -1,17 +1,17 @@
 <script lang="ts">
-	import { v4 as uuidv4 } from 'uuid';
-	import { toast } from 'svelte-sonner';
-	import { PaneGroup, Pane, PaneResizer } from 'paneforge';
+	import { v4 as uuidv4 } from "uuid";
+	import { toast } from "svelte-sonner";
+	import { PaneGroup, Pane, PaneResizer } from "paneforge";
 
-	import { getContext, onDestroy, onMount, tick } from 'svelte';
-	const i18n: Writable<i18nType> = getContext('i18n');
+	import { getContext, onDestroy, onMount, tick } from "svelte";
+	const i18n: Writable<i18nType> = getContext("i18n");
 
-	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { goto } from "$app/navigation";
+	import { page } from "$app/stores";
 
-	import { get, type Unsubscriber, type Writable } from 'svelte/store';
-	import type { i18n as i18nType } from 'i18next';
-	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { get, type Unsubscriber, type Writable } from "svelte/store";
+	import type { i18n as i18nType } from "i18next";
+	import { WEBUI_BASE_URL } from "$lib/constants";
 
 	import {
 		chatId,
@@ -40,8 +40,10 @@
 		selectedFolder,
 		pinnedChats,
 		showEmbeds,
-		modelType
-	} from '$lib/stores';
+		modelType,
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 store 추가 -----
+		clearMessageInput,
+	} from "$lib/stores";
 	import {
 		convertMessagesToHistory,
 		copyToClipboard,
@@ -49,8 +51,8 @@
 		createMessagesList,
 		getPromptVariables,
 		processDetails,
-		removeAllDetails
-	} from '$lib/utils';
+		removeAllDetails,
+	} from "$lib/utils";
 
 	import {
 		createNewChat,
@@ -60,11 +62,15 @@
 		getPinnedChatList,
 		getTagsById,
 		updateChatById,
-		updateChatFolderIdById
-	} from '$lib/apis/chats';
-	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
-	import { processWeb, processWebSearch, processYoutubeVideo } from '$lib/apis/retrieval';
-	import { getAndUpdateUserLocation, getUserSettings } from '$lib/apis/users';
+		updateChatFolderIdById,
+	} from "$lib/apis/chats";
+	import { generateOpenAIChatCompletion } from "$lib/apis/openai";
+	import {
+		processWeb,
+		processWebSearch,
+		processYoutubeVideo,
+	} from "$lib/apis/retrieval";
+	import { getAndUpdateUserLocation, getUserSettings } from "$lib/apis/users";
 	import {
 		chatCompleted,
 		generateQueries,
@@ -72,37 +78,45 @@
 		generateMoACompletion,
 		stopTask,
 		getTaskIdsByChatId,
-		getModels
-	} from '$lib/apis';
-	import { getTools } from '$lib/apis/tools';
-	import { uploadFile } from '$lib/apis/files';
-	import { addFileToKnowledgeById } from '$lib/apis/knowledge';
-	import { createOpenAITextStream } from '$lib/apis/streaming';
-	import { vectorizeDocument, searchSimilarDocuments, batchVectorizeDocuments } from '$lib/apis/vectorization';
+		getModels,
+	} from "$lib/apis";
+	import { getTools } from "$lib/apis/tools";
+	import { uploadFile } from "$lib/apis/files";
+	import { addFileToKnowledgeById } from "$lib/apis/knowledge";
+	import { createOpenAITextStream } from "$lib/apis/streaming";
+	import {
+		vectorizeDocument,
+		searchSimilarDocuments,
+		batchVectorizeDocuments,
+	} from "$lib/apis/vectorization";
 
-	import { fade } from 'svelte/transition';
+	import { fade } from "svelte/transition";
 
-	import Banner from '../common/Banner.svelte';
-	import MessageInput from '$lib/components/chat/MessageInput.svelte';
-	import Messages from '$lib/components/chat/Messages.svelte';
-	import Navbar from '$lib/components/chat/Navbar.svelte';
-	import EventConfirmDialog from '../common/ConfirmDialog.svelte';
-	import Placeholder from './Placeholder.svelte';
-	import NotificationToast from '../NotificationToast.svelte';
-	import Spinner from '../common/Spinner.svelte';
-	import Tooltip from '../common/Tooltip.svelte';
-	import Sidebar from '../icons/Sidebar.svelte';
-	import EdmIntegration from './EdmIntegration.svelte';
-	import EdmFileListModal from './EdmFileListModal.svelte';
-	import EdmDocumentArea from './EdmDocumentArea.svelte';
-	import RightSidebar, { selectedCategories, getDisplayCategoriesFromIds, DISPLAY_CATEGORIES } from '../layout/RightSidebar.svelte';
-	import { getFunctions } from '$lib/apis/functions';
-	import Image from '../common/Image.svelte';
-	import { updateFolderById } from '$lib/apis/folders';
-	import { getEdmFileList } from '$lib/apis/edm';
-	import { convertN8nDocsToEdmFormat } from '$lib/apis/n8n';
+	import Banner from "../common/Banner.svelte";
+	import MessageInput from "$lib/components/chat/MessageInput.svelte";
+	import Messages from "$lib/components/chat/Messages.svelte";
+	import Navbar from "$lib/components/chat/Navbar.svelte";
+	import EventConfirmDialog from "../common/ConfirmDialog.svelte";
+	import Placeholder from "./Placeholder.svelte";
+	import NotificationToast from "../NotificationToast.svelte";
+	import Spinner from "../common/Spinner.svelte";
+	import Tooltip from "../common/Tooltip.svelte";
+	import Sidebar from "../icons/Sidebar.svelte";
+	import EdmIntegration from "./EdmIntegration.svelte";
+	import EdmFileListModal from "./EdmFileListModal.svelte";
+	import EdmDocumentArea from "./EdmDocumentArea.svelte";
+	import RightSidebar, {
+		selectedCategories,
+		getDisplayCategoriesFromIds,
+		DISPLAY_CATEGORIES,
+	} from "../layout/RightSidebar.svelte";
+	import { getFunctions } from "$lib/apis/functions";
+	import Image from "../common/Image.svelte";
+	import { updateFolderById } from "$lib/apis/folders";
+	import { getEdmFileList } from "$lib/apis/edm";
+	import { convertN8nDocsToEdmFormat } from "$lib/apis/n8n";
 
-	export let chatIdProp = '';
+	export let chatIdProp = "";
 
 	let loading = true;
 
@@ -111,42 +125,256 @@
 	let messageInput;
 
 	let autoScroll = true;
-	let processing = '';
+	let processing = "";
 	let messagesContainerElement: HTMLDivElement;
 
-	// 🔄 멀티턴 관리 (해제됨)
-	// const MAX_TURNS = 10; // 최대 턴 수 (사용자 메시지 + AI 응답 = 1턴)
-	// let showMultiTurnModal = false; // 멀티턴 초과 팝업 표시 여부
+	// ============================================
+	// [2024.12.30] 턴 및 토큰수 제약처리 - 변수 선언 시작
+	// 역할: 모델별 Max Turns, Max Tokens, Max Input Tokens 제약 관리
+	// 설정 위치: /admin/settings/models
+	// ============================================
+	// 🔄 모델별 세션 제한 관리
+	let modelSessionLimits = {}; // 모델별 maxTurns, maxTokens, maxInputTokens 설정
+	// ----- 1227 세션 제한 경고 팝업 -> 토스트로 변경 (변수 제거) -----
+	// let showSessionWarningModal = false; // 세션 제한 경고 팝업 (토스트로 대체)
+	// let sessionWarningMessage = ''; // 경고 메시지 (토스트로 대체)
+	let showSessionResetModal = false; // 세션 초기화 팝업
+	let sessionResetMessage = ''; // 초기화 메시지
+
+	// ============================================
+	// [2026-01-22] 세션 요약 기능 - 변수 선언 시작
+	// ============================================
+	// 기능 설명:
+	//   토큰/턴 제한으로 세션이 초기화될 때, 현재 대화 내용을
+	//   AI 모델을 사용하여 약 4000 토큰 분량으로 요약하는 기능
+	//
+	// 사용 시나리오:
+	//   1. 사용자가 토큰/턴 제한에 도달
+	//   2. 세션 초기화 팝업 표시
+	//   3. "세션 요약 생성" 버튼 클릭
+	//   4. AI가 대화 내용 분석 및 요약 생성
+	//   5. 요약 결과를 클립보드에 복사
+	//   6. 새 세션에서 요약 내용 붙여넣기하여 대화 이어가기
+	//
+	// 요약 내용 포함 항목:
+	//   - 대화의 주요 주제 및 목적
+	//   - 핵심 질문과 답변 내용
+	//   - 중요한 결정사항 또는 결론
+	//   - 작성된 코드나 설정의 핵심 내용
+	//   - 추후 참고할 만한 중요 정보
+	// ============================================
+	let isGeneratingSummary = false;  // 요약 생성 중 상태 (로딩 스피너 표시용)
+	let sessionSummary = '';          // 생성된 요약 내용 (AI 응답 결과)
+	let showSummaryResult = false;    // 요약 결과 표시 여부 (버튼/결과 토글)
+	// ============================================
+	// [2026-01-22] 세션 요약 기능 - 변수 선언 종료
+	// ============================================
+
+	// ----- 1225 maxInputTokens 체크 함수 추가 시작 -----
+	// 입력 텍스트의 대략적인 토큰 수 계산 (영어: 4자=1토큰, 한국어: 2자=1토큰)
+	const estimateTokenCount = (text: string): number => {
+		if (!text) return 0;
+		// 한국어 문자 수 계산
+		const koreanChars = (text.match(/[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/g) || []).length;
+		// 비한국어 문자 수
+		const otherChars = text.length - koreanChars;
+		// 한국어: 약 2자당 1토큰, 영어: 약 4자당 1토큰
+		return Math.ceil(koreanChars / 2) + Math.ceil(otherChars / 4);
+	};
+	// ----- 1225 maxInputTokens 체크 함수 추가 종료 -----
+
+	// ============================================
+	// [2026-01-22] 세션 요약 생성 함수 시작
+	// ============================================
+	/**
+	 * generateSessionSummary()
+	 *
+	 * 현재 세션의 대화 내용을 기본 모델을 사용하여 요약합니다.
+	 * 약 4000 토큰 분량의 구조화된 요약을 생성합니다.
+	 *
+	 * @description
+	 *   이 함수는 세션 초기화 팝업에서 "세션 요약 생성" 버튼 클릭 시 호출됩니다.
+	 *   대화 기록(history.messages)에서 모든 메시지를 추출하고,
+	 *   기본 모델 API를 호출하여 요약을 생성합니다.
+	 *
+	 * @workflow
+	 *   1. 중복 호출 방지 (isGeneratingSummary 체크)
+	 *   2. 상태 초기화 (로딩 상태 설정)
+	 *   3. 대화 메시지 추출 (history.messages에서)
+	 *   4. 대화 내용을 텍스트로 변환 (역할: 내용 형식)
+	 *   5. 요약 프롬프트 생성 (구조화된 요약 요청)
+	 *   6. 기본 모델 선택 ($settings.models[0] 또는 첫 번째 모델)
+	 *   7. OpenAI API 호출 (스트리밍 없이, max_tokens: 4096)
+	 *   8. 응답 처리 및 결과 표시
+	 *
+	 * @error-handling
+	 *   - 대화 내용 없음: "요약할 대화 내용이 없습니다." 표시
+	 *   - 모델 없음: "사용 가능한 모델이 없습니다." 표시
+	 *   - API 오류: 오류 메시지 표시
+	 *   - 예외 발생: 예외 메시지 표시
+	 *
+	 * @returns {Promise<void>}
+	 */
+	const generateSessionSummary = async () => {
+		// [Step 1] 중복 호출 방지 - 이미 요약 생성 중이면 무시
+		if (isGeneratingSummary) return;
+
+		// [Step 2] 상태 초기화 - 로딩 상태 설정 및 이전 결과 초기화
+		isGeneratingSummary = true;   // 로딩 스피너 표시
+		sessionSummary = '';          // 이전 요약 내용 초기화
+		showSummaryResult = false;    // 결과 영역 숨김
+
+		try {
+			// [Step 3] 대화 메시지 추출
+			// history.messages는 메시지 ID를 키로 하는 객체 형태
+			// Object.values()로 메시지 배열로 변환
+			const conversationMessages = history.messages || {};
+			const messageList = Object.values(conversationMessages);
+
+			// [Step 3-1] 빈 대화 체크
+			if (messageList.length === 0) {
+				sessionSummary = '요약할 대화 내용이 없습니다.';
+				showSummaryResult = true;
+				isGeneratingSummary = false;
+				return;
+			}
+
+			// [Step 4] 대화 내용을 텍스트로 변환
+			// 각 메시지를 "[역할]: 내용" 형식으로 변환
+			// 역할: 'user' → '사용자', 그 외 → 'AI'
+			let conversationText = '';
+			messageList.forEach((msg: any, idx: number) => {
+				const role = msg.role === 'user' ? '사용자' : 'AI';
+				// content가 문자열이면 그대로 사용, 배열이면 첫 번째 텍스트 추출
+				const content = typeof msg.content === 'string'
+					? msg.content
+					: (msg.content?.[0]?.text || JSON.stringify(msg.content));
+				conversationText += `[${role}]: ${content}\n\n`;
+			});
+
+			// [Step 5] 요약 요청 프롬프트 생성
+			// AI에게 구조화된 요약을 요청하는 프롬프트
+			// 약 4000 토큰 분량의 요약 생성 지시
+			const summaryPrompt = `다음은 AI 채팅 세션의 대화 내용입니다. 이 대화를 약 4000 토큰 분량으로 요약해주세요.
+
+요약 시 다음 내용을 포함해주세요:
+1. 대화의 주요 주제 및 목적
+2. 핵심 질문과 답변 내용
+3. 중요한 결정사항 또는 결론
+4. 작성된 코드나 설정의 핵심 내용 (있는 경우)
+5. 추후 참고할 만한 중요 정보
+
+대화 내용:
+---
+${conversationText}
+---
+
+위 내용을 바탕으로 다음 세션에서 활용할 수 있도록 구조화된 요약을 작성해주세요.`;
+
+			// [Step 6] 기본 모델 선택
+			// 우선순위: 사용자 설정 기본 모델 → 첫 번째 사용 가능한 모델
+			const defaultModel = $models.find((m: Model) => m.id === $settings?.models?.[0]) || $models[0];
+
+			if (!defaultModel) {
+				sessionSummary = '사용 가능한 모델이 없습니다.';
+				showSummaryResult = true;
+				isGeneratingSummary = false;
+				return;
+			}
+
+			console.log('🔄 [세션 요약] 요약 생성 시작, 모델:', defaultModel.id);
+
+			// [Step 7] OpenAI API 호출
+			// - stream: false - 스트리밍 없이 전체 응답을 한 번에 받음
+			// - max_tokens: 4096 - 약 4000 토큰 분량의 요약 생성
+			// - generateOpenAIChatCompletion: $lib/apis/openai에서 import
+			const res = await generateOpenAIChatCompletion(
+				localStorage.token,  // 사용자 인증 토큰
+				{
+					stream: false,           // 스트리밍 비활성화 (전체 응답 대기)
+					model: defaultModel.id,  // 선택된 기본 모델 ID
+					messages: [
+						{
+							role: 'user',
+							content: summaryPrompt  // 요약 요청 프롬프트
+						}
+					],
+					params: {
+						max_tokens: 4096  // 최대 출력 토큰 수 (약 4000 토큰 요약)
+					}
+				}
+			);
+
+			// [Step 8] 응답 처리
+			// OpenAI API 응답 형식: { choices: [{ message: { content: "..." } }] }
+			if (res && res.choices && res.choices[0] && res.choices[0].message) {
+				// 성공: 요약 내용 저장
+				sessionSummary = res.choices[0].message.content;
+				console.log('✅ [세션 요약] 요약 생성 완료');
+			} else if (res && res.error) {
+				// API 오류 응답
+				sessionSummary = `요약 생성 실패: ${res.error.message || '알 수 없는 오류'}`;
+				console.error('❌ [세션 요약] 오류:', res.error);
+			} else {
+				// 예상치 못한 응답 형식
+				sessionSummary = '요약 생성에 실패했습니다. 응답 형식이 올바르지 않습니다.';
+				console.error('❌ [세션 요약] 예상치 못한 응답:', res);
+			}
+
+			// 결과 표시 영역 활성화
+			showSummaryResult = true;
+		} catch (error) {
+			// [에러 처리] 예외 발생 시 에러 메시지 표시
+			console.error('❌ [세션 요약] 예외 발생:', error);
+			sessionSummary = `요약 생성 중 오류가 발생했습니다: ${error.message || error}`;
+			showSummaryResult = true;
+		} finally {
+			// [정리] 로딩 상태 해제 (성공/실패 무관하게 항상 실행)
+			isGeneratingSummary = false;
+		}
+	};
+	// ============================================
+	// [2026-01-22] 세션 요약 생성 함수 종료
+	// ============================================
+
+	// [2024.12.30] 턴 및 토큰수 제약처리 - 변수 선언 완료 ============================================
 
 	let navbarElement;
 
 	let showEventConfirmation = false;
-	let eventConfirmationTitle = '';
-	let eventConfirmationMessage = '';
+	let eventConfirmationTitle = "";
+	let eventConfirmationMessage = "";
 	let eventConfirmationInput = false;
-	let eventConfirmationInputPlaceholder = '';
-	let eventConfirmationInputValue = '';
+	let eventConfirmationInputPlaceholder = "";
+	let eventConfirmationInputValue = "";
 	let eventCallback = null;
 
 	let chatIdUnsubscriber: Unsubscriber | undefined;
 
-	let selectedModels = [''];
+	let selectedModels = [""];
 	let atSelectedModel: Model | undefined;
 	let selectedModelIds = [];
-	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
+	$: selectedModelIds =
+		atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
 
 	// 카테고리 선택 시 자동 모델 선택 및 ModelSelector disabled 상태
 	let isModelSelectorDisabled = false;
 
 	// 선택된 카테고리 ID를 표시용 카테고리로 변환
-	$: displayCategoriesForUI = getDisplayCategoriesFromIds($selectedCategories);
+	$: displayCategoriesForUI =
+		getDisplayCategoriesFromIds($selectedCategories);
 
 	// selectedCategories 변경 시 자동으로 모델 선택
 	$: {
-		if ($selectedCategories && $selectedCategories.length > 0 && $models && $models.length > 0) {
-			const hasEdm = $selectedCategories.includes('edm');
-			const hasDaesawoo = $selectedCategories.some(cat =>
-				['guide', 'helpdesk', 'dictionary', 'etc'].includes(cat)
+		if (
+			$selectedCategories &&
+			$selectedCategories.length > 0 &&
+			$models &&
+			$models.length > 0
+		) {
+			const hasEdm = $selectedCategories.includes("edm");
+			const hasDaesawoo = $selectedCategories.some((cat) =>
+				["guide", "helpdesk", "dictionary", "etc"].includes(cat),
 			);
 
 			if (hasEdm) {
@@ -154,14 +382,18 @@
 				const availableModels = $models || [];
 
 				// 1순위: edm_search_pipe 모델 찾기 (필수!)
-				let edmModel = availableModels.find(m =>
-					m.id === 'edm_search_pipe' || m.id?.includes('edm_search')
+				let edmModel = availableModels.find(
+					(m) =>
+						m.id === "edm_search_pipe" ||
+						m.id?.includes("edm_search"),
 				);
 
 				// 2순위: edm_search_pipe가 없으면 에러 (다른 모델 사용 금지)
 				if (!edmModel && availableModels.length > 0) {
-					console.error('❌ edm_search_pipe 모델을 찾을 수 없습니다!');
-					toast.error('❌ EDM Search Pipeline을 활성화해주세요.');
+					console.error(
+						"❌ edm_search_pipe 모델을 찾을 수 없습니다!",
+					);
+					toast.error("❌ EDM Search Pipeline을 활성화해주세요.");
 					edmModel = null;
 				}
 
@@ -170,35 +402,74 @@
 					if (selectedModels[0] !== edmModel.id) {
 						selectedModels = [edmModel.id];
 					}
-					isModelSelectorDisabled = $user?.role === 'user';
+					isModelSelectorDisabled = $user?.role === "user";
 
-					console.log('✅ [EDM Filter] EDM 문서활용 활성화 - 모델 고정 및 비활성화', {
-						timestamp: new Date().toISOString(),
-						selectedCategories: $selectedCategories,
-						fixedModel: edmModel.id,
-						modelName: edmModel.name,
-						isDisabled: true,
-						filterType: 'edm_search_pipe (Filter - auto-execute)'
-					});
+					console.log(
+						"✅ [EDM Filter] EDM 문서활용 활성화 - 모델 고정 및 비활성화",
+						{
+							timestamp: new Date().toISOString(),
+							selectedCategories: $selectedCategories,
+							fixedModel: edmModel.id,
+							modelName: edmModel.name,
+							isDisabled: true,
+							filterType:
+								"edm_search_pipe (Filter - auto-execute)",
+						},
+					);
 				} else {
 					// 모델이 없으면 경고
-					toast.error('❌ 사용 가능한 모델이 없습니다.');
+					toast.error("❌ 사용 가능한 모델이 없습니다.");
 					isModelSelectorDisabled = false;
 				}
 			} else if (hasDaesawoo) {
 				// 대사우 Assistant 선택 → daesawoo 파이프라인 자동 선택
-				const daesawooModel = $models.find(m =>
-					m.id?.includes('daesawoo') || m.name?.includes('daesawoo')
+				const daesawooModel = $models.find(
+					(m) =>
+						m.id?.includes("daesawoo") ||
+						m.name?.includes("daesawoo"),
 				);
 
 				if (!daesawooModel) {
-					toast.error('❌ daesawoo 파이프라인을 찾을 수 없습니다. 파이프라인을 등록해주세요.');
-					console.error('❌ daesawoo 파이프라인이 등록되지 않았습니다.');
+					toast.error(
+						"❌ daesawoo 파이프라인을 찾을 수 없습니다. 파이프라인을 등록해주세요.",
+					);
+					console.error(
+						"❌ daesawoo 파이프라인이 등록되지 않았습니다.",
+					);
 					isModelSelectorDisabled = false;
 				} else if (selectedModels[0] !== daesawooModel.id) {
 					selectedModels = [daesawooModel.id];
-					isModelSelectorDisabled = $user?.role === 'user';
-					console.log('✅ 대사우 Assistant → daesawoo 파이프라인 자동 선택:', daesawooModel.name);
+					isModelSelectorDisabled = $user?.role === "user";
+					console.log(
+						"✅ 대사우 Assistant → daesawoo 파이프라인 자동 선택:",
+						daesawooModel.name,
+					);
+				}
+			} else if ($selectedCategories.includes("tavily")) {
+				// 외부검색 (Tavily) 선택 → tavily V1 파이프라인 자동 선택
+				const tavilyModel = $models.find(
+					(m) =>
+						m.id === "tavily_dify_search_pipe.tavily-external-search" ||
+						m.id?.toLowerCase().includes("tavily"),
+				);
+				console.log("🔍 [Tavily] 선택된 모델:", tavilyModel?.id);
+
+				if (!tavilyModel) {
+					console.error("🔍 [Tavily] 전체 모델 목록:", $models.map(m => ({ id: m.id, name: m.name })));
+					toast.error(
+						"❌ Tavily 검색 파이프라인을 찾을 수 없습니다. 파이프라인을 등록해주세요.",
+					);
+					console.error(
+						"❌ tavily_search_pipe 파이프라인이 등록되지 않았습니다.",
+					);
+					isModelSelectorDisabled = false;
+				} else if (selectedModels[0] !== tavilyModel.id) {
+					selectedModels = [tavilyModel.id];
+					isModelSelectorDisabled = $user?.role === "user";
+					console.log(
+						"✅ 외부검색 → tavily_search_pipe 파이프라인 자동 선택:",
+						tavilyModel.name,
+					);
 				}
 			} else {
 				isModelSelectorDisabled = false;
@@ -208,11 +479,14 @@
 			isModelSelectorDisabled = false;
 
 			// 기본 모델로 자동 전환 (대사우 Assistant - internal만 사용)
-			if ($modelType === 'internal') {
+			if ($modelType === "internal") {
 				const defaultModelId = getDefaultInternalModelId();
 				if (selectedModels[0] !== defaultModelId) {
 					selectedModels = [defaultModelId];
-					console.log('✅ [카테고리 해제] 내부 기본 모델로 복원:', defaultModelId);
+					console.log(
+						"✅ [카테고리 해제] 내부 기본 모델로 복원:",
+						defaultModelId,
+					);
 				}
 			}
 			// External 모델 사용 안함 - 주석 처리
@@ -240,6 +514,31 @@
 	let chat = null;
 	let tags = [];
 
+	// Dify Workflow 진행 상태 (RAG 질의용)
+	let difyProgressStages = [
+		{ id: "input", name: "입력 처리", icon: "📝", status: "pending" },
+		{ id: "search", name: "하이브리드 검색", icon: "🔍", status: "pending" },
+		{ id: "chunk", name: "청크 생성", icon: "📄", status: "pending" },
+		{ id: "rerank", name: "리랭킹", icon: "📊", status: "pending" },
+		{ id: "llm", name: "LLM 처리", icon: "🤖", status: "pending" },
+		{ id: "output", name: "응답 생성", icon: "✅", status: "pending" },
+	];
+	let showDifyProgress = false;
+	let difyCurrentStage = "";
+
+	// Dify 문서 처리 진행 상태 (파일 첨부용)
+	let difyDocProgressStages = [
+		{ id: "upload", name: "파일 업로드", icon: "📤", status: "pending" },
+		{ id: "parsing", name: "문서 파싱", icon: "📄", status: "pending" },
+		{ id: "chunking", name: "청킹", icon: "✂️", status: "pending" },
+		{ id: "embedding", name: "임베딩", icon: "🧮", status: "pending" },
+		{ id: "vectorizing", name: "벡터 저장", icon: "💾", status: "pending" },
+		{ id: "complete", name: "처리 완료", icon: "✅", status: "pending" },
+	];
+	let showDifyDocProgress = false;
+	let difyDocCurrentStage = "";
+	let difyDocStageTimes: Record<string, number> = {};
+
 	// Model type selection: 'internal' or 'external' (now using store)
 	let showSecurityWarning = false;
 	let pendingModelType = null;
@@ -250,28 +549,136 @@
 	let externalModels = [];
 
 	// Default models from PostgreSQL config (loaded in onMount)
-	let defaultInternalModel = '';
-	let defaultExternalModel = '';
+	let defaultInternalModel = "";
+	let defaultExternalModel = "";
 	let defaultModelsLoaded = false;
+
+	// Dify 노드 타입을 진행 단계로 매핑
+	const mapDifyNodeToStage = (nodeType: string): string => {
+		const nodeStageMap: Record<string, string> = {
+			start: "input",
+			"knowledge-retrieval": "search",
+			code: "chunk",
+			tool: "rerank",
+			llm: "llm",
+			answer: "output",
+		};
+		return nodeStageMap[nodeType] || "";
+	};
+
+	// Dify 진행 상태 업데이트
+	const updateDifyProgress = (stageId: string, status: "pending" | "running" | "completed" | "error") => {
+		difyProgressStages = difyProgressStages.map((stage) => {
+			if (stage.id === stageId) {
+				return { ...stage, status };
+			}
+			return stage;
+		});
+		if (status === "running") {
+			difyCurrentStage = stageId;
+		}
+	};
+
+	// Dify 진행 상태 초기화
+	const resetDifyProgress = () => {
+		difyProgressStages = difyProgressStages.map((stage) => ({
+			...stage,
+			status: "pending",
+		}));
+		showDifyProgress = false;
+		difyCurrentStage = "";
+	};
+
+	// Dify 진행 상태 포맷팅 (마크다운)
+	const formatDifyProgress = (): string => {
+		let progressText = "\n---\n**처리 상태**\n\n";
+		for (const stage of difyProgressStages) {
+			let icon = "⬜";
+			if (stage.status === "completed") icon = "✅";
+			else if (stage.status === "running") icon = "⏳";
+			else if (stage.status === "error") icon = "❌";
+			progressText += `${icon} ${stage.name}\n`;
+		}
+		progressText += "\n---\n";
+		return progressText;
+	};
+
+	// Dify 문서 처리 진행 상태 업데이트
+	const updateDifyDocProgress = (stageId: string, status: "pending" | "running" | "completed" | "error", elapsedTime?: number) => {
+		difyDocProgressStages = difyDocProgressStages.map((stage) => {
+			if (stage.id === stageId) {
+				return { ...stage, status };
+			}
+			return stage;
+		});
+		if (status === "running") {
+			difyDocCurrentStage = stageId;
+		}
+		if (status === "completed" && elapsedTime !== undefined) {
+			difyDocStageTimes[stageId] = elapsedTime;
+		}
+	};
+
+	// Dify 문서 처리 진행 상태 초기화
+	const resetDifyDocProgress = () => {
+		difyDocProgressStages = difyDocProgressStages.map((stage) => ({
+			...stage,
+			status: "pending",
+		}));
+		showDifyDocProgress = false;
+		difyDocCurrentStage = "";
+		difyDocStageTimes = {};
+	};
+
+	// Dify 문서 처리 노드를 단계로 매핑
+	const mapDifyDocNodeToStage = (nodeType: string, nodeTitle: string = ""): string => {
+		const titleLower = nodeTitle.toLowerCase();
+		if (titleLower.includes("파싱") || titleLower.includes("parsing")) return "parsing";
+		if (titleLower.includes("청킹") || titleLower.includes("chunk")) return "chunking";
+		if (titleLower.includes("임베딩") || titleLower.includes("embedding")) return "embedding";
+		if (titleLower.includes("벡터") || titleLower.includes("vector")) return "vectorizing";
+		if (nodeType === "answer") return "complete";
+		return "";
+	};
+
+	// Dify 문서 처리 파이프 선택 확인
+	const isDifyDocumentPipe = (modelId: string): boolean => {
+		const model = $models.find((m) => m.id === modelId);
+		return (
+			model &&
+			(model.id?.includes("dify_document") ||
+				model.id?.includes("dify-document") ||
+				model.name?.toLowerCase().includes("document processing"))
+		);
+	};
 
 	// 모델 타입 판단 함수 (General.svelte와 동일)
 	const getModelType = (model) => {
-		console.log('[getModelType] Checking model:', model.id, 'info.meta.model_type:', model?.info?.meta?.model_type);
+		console.log(
+			"[getModelType] Checking model:",
+			model.id,
+			"info.meta.model_type:",
+			model?.info?.meta?.model_type,
+		);
 
 		// 1. info.meta.model_type이 있으면 그것을 사용 (API 응답 구조)
 		if (model?.info?.meta?.model_type) {
-			console.log(`[getModelType] ${model.id} → ${model.info.meta.model_type} (from info.meta)`);
+			console.log(
+				`[getModelType] ${model.id} → ${model.info.meta.model_type} (from info.meta)`,
+			);
 			return model.info.meta.model_type;
 		}
 
 		// 2. meta.model_type이 있으면 그것을 사용 (폴백)
 		if (model?.meta?.model_type) {
-			console.log(`[getModelType] ${model.id} → ${model.meta.model_type} (from meta)`);
+			console.log(
+				`[getModelType] ${model.id} → ${model.meta.model_type} (from meta)`,
+			);
 			return model.meta.model_type;
 		}
 
 		// 3. ID 패턴으로 판단
-		const modelId = model?.id || '';
+		const modelId = model?.id || "";
 		console.log(`[getModelType] ${model.id} → pattern matching...`);
 
 		// 내부 모델 패턴: qwen, ollama, 또는 external_llm이 없는 것
@@ -281,9 +688,10 @@
 			/^llama/i,
 			/^mistral/i,
 			/^gemma/i,
-			/_pipe/i,        // 파이프라인 패턴 추가
-			/^edm_/i,        // EDM 파이프라인
-			/^daesawoo/i     // daesawoo 파이프라인
+			/_pipe/i, // 파이프라인 패턴 추가
+			/^edm_/i, // EDM 파이프라인
+			/^daesawoo/i, // daesawoo 파이프라인
+			/^tavily/i, // Tavily 외부검색 파이프라인
 		];
 
 		// 외부 모델 패턴: external_llm, gpt, anthropic 등
@@ -291,21 +699,21 @@
 			/^external_llm/i,
 			/^gpt-/i,
 			/^claude/i,
-			/^anthropic/i
+			/^anthropic/i,
 		];
 
 		// 외부 패턴에 매칭되면 external
-		if (externalPatterns.some(pattern => pattern.test(modelId))) {
-			return 'external';
+		if (externalPatterns.some((pattern) => pattern.test(modelId))) {
+			return "external";
 		}
 
 		// 내부 패턴에 매칭되면 internal
-		if (internalPatterns.some(pattern => pattern.test(modelId))) {
-			return 'internal';
+		if (internalPatterns.some((pattern) => pattern.test(modelId))) {
+			return "internal";
 		}
 
 		// 기본값: external
-		return 'external';
+		return "external";
 	};
 
 	// 모델 목록 로드 (daesawoo 파이프라인만 찾음)
@@ -313,19 +721,29 @@
 		try {
 			// daesawoo 파이프라인만 필요하므로 최소한의 모델만 로딩
 			allModels = await getModels(localStorage.token, null, false, true);
-			console.log('[loadModels] Loaded models:', allModels.length, 'total');
+			console.log(
+				"[loadModels] Loaded models:",
+				allModels.length,
+				"total",
+			);
 
 			// Update the global $models store for ModelSelector component
-			models.set(allModels.filter(m => getModelType(m) === 'internal'));
+			models.set(allModels.filter((m) => getModelType(m) === "internal"));
 
 			// 대사우 Assistant만 사용 - external 모델 필터링 주석 처리
-			internalModels = allModels.filter(m => getModelType(m) === 'internal');
+			internalModels = allModels.filter(
+				(m) => getModelType(m) === "internal",
+			);
 			// externalModels = allModels.filter(m => getModelType(m) === 'external');
 			externalModels = []; // 외부 모델 사용 안함
-			console.log('[loadModels] Internal models:', internalModels.length, ', External models 사용 안함');
+			console.log(
+				"[loadModels] Internal models:",
+				internalModels.length,
+				", External models 사용 안함",
+			);
 		} catch (error) {
-			console.error('모델 목록 로드 실패:', error);
-			toast.error('모델 목록을 불러오는데 실패했습니다');
+			console.error("모델 목록 로드 실패:", error);
+			toast.error("모델 목록을 불러오는데 실패했습니다");
 		}
 	};
 
@@ -333,13 +751,14 @@
 	const getDefaultInternalModelId = () => {
 		// Wait for database load to complete
 		if (!defaultModelsLoaded) {
-			console.warn('⏳ [getDefaultInternalModelId] 기본 모델 로드 중...');
-			return '';
+			console.warn("⏳ [getDefaultInternalModelId] 기본 모델 로드 중...");
+			return "";
 		}
 
 		// Return value from config store (updated in onMount from database)
-		const defaultModel = $config?.default_internal_model || '';
-		console.log('[getDefaultInternalModelId] Returning:', defaultModel);
+		// Phase 3: $config는 백엔드에서 로드된 설정값을 반영함
+		const defaultModel = $config?.default_internal_model || "";
+		console.log("[getDefaultInternalModelId] Returning:", defaultModel);
 		return defaultModel;
 	};
 
@@ -360,73 +779,70 @@
 	// Category boxes for internal model
 	const categories = [
 		{
-			id: 'report',
-			name: '보고서 초안 작성',
-			description: '',
+			id: "report",
+			name: "보고서 초안 작성",
+			description: "",
 			samples: [
-				'프로젝트 보고서 포맷을 만들어 줘',
-				'디스플레이 기술 트렌드를 정리해 줘'
-			]
-		},
-		{
-			id: 'edm',
-			name: 'EDM 문서활용',
-			collection_name: 'edm-knowledge',
-			description: '',
-			samples: [
-				'최근 사용한 문서를 요약해서 보여 줘',
-				'지난 분기 생산 효율 회의록 찾아 줘'
-			]
-		},
-		{
-			id: 'guide',
-			name: '대사우 Assistant [사규]',
-			description: '사규',
-			samples: [
-				'육아휴직 신청 방법 알려 줘',
-				'연간 패밀리넷 사용 가능 금액 알려 줘'
+				"프로젝트 보고서 포맷을 만들어 줘",
+				"디스플레이 기술 트렌드를 정리해 줘",
 			],
-			comingSoon: true
 		},
 		{
-			id: 'helpdesk',
-			name: '대사우 Assistant [IT Help Desk]',
-			description: 'IT Help Desk',
+			id: "edm",
+			name: "EDM 문서활용",
+			collection_name: "edm-knowledge",
+			description: "",
 			samples: [
-				'Knox 비밀번호 초기화 방법 알려 줘',
-				'Wave 운영팀 내선 번호 알려 줘'
+				"최근 사용한 문서를 요약해서 보여 줘",
+				"지난 분기 생산 효율 회의록 찾아 줘",
 			],
-			comingSoon: true
 		},
 		{
-			id: 'dictionary',
-			name: '대사우 Assistant [지식용어 사전]',
-			description: '지식용어 사전',
+			id: "guide",
+			name: "대사우 Assistant [사규]",
+			description: "사규",
 			samples: [
-				'OLED 용어 설명해 줘',
-				'디스플레이 전문용어 찾아 줘'
-			]
+				"육아휴직 신청 방법 알려 줘",
+				"연간 패밀리넷 사용 가능 금액 알려 줘",
+			],
+			comingSoon: true,
 		},
 		{
-			id: 'code',
-			name: 'Code 개발 지원',
-			description: '',
+			id: "helpdesk",
+			name: "대사우 Assistant [IT Help Desk]",
+			description: "IT Help Desk",
 			samples: [
-				'Python으로 엑셀을 읽는 코드 만들어 줘',
-				'SQL 쿼리 중복데이터 제거하는 방법'
-			]
-		}
+				"Knox 비밀번호 초기화 방법 알려 줘",
+				"Wave 운영팀 내선 번호 알려 줘",
+			],
+			comingSoon: true,
+		},
+		{
+			id: "dictionary",
+			name: "대사우 Assistant [지식용어 사전]",
+			description: "지식용어 사전",
+			samples: ["OLED 용어 설명해 줘", "디스플레이 전문용어 찾아 줘"],
+		},
+		{
+			id: "code",
+			name: "Code 개발 지원",
+			description: "",
+			samples: [
+				"Python으로 엑셀을 읽는 코드 만들어 줘",
+				"SQL 쿼리 중복데이터 제거하는 방법",
+			],
+		},
 	];
 
 	// 준비중인 카테고리가 선택되었는지 확인하는 reactive statement
-	$: hasComingSoonCategory = $selectedCategories.some(catId => {
-		const category = categories.find(c => c.id === catId);
+	$: hasComingSoonCategory = $selectedCategories.some((catId) => {
+		const category = categories.find((c) => c.id === catId);
 		return category?.comingSoon === true;
 	});
 
 	// selectedCategories는 RightSidebar.svelte에서 import한 store 사용
 	let showEdmFileListModal = false; // EDM 파일리스트 팝업 표시 여부
-	let edmSearchQuery = ''; // EDM 검색 쿼리
+	let edmSearchQuery = ""; // EDM 검색 쿼리
 	let edmFileList: any[] = []; // EDM 파일 리스트
 
 	// EDM 문서 활용 영역 상태
@@ -435,46 +851,49 @@
 
 	// EDM 피드백 관련 상태
 	let showEdmFeedbackModal = false; // EDM 피드백 모달 표시 여부
-	let edmFeedbackType = ''; // thumbs-up 또는 thumbs-down
-	let edmFeedbackReason = ''; // 불만족 이유
-	let edmFeedbackDetail = ''; // 상세 설명
-	let currentEdmMessageId = ''; // 피드백 대상 메시지 ID
+	let edmFeedbackType = ""; // thumbs-up 또는 thumbs-down
+	let edmFeedbackReason = ""; // 불만족 이유
+	let edmFeedbackDetail = ""; // 상세 설명
+	let currentEdmMessageId = ""; // 피드백 대상 메시지 ID
 
 	// EDM 문서 목록 및 뷰어 관련 상태
 	let edmDocumentViewerModal = false; // 문서 뷰어 모달 표시 여부
 	let selectedDocument = null; // 선택된 문서
-	let documentContent = ''; // 문서 내용
+	let documentContent = ""; // 문서 내용
 	let isLoadingDocument = false; // 문서 로딩 중
 	let isProcessingKnowledge = false; // 지식화 처리 중
 	// Function to handle model type change
 	const handleModelTypeChange = (newType) => {
-		console.log('[Chat] handleModelTypeChange called, newType:', newType);
+		console.log("[Chat] handleModelTypeChange called, newType:", newType);
 
 		// If switching to external model, show security warning
-		if (newType === 'external' && $modelType !== 'external') {
+		if (newType === "external" && $modelType !== "external") {
 			pendingModelType = newType;
 			showSecurityWarning = true;
-		} else if (newType === 'internal' && $modelType !== 'internal') {
+		} else if (newType === "internal" && $modelType !== "internal") {
 			// Direct switch to internal model
 			modelType.set(newType);
-			console.log('[Chat] Switched to internal model');
+			console.log("[Chat] Switched to internal model");
 
 			// 내부 기본 모델로 자동 변경
 			const defaultModelId = getDefaultInternalModelId();
 			if (defaultModelId && selectedModels[0] !== defaultModelId) {
 				selectedModels = [defaultModelId];
-				console.log('✅ [내부모델 버튼] 내부 기본 모델로 자동 변경:', defaultModelId);
+				console.log(
+					"✅ [내부모델 버튼] 내부 기본 모델로 자동 변경:",
+					defaultModelId,
+				);
 			}
 		}
 	};
 
 	// Function to confirm external model switch
 	const confirmExternalModelSwitch = async () => {
-		console.log('[Chat] confirmExternalModelSwitch called');
+		console.log("[Chat] confirmExternalModelSwitch called");
 
 		// Switch model type
 		modelType.set(pendingModelType);
-		console.log('[Chat] modelType set to:', pendingModelType);
+		console.log("[Chat] modelType set to:", pendingModelType);
 		showSecurityWarning = false;
 		pendingModelType = null;
 
@@ -482,18 +901,23 @@
 		const defaultModelId = getDefaultExternalModelId();
 		if (defaultModelId && selectedModels[0] !== defaultModelId) {
 			selectedModels = [defaultModelId];
-			console.log('✅ [외부모델 버튼] 외부 기본 모델로 자동 변경:', defaultModelId);
+			console.log(
+				"✅ [외부모델 버튼] 외부 기본 모델로 자동 변경:",
+				defaultModelId,
+			);
 		}
 
 		// External model 사용 시 새 채팅 초기화
 		// initNewChat을 호출하지만 temporaryChatEnabled가 true로 설정되지 않도록 보장
-		console.log('[Chat] Initializing new chat for external model');
+		console.log("[Chat] Initializing new chat for external model");
 		await initNewChat();
 
 		// temporaryChatEnabled를 명시적으로 false로 설정하여 히스토리 저장 보장
 		// External 모델도 일반 모델처럼 히스토리에 저장되어야 함
 		await temporaryChatEnabled.set(false);
-		console.log('[Chat] temporaryChatEnabled set to false for history saving');
+		console.log(
+			"[Chat] temporaryChatEnabled set to false for history saving",
+		);
 	};
 
 	// Function to cancel external model switch
@@ -519,47 +943,58 @@
 
 	// Update selected models when model type changes
 	// Only update after database default models are loaded
-	$: if (defaultModelsLoaded && $modelType === 'internal') {
+	$: if (defaultModelsLoaded && $modelType === "internal") {
 		const defaultModel = getDefaultInternalModelId();
 		if (defaultModel) {
 			selectedModels = [defaultModel];
-			console.log('[Reactive] Applied internal default model:', defaultModel);
+			console.log(
+				"[Reactive] Applied internal default model:",
+				defaultModel,
+			);
 		}
-	} else if (defaultModelsLoaded && $modelType === 'external') {
+	} else if (defaultModelsLoaded && $modelType === "external") {
 		const defaultModel = getDefaultExternalModelId();
 		if (defaultModel) {
 			selectedModels = [defaultModel];
-			console.log('[Reactive] Applied external default model:', defaultModel);
+			console.log(
+				"[Reactive] Applied external default model:",
+				defaultModel,
+			);
 		}
 	}
 
 	// 사용자 롤일 때 모델 선택 드롭다운 비활성화
-	$: if ($user?.role === 'user') {
+	$: if ($user?.role === "user") {
 		isModelSelectorDisabled = true;
-		console.log('[Reactive] User role detected - model selector disabled');
+		console.log("[Reactive] User role detected - model selector disabled");
 	} else {
 		// 관리자는 EDM/대사우 필터가 활성화되지 않은 경우에만 활성화
 		// EDM/대사우 필터 활성화 시 비활성화는 각 필터 핸들러에서 처리
-		const hasEdm = $selectedCategories && $selectedCategories.includes('edm');
-		const hasDaesawoo = $selectedCategories && $selectedCategories.some(cat =>
-			['guide', 'helpdesk', 'dictionary', 'etc'].includes(cat)
-		);
+		const hasEdm =
+			$selectedCategories && $selectedCategories.includes("edm");
+		const hasDaesawoo =
+			$selectedCategories &&
+			$selectedCategories.some((cat) =>
+				["guide", "helpdesk", "dictionary", "etc"].includes(cat),
+			);
 
 		if (!hasEdm && !hasDaesawoo) {
 			isModelSelectorDisabled = false;
-			console.log('[Reactive] Admin role detected - model selector enabled');
+			console.log(
+				"[Reactive] Admin role detected - model selector enabled",
+			);
 		}
 	}
 
 	let history = {
 		messages: {},
-		currentId: null
+		currentId: null,
 	};
 
 	let taskIds = null;
 
 	// Chat Input
-	let prompt = '';
+	let prompt = "";
 	let chatFiles = [];
 	let files = [];
 	let params = {};
@@ -571,8 +1006,8 @@
 	const navigateHandler = async () => {
 		loading = true;
 
-		prompt = '';
-		messageInput?.setText('');
+		prompt = "";
+		messageInput?.setText("");
 
 		files = [];
 		selectedToolIds = [];
@@ -581,7 +1016,7 @@
 		imageGenerationEnabled = false;
 
 		const storageChatInput = sessionStorage.getItem(
-			`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`
+			`chat-input${chatIdProp ? `-${chatIdProp}` : ""}`,
 		);
 
 		if (chatIdProp && (await loadChat())) {
@@ -607,17 +1042,17 @@
 				} catch (e) {}
 			}
 
-			const chatInput = document.getElementById('chat-input');
+			const chatInput = document.getElementById("chat-input");
 			chatInput?.focus();
 		} else {
-			await goto('/');
+			await goto("/");
 		}
 	};
 
 	const onSelect = async (e) => {
 		const { type, data } = e;
 
-		if (type === 'prompt') {
+		if (type === "prompt") {
 			// Handle prompt selection
 			messageInput?.setText(data, async () => {
 				if (!($settings?.insertSuggestionPrompt ?? false)) {
@@ -628,7 +1063,7 @@
 		}
 	};
 
-	$: if (selectedModels && chatIdProp !== '') {
+	$: if (selectedModels && chatIdProp !== "") {
 		saveSessionSelectedModels();
 	}
 
@@ -636,17 +1071,23 @@
 		const selectedModelsString = JSON.stringify(selectedModels);
 		if (
 			selectedModels.length === 0 ||
-			(selectedModels.length === 1 && selectedModels[0] === '') ||
+			(selectedModels.length === 1 && selectedModels[0] === "") ||
 			sessionStorage.selectedModels === selectedModelsString
 		) {
 			return;
 		}
 		sessionStorage.selectedModels = selectedModelsString;
-		console.log('saveSessionSelectedModels', selectedModels, sessionStorage.selectedModels);
+		console.log(
+			"saveSessionSelectedModels",
+			selectedModels,
+			sessionStorage.selectedModels,
+		);
 	};
 
-	let oldSelectedModelIds = [''];
-	$: if (JSON.stringify(selectedModelIds) !== JSON.stringify(oldSelectedModelIds)) {
+	let oldSelectedModelIds = [""];
+	$: if (
+		JSON.stringify(selectedModelIds) !== JSON.stringify(oldSelectedModelIds)
+	) {
 		onSelectedModelIdsChange();
 	}
 
@@ -678,36 +1119,48 @@
 			return;
 		}
 
-		const model = atSelectedModel ?? $models.find((m) => m.id === selectedModels[0]);
+		const model =
+			atSelectedModel ?? $models.find((m) => m.id === selectedModels[0]);
 		if (model) {
 			// Set Default Tools
 			if (model?.info?.meta?.toolIds) {
 				selectedToolIds = [
 					...new Set(
-						[...(model?.info?.meta?.toolIds ?? [])].filter((id) => $tools.find((t) => t.id === id))
-					)
+						[...(model?.info?.meta?.toolIds ?? [])].filter((id) =>
+							$tools.find((t) => t.id === id),
+						),
+					),
 				];
 			}
 
 			// Set Default Filters (Toggleable only)
 			if (model?.info?.meta?.defaultFilterIds) {
-				selectedFilterIds = model.info.meta.defaultFilterIds.filter((id) =>
-					model?.filters?.find((f) => f.id === id)
+				selectedFilterIds = model.info.meta.defaultFilterIds.filter(
+					(id) => model?.filters?.find((f) => f.id === id),
 				);
 			}
 
 			// Set Default Features
 			if (model?.info?.meta?.defaultFeatureIds) {
-				if (model.info?.meta?.capabilities?.['image_generation']) {
-					imageGenerationEnabled = model.info.meta.defaultFeatureIds.includes('image_generation');
+				if (model.info?.meta?.capabilities?.["image_generation"]) {
+					imageGenerationEnabled =
+						model.info.meta.defaultFeatureIds.includes(
+							"image_generation",
+						);
 				}
 
-				if (model.info?.meta?.capabilities?.['web_search']) {
-					webSearchEnabled = model.info.meta.defaultFeatureIds.includes('web_search');
+				if (model.info?.meta?.capabilities?.["web_search"]) {
+					webSearchEnabled =
+						model.info.meta.defaultFeatureIds.includes(
+							"web_search",
+						);
 				}
 
-				if (model.info?.meta?.capabilities?.['code_interpreter']) {
-					codeInterpreterEnabled = model.info.meta.defaultFeatureIds.includes('code_interpreter');
+				if (model.info?.meta?.capabilities?.["code_interpreter"]) {
+					codeInterpreterEnabled =
+						model.info.meta.defaultFeatureIds.includes(
+							"code_interpreter",
+						);
 				}
 			}
 		}
@@ -722,7 +1175,7 @@
 		let messageChildrenIds = [];
 		if (_messageId === null) {
 			messageChildrenIds = Object.keys(history.messages).filter(
-				(id) => history.messages[id].parentId === null
+				(id) => history.messages[id].parentId === null,
 			);
 		} else {
 			messageChildrenIds = history.messages[_messageId].childrenIds;
@@ -740,9 +1193,11 @@
 		await tick();
 
 		if (($settings?.scrollOnBranchChange ?? true) || ignoreSettings) {
-			const messageElement = document.getElementById(`message-${message.id}`);
+			const messageElement = document.getElementById(
+				`message-${message.id}`,
+			);
 			if (messageElement) {
-				messageElement.scrollIntoView({ behavior: 'smooth' });
+				messageElement.scrollIntoView({ behavior: "smooth" });
 			}
 		}
 
@@ -761,57 +1216,70 @@
 				const type = event?.data?.type ?? null;
 				const data = event?.data?.data ?? null;
 
-				if (type === 'status') {
+				if (type === "status") {
 					if (message?.statusHistory) {
 						message.statusHistory.push(data);
 					} else {
 						message.statusHistory = [data];
 					}
-				} else if (type === 'chat:completion') {
+				} else if (type === "chat:completion") {
 					chatCompletionEventHandler(data, message, event.chat_id);
-				} else if (type === 'chat:tasks:cancel') {
+				} else if (type === "chat:tasks:cancel") {
 					taskIds = null;
 					const responseMessage = history.messages[history.currentId];
 					// Set all response messages to done
-					for (const messageId of history.messages[responseMessage.parentId].childrenIds) {
+					for (const messageId of history.messages[
+						responseMessage.parentId
+					].childrenIds) {
 						history.messages[messageId].done = true;
 					}
-				} else if (type === 'chat:message:delta' || type === 'message') {
+				} else if (
+					type === "chat:message:delta" ||
+					type === "message"
+				) {
 					message.content += data.content;
-				} else if (type === 'chat:message' || type === 'replace') {
+				} else if (type === "chat:message" || type === "replace") {
 					message.content = data.content;
-				} else if (type === 'chat:message:files' || type === 'files') {
+				} else if (type === "chat:message:files" || type === "files") {
 					message.files = data.files;
-				} else if (type === 'chat:message:embeds' || type === 'embeds') {
+				} else if (
+					type === "chat:message:embeds" ||
+					type === "embeds"
+				) {
 					message.embeds = data.embeds;
-				} else if (type === 'chat:message:error') {
+				} else if (type === "chat:message:error") {
 					message.error = data.error;
-				} else if (type === 'chat:message:follow_ups') {
+				} else if (type === "chat:message:follow_ups") {
 					message.followUps = data.follow_ups;
 
 					if (autoScroll) {
-						scrollToBottom('smooth');
+						scrollToBottom("smooth");
 					}
-				} else if (type === 'chat:title') {
+				} else if (type === "chat:title") {
 					chatTitle.set(data);
 					currentChatPage.set(1);
-					await chats.set(await getChatList(localStorage.token, $currentChatPage));
-				} else if (type === 'chat:tags') {
+					await chats.set(
+						await getChatList(localStorage.token, $currentChatPage),
+					);
+				} else if (type === "chat:tags") {
 					chat = await getChatById(localStorage.token, $chatId);
 					allTags.set(await getAllTags(localStorage.token));
-				} else if (type === 'source' || type === 'citation') {
-					if (data?.type === 'code_execution') {
+				} else if (type === "source" || type === "citation") {
+					if (data?.type === "code_execution") {
 						// Code execution; update existing code execution by ID, or add new one.
 						if (!message?.code_executions) {
 							message.code_executions = [];
 						}
 
-						const existingCodeExecutionIndex = message.code_executions.findIndex(
-							(execution) => execution.id === data.id
-						);
+						const existingCodeExecutionIndex =
+							message.code_executions.findIndex(
+								(execution) => execution.id === data.id,
+							);
 
 						if (existingCodeExecutionIndex !== -1) {
-							message.code_executions[existingCodeExecutionIndex] = data;
+							message.code_executions[
+								existingCodeExecutionIndex
+							] = data;
 						} else {
 							message.code_executions.push(data);
 						}
@@ -825,20 +1293,20 @@
 							message.sources = [data];
 						}
 					}
-				} else if (type === 'notification') {
-					const toastType = data?.type ?? 'info';
-					const toastContent = data?.content ?? '';
+				} else if (type === "notification") {
+					const toastType = data?.type ?? "info";
+					const toastContent = data?.content ?? "";
 
-					if (toastType === 'success') {
+					if (toastType === "success") {
 						toast.success(toastContent);
-					} else if (toastType === 'error') {
+					} else if (toastType === "error") {
 						toast.error(toastContent);
-					} else if (toastType === 'warning') {
+					} else if (toastType === "warning") {
 						toast.warning(toastContent);
 					} else {
 						toast.info(toastContent);
 					}
-				} else if (type === 'confirmation') {
+				} else if (type === "confirmation") {
 					eventCallback = cb;
 
 					eventConfirmationInput = false;
@@ -846,21 +1314,23 @@
 
 					eventConfirmationTitle = data.title;
 					eventConfirmationMessage = data.message;
-				} else if (type === 'execute') {
+				} else if (type === "execute") {
 					eventCallback = cb;
 
 					try {
 						// Use Function constructor to evaluate code in a safer way
-						const asyncFunction = new Function(`return (async () => { ${data.code} })()`);
+						const asyncFunction = new Function(
+							`return (async () => { ${data.code} })()`,
+						);
 						const result = await asyncFunction(); // Await the result of the async function
 
 						if (cb) {
 							cb(result);
 						}
 					} catch (error) {
-						console.error('Error executing code:', error);
+						console.error("Error executing code:", error);
 					}
-				} else if (type === 'input') {
+				} else if (type === "input") {
 					eventCallback = cb;
 
 					eventConfirmationInput = true;
@@ -869,51 +1339,71 @@
 					eventConfirmationTitle = data.title;
 					eventConfirmationMessage = data.message;
 					eventConfirmationInputPlaceholder = data.placeholder;
-					eventConfirmationInputValue = data?.value ?? '';
-				} else if (type === 'event') {
+					eventConfirmationInputValue = data?.value ?? "";
+				} else if (type === "event") {
 					// 📤 파이프에서 전송된 커스텀 이벤트 처리
 					const eventType = data?.event?.type ?? null;
 					const eventDetail = data?.event?.detail ?? null;
 
-					if (eventType === 'openEdmFileList') {
+					if (eventType === "openEdmFileList") {
 						// 📂 EDM 파일 리스트를 메시지 메타데이터에 저장
-						console.log('[Chat] 📂 openEdmFileList 이벤트 수신 from pipe:', {
-							messageId: message.id,
-							filesCount: eventDetail?.files?.length ?? 0,
-							files: eventDetail?.files
-						});
+						console.log(
+							"[Chat] 📂 openEdmFileList 이벤트 수신 from pipe:",
+							{
+								messageId: message.id,
+								filesCount: eventDetail?.files?.length ?? 0,
+								files: eventDetail?.files,
+							},
+						);
 
 						// 메시지에 edmFileList 메타데이터 저장
 						if (!message.info) {
 							message.info = {};
 						}
 						message.info.edmFileList = eventDetail?.files || [];
-						message.isEdmResult = true;  // EDM 결과 플래그 설정 (버튼 렌더링용)
+						message.isEdmResult = true; // EDM 결과 플래그 설정 (버튼 렌더링용)
 
-						console.log('[Chat] ✅ edmFileList saved to message.info:', {
-							messageId: message.id,
-							savedFiles: message.info.edmFileList.length
-						});
-					} else if (eventType === 'attachFiles') {
+						console.log(
+							"[Chat] ✅ edmFileList saved to message.info:",
+							{
+								messageId: message.id,
+								savedFiles: message.info.edmFileList.length,
+							},
+						);
+					} else if (eventType === "attachFiles") {
 						// 📎 파일 첨부 이벤트 (지식화된 파일을 입력창에 첨부)
-						console.log('[Chat] 📎 attachFiles 이벤트 수신 from pipe:', {
-							filesCount: eventDetail?.files?.length ?? 0,
-							files: eventDetail?.files
-						});
+						console.log(
+							"[Chat] 📎 attachFiles 이벤트 수신 from pipe:",
+							{
+								filesCount: eventDetail?.files?.length ?? 0,
+								files: eventDetail?.files,
+							},
+						);
 
 						// files 배열에 추가 (문서첨부처럼 표시)
-						if (eventDetail?.files && Array.isArray(eventDetail.files)) {
+						if (
+							eventDetail?.files &&
+							Array.isArray(eventDetail.files)
+						) {
 							files = [...files, ...eventDetail.files];
-							console.log('[Chat] ✅ 파일 첨부 완료:', {
+							console.log("[Chat] ✅ 파일 첨부 완료:", {
 								totalFiles: files.length,
-								attachedFiles: files.map(f => f.filename || f.id)
+								attachedFiles: files.map(
+									(f) => f.filename || f.id,
+								),
 							});
 						}
 					} else {
-						console.log('[Chat] ⚠️ Unknown event type:', eventType, eventDetail);
+						console.log(
+							"[Chat] ⚠️ Unknown event type:",
+							eventType,
+							eventDetail,
+						);
 					}
 				} else {
-					console.log('Unknown message type', data);
+					// ========== [2026-01-27 시스템 프롬프트 노출 방지] 시작 ==========
+					// console.log("Unknown message type", data); // 보안: 메시지 데이터 콘솔 노출 제거
+					// ========== [2026-01-27 시스템 프롬프트 노출 방지] 종료 ==========
 				}
 
 				history.messages[event.message_id] = message;
@@ -929,20 +1419,20 @@
 			return;
 		}
 
-		if (event.data.type === 'action:submit') {
+		if (event.data.type === "action:submit") {
 			console.debug(event.data.text);
 
-			if (prompt !== '') {
+			if (prompt !== "") {
 				await tick();
 				submitPrompt(prompt);
 			}
 		}
 
 		// Replace with your iframe's origin
-		if (event.data.type === 'input:prompt') {
+		if (event.data.type === "input:prompt") {
 			console.debug(event.data.text);
 
-			const inputElement = document.getElementById('chat-input');
+			const inputElement = document.getElementById("chat-input");
 
 			if (inputElement) {
 				messageInput?.setText(event.data.text);
@@ -950,10 +1440,10 @@
 			}
 		}
 
-		if (event.data.type === 'input:prompt:submit') {
+		if (event.data.type === "input:prompt:submit") {
 			console.debug(event.data.text);
 
-			if (event.data.text !== '') {
+			if (event.data.text !== "") {
 				await tick();
 				submitPrompt(event.data.text);
 			}
@@ -963,14 +1453,19 @@
 	const savedModelIds = async () => {
 		if (
 			$selectedFolder &&
-			selectedModels.filter((modelId) => modelId !== '').length > 0 &&
-			JSON.stringify($selectedFolder?.data?.model_ids) !== JSON.stringify(selectedModels)
+			selectedModels.filter((modelId) => modelId !== "").length > 0 &&
+			JSON.stringify($selectedFolder?.data?.model_ids) !==
+				JSON.stringify(selectedModels)
 		) {
-			const res = await updateFolderById(localStorage.token, $selectedFolder.id, {
-				data: {
-					model_ids: selectedModels
-				}
-			});
+			const res = await updateFolderById(
+				localStorage.token,
+				$selectedFolder.id,
+				{
+					data: {
+						model_ids: selectedModels,
+					},
+				},
+			);
 		}
 	};
 
@@ -981,138 +1476,210 @@
 	let pageSubscribe = null;
 	let showControlsSubscribe = null;
 	let selectedFolderSubscribe = null;
+	// ----- [2026.01.28] 메시지 입력창 초기화 트리거 구독 변수 -----
+	let clearMessageInputSubscribe = null;
 
 	onMount(async () => {
 		loading = true;
-		console.log('[DEBUG-CHAT] onMount STARTED');
+		console.log("[DEBUG-CHAT] onMount STARTED");
 
 		// Initialize model type and sidebars
-		modelType.set('internal');
+		modelType.set("internal");
 
 		// Load all models for dropdown (General.svelte와 동일한 로직)
 		await loadModels();
 
 		// 기본 모델 설정을 PostgreSQL에서 로드 (General.svelte와 동일한 패턴)
-	console.log('[DEBUG-CHAT] About to load default models from DB');
-	if (localStorage.token) {
-		try {
-			// Use exportConfig to get the full config including default models
-			console.log('[DEBUG-CHAT] localStorage.token exists, importing exportConfig');
-			const { exportConfig } = await import('$lib/apis/configs');
-			console.log('[DEBUG-CHAT] Calling exportConfig()');
-			const fullConfig = await exportConfig(localStorage.token);
+		console.log("[DEBUG-CHAT] About to load default models from DB");
+		if (localStorage.token) {
+			try {
+				// Use exportConfig to get the full config including default models
+				console.log(
+					"[DEBUG-CHAT] localStorage.token exists, importing exportConfig",
+				);
+				const { exportConfig } = await import("$lib/apis/configs");
+				console.log("[DEBUG-CHAT] Calling exportConfig()");
+				const fullConfig = await exportConfig(localStorage.token);
 
-			console.log('[DEBUG-CHAT] Loaded full config:', fullConfig);
+				console.log("[DEBUG-CHAT] Loaded full config:", fullConfig);
 
-			if (fullConfig) {
-				defaultInternalModel = fullConfig.default_internal_model || '';
-				defaultExternalModel = fullConfig.default_external_model || '';
+				if (fullConfig) {
+					defaultInternalModel =
+						fullConfig.default_internal_model || "";
+					defaultExternalModel =
+						fullConfig.default_external_model || "";
 
-				// Update config store with loaded values from database
-				config.set({
-					...$config,
-					default_internal_model: defaultInternalModel,
-					default_external_model: defaultExternalModel
-				});
-
-				console.log('[onMount] Loaded default models:', {
-					internal: defaultInternalModel,
-					external: defaultExternalModel,
-					userRole: $user?.role
-				});
-
-				// Show toast to admin if default models are not set in database
-				if ($user?.role === 'admin') {
-					if (!defaultInternalModel) {
-						toast.error('내부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.');
+					// ============================================
+					// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 로드 시작
+					// 역할: 모델별 세션 제한 설정 로드 (onMount 시)
+					// ============================================
+					// 모델별 세션 제한 설정 로드 (getModelsConfig API 사용)
+					try {
+						const { getModelsConfig } = await import("$lib/apis/configs");
+						const modelsConfig = await getModelsConfig(localStorage.token);
+						if (modelsConfig?.MODEL_SESSION_LIMITS) {
+							modelSessionLimits = modelsConfig.MODEL_SESSION_LIMITS;
+							console.log("[onMount] 모델 세션 제한 설정 로드:", modelSessionLimits);
+						}
+					} catch (e) {
+						console.error("[onMount] 모델 세션 제한 설정 로드 실패:", e);
 					}
-					if (!defaultExternalModel) {
-						toast.error('외부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.');
+					// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 로드 완료 ============================================
+
+					// Update config store with loaded values from database
+					config.set({
+						...$config,
+						default_internal_model: defaultInternalModel,
+						default_external_model: defaultExternalModel,
+					});
+
+					console.log("[onMount] Loaded default models:", {
+						internal: defaultInternalModel,
+						external: defaultExternalModel,
+						userRole: $user?.role,
+					});
+
+					// Show toast to admin if default models are not set in database
+					if ($user?.role === "admin") {
+						if (!defaultInternalModel) {
+							toast.error(
+								"내부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.",
+							);
+						}
+						if (!defaultExternalModel) {
+							toast.error(
+								"외부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.",
+							);
+						}
 					}
 				}
+			} catch (error) {
+				console.error("기본 모델 설정 로드 실패:", error);
+				// 관리자만 오류 토스트 표시
+				if ($user?.role === "admin") {
+					toast.error(
+						"기본 모델 설정을 불러오는데 실패했습니다. 관리자 설정을 확인해주세요.",
+					);
+				}
 			}
-		} catch (error) {
-			console.error('기본 모델 설정 로드 실패:', error);
-			// 관리자만 오류 토스트 표시
-			if ($user?.role === 'admin') {
-				toast.error('기본 모델 설정을 불러오는데 실패했습니다. 관리자 설정을 확인해주세요.');
-			}
+		} else {
+			console.log("[onMount] No token found, skipping config load");
 		}
-	} else {
-		console.log('[onMount] No token found, skipping config load');
-	}
 
-	// Mark default models as loaded (either successfully loaded or skipped)
-	defaultModelsLoaded = true;
+		// Mark default models as loaded (either successfully loaded or skipped)
+		defaultModelsLoaded = true;
 
 		// 로드한 기본 모델을 selectedModels에 적용
-		if ($modelType === 'internal' && defaultInternalModel) {
+		if ($modelType === "internal" && defaultInternalModel) {
 			selectedModels = [defaultInternalModel];
-			console.log('[onMount] Applied internal model to selectedModels:', selectedModels);
-		} else if ($modelType === 'external' && defaultExternalModel) {
+			console.log(
+				"[onMount] Applied internal model to selectedModels:",
+				selectedModels,
+			);
+		} else if ($modelType === "external" && defaultExternalModel) {
 			selectedModels = [defaultExternalModel];
-			console.log('[onMount] Applied external model to selectedModels:', selectedModels);
+			console.log(
+				"[onMount] Applied external model to selectedModels:",
+				selectedModels,
+			);
 		}
 
 		// Initial setup for right sidebar
 		await tick();
 
-		window.addEventListener('message', onMessageHandler);
-		$socket?.on('events', chatEventHandler);
+		window.addEventListener("message", onMessageHandler);
+		$socket?.on("events", chatEventHandler);
 
 		// EDM 지식화 이벤트 리스너
 		const handleEdmKnowledgeRequest = async (event: CustomEvent) => {
 			const { files, message } = event.detail;
-			console.log('🔵 [Chat] EDM 지식화 이벤트 수신:', files);
+			console.log("🔵 [Chat] EDM 지식화 이벤트 수신:", files);
 
 			// 사용 가능한 모든 모델 ID 확인
-			console.log('📋 [DEBUG] 사용 가능한 모델:', $models.map(m => m.id));
+			console.log(
+				"📋 [DEBUG] 사용 가능한 모델:",
+				$models.map((m) => m.id),
+			);
 
 			// EDM 카테고리 임시 해제 (지식화는 edm_download_pipe_streaming 사용)
 			const originalCategories = [...$selectedCategories];
 			selectedCategories.set([]);
 
 			// edm_download_pipe_streaming 또는 dm_download_pipe_streaming 모델 찾기
-			let edmDownloadModel = $models.find(m =>
-				m.id === 'edm_download_pipe_streaming' ||
-				m.id === 'dm_download_pipe_streaming' ||
-				m.id === 'edm_download_pipe' ||
-				m.id.includes('edm_download') ||
-				m.id.includes('dm_download')
+			let edmDownloadModel = $models.find(
+				(m) =>
+					m.id === "edm_download_pipe_streaming" ||
+					m.id === "dm_download_pipe_streaming" ||
+					m.id === "edm_download_pipe" ||
+					m.id.includes("edm_download") ||
+					m.id.includes("dm_download"),
 			);
 
 			if (edmDownloadModel) {
 				selectedModels = [edmDownloadModel.id];
-				console.log('✅ [Chat] EDM 파일 다운로드 파이프라인 선택:', edmDownloadModel.id);
+				console.log(
+					"✅ [Chat] EDM 파일 다운로드 파이프라인 선택:",
+					edmDownloadModel.id,
+				);
 			} else {
-				console.warn('⚠️ [Chat] EDM 다운로드 파이프라인을 찾을 수 없습니다. 기본 모델 사용');
+				console.warn(
+					"⚠️ [Chat] EDM 다운로드 파이프라인을 찾을 수 없습니다. 기본 모델 사용",
+				);
 			}
 
 			// submitPrompt 호출
-			await submitPrompt(`EDM 파일 ${files.length}개를 지식화합니다.`, { edmFiles: files });
+			await submitPrompt(`EDM 파일 ${files.length}개를 지식화합니다.`, {
+				edmFiles: files,
+			});
 
 			// 원래 카테고리 복원
 			selectedCategories.set(originalCategories);
 		};
 
-		window.addEventListener('edm-knowledge-request', handleEdmKnowledgeRequest);
-
+		window.addEventListener(
+			"edm-knowledge-request",
+			handleEdmKnowledgeRequest,
+		);
 
 		// Expose submitPrompt for E2E testing
-		if (typeof window !== 'undefined') {
+		if (typeof window !== "undefined") {
 			window.__chatSubmitPrompt = submitPrompt;
-			console.log('🧪 [Test Helper] submitPrompt exposed on window.__chatSubmitPrompt');
+			console.log(
+				"🧪 [Test Helper] submitPrompt exposed on window.__chatSubmitPrompt",
+			);
 		}
 
 		pageSubscribe = page.subscribe(async (p) => {
-			if (p.url.pathname === '/') {
+			if (p.url.pathname === "/") {
 				await tick();
 				initNewChat();
 			}
 		});
 
+		// ============================================
+		// [2026.01.28] 메시지 입력창 초기화 트리거 구독 설정
+		// ============================================
+		// 역할: Sidebar, RightSidebar 등에서 clearMessageInput store 값을
+		//       변경하면 이 구독이 감지하여 메시지 입력창을 초기화합니다.
+		//
+		// 트리거 위치:
+		//   - Sidebar.svelte: 새 채팅 아이콘, 홈 이동 아이콘 클릭 시
+		//   - RightSidebar.svelte: 카테고리 항목 클릭 시
+		//   - Navbar.svelte: 새 채팅 버튼 클릭 시
+		// ============================================
+		clearMessageInputSubscribe = clearMessageInput.subscribe((value) => {
+			// value가 0이 아닌 경우에만 초기화 실행 (초기값 0은 무시)
+			if (value > 0) {
+				console.log("[Chat] 🧹 메시지 입력창 초기화 트리거 감지:", value);
+				prompt = "";
+				messageInput?.setText("");
+				files = [];
+			}
+		});
+		// ----- [2026.01.28] 메시지 입력창 초기화 트리거 구독 설정 종료 -----
+
 		const storageChatInput = sessionStorage.getItem(
-			`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`
+			`chat-input${chatIdProp ? `-${chatIdProp}` : ""}`,
 		);
 
 		if (!chatIdProp) {
@@ -1121,8 +1688,8 @@
 		}
 
 		if (storageChatInput) {
-			prompt = '';
-			messageInput?.setText('');
+			prompt = "";
+			messageInput?.setText("");
 
 			files = [];
 			selectedToolIds = [];
@@ -1158,15 +1725,19 @@
 		selectedFolderSubscribe = selectedFolder.subscribe(async (folder) => {
 			if (
 				folder?.data?.model_ids &&
-				JSON.stringify(selectedModels) !== JSON.stringify(folder.data.model_ids)
+				JSON.stringify(selectedModels) !==
+					JSON.stringify(folder.data.model_ids)
 			) {
 				selectedModels = folder.data.model_ids;
 
-				console.log('Set selectedModels from folder data:', selectedModels);
+				console.log(
+					"Set selectedModels from folder data:",
+					selectedModels,
+				);
 			}
 		});
 
-		const chatInput = document.getElementById('chat-input');
+		const chatInput = document.getElementById("chat-input");
 		chatInput?.focus();
 	});
 
@@ -1175,9 +1746,11 @@
 			pageSubscribe();
 			showControlsSubscribe();
 			selectedFolderSubscribe();
+			// ----- [2026.01.28] 메시지 입력창 초기화 트리거 구독 해제 -----
+			clearMessageInputSubscribe?.();
 			chatIdUnsubscriber?.();
-			window.removeEventListener('message', onMessageHandler);
-			$socket?.off('events', chatEventHandler);
+			window.removeEventListener("message", onMessageHandler);
+			$socket?.off("events", chatEventHandler);
 		} catch (e) {
 			console.error(e);
 		}
@@ -1186,111 +1759,127 @@
 	// File upload functions
 
 	const uploadGoogleDriveFile = async (fileData) => {
-		console.log('Starting uploadGoogleDriveFile with:', {
+		console.log("Starting uploadGoogleDriveFile with:", {
 			id: fileData.id,
 			name: fileData.name,
 			url: fileData.url,
 			headers: {
-				Authorization: `Bearer ${token}`
-			}
+				Authorization: `Bearer ${token}`,
+			},
 		});
 
 		// Validate input
-		if (!fileData?.id || !fileData?.name || !fileData?.url || !fileData?.headers?.Authorization) {
-			throw new Error('Invalid file data provided');
+		if (
+			!fileData?.id ||
+			!fileData?.name ||
+			!fileData?.url ||
+			!fileData?.headers?.Authorization
+		) {
+			throw new Error("Invalid file data provided");
 		}
 
 		const tempItemId = uuidv4();
 		const fileItem = {
-			type: 'file',
-			file: '',
+			type: "file",
+			file: "",
 			id: null,
 			url: fileData.url,
 			name: fileData.name,
-			collection_name: '',
-			status: 'uploading',
-			error: '',
+			collection_name: "",
+			status: "uploading",
+			error: "",
 			itemId: tempItemId,
-			size: 0
+			size: 0,
 		};
 
 		try {
 			files = [...files, fileItem];
-			console.log('Processing web file with URL:', fileData.url);
+			console.log("Processing web file with URL:", fileData.url);
 
 			// Configure fetch options with proper headers
 			const fetchOptions = {
 				headers: {
 					Authorization: fileData.headers.Authorization,
-					Accept: '*/*'
+					Accept: "*/*",
 				},
-				method: 'GET'
+				method: "GET",
 			};
 
 			// Attempt to fetch the file
-			console.log('Fetching file content from Google Drive...');
+			console.log("Fetching file content from Google Drive...");
 			const fileResponse = await fetch(fileData.url, fetchOptions);
 
 			if (!fileResponse.ok) {
 				const errorText = await fileResponse.text();
-				throw new Error(`Failed to fetch file (${fileResponse.status}): ${errorText}`);
+				throw new Error(
+					`Failed to fetch file (${fileResponse.status}): ${errorText}`,
+				);
 			}
 
 			// Get content type from response
-			const contentType = fileResponse.headers.get('content-type') || 'application/octet-stream';
-			console.log('Response received with content-type:', contentType);
+			const contentType =
+				fileResponse.headers.get("content-type") ||
+				"application/octet-stream";
+			console.log("Response received with content-type:", contentType);
 
 			// Convert response to blob
-			console.log('Converting response to blob...');
+			console.log("Converting response to blob...");
 			const fileBlob = await fileResponse.blob();
 
 			if (fileBlob.size === 0) {
-				throw new Error('Retrieved file is empty');
+				throw new Error("Retrieved file is empty");
 			}
 
-			console.log('Blob created:', {
+			console.log("Blob created:", {
 				size: fileBlob.size,
-				type: fileBlob.type || contentType
+				type: fileBlob.type || contentType,
 			});
 
 			// Create File object with proper MIME type
 			const file = new File([fileBlob], fileData.name, {
-				type: fileBlob.type || contentType
+				type: fileBlob.type || contentType,
 			});
 
-			console.log('File object created:', {
+			console.log("File object created:", {
 				name: file.name,
 				size: file.size,
-				type: file.type
+				type: file.type,
 			});
 
 			if (file.size === 0) {
-				throw new Error('Created file is empty');
+				throw new Error("Created file is empty");
 			}
 
 			// If the file is an audio file, provide the language for STT.
 			let metadata = null;
 			if (
-				(file.type.startsWith('audio/') || file.type.startsWith('video/')) &&
+				(file.type.startsWith("audio/") ||
+					file.type.startsWith("video/")) &&
 				$settings?.audio?.stt?.language
 			) {
 				metadata = {
-					language: $settings?.audio?.stt?.language
+					language: $settings?.audio?.stt?.language,
 				};
 			}
 
 			// Upload file to server
-			console.log('Uploading file to server...');
-			const uploadedFile = await uploadFile(localStorage.token, file, metadata);
+			console.log("Uploading file to server...");
+			const uploadedFile = await uploadFile(
+				localStorage.token,
+				file,
+				metadata,
+			);
 
 			if (!uploadedFile) {
-				throw new Error('Server returned null response for file upload');
+				throw new Error(
+					"Server returned null response for file upload",
+				);
 			}
 
-			console.log('File uploaded successfully:', uploadedFile);
+			console.log("File uploaded successfully:", uploadedFile);
 
 			// Update file item with upload results
-			fileItem.status = 'uploaded';
+			fileItem.status = "uploaded";
 			fileItem.file = uploadedFile;
 			fileItem.id = uploadedFile.id;
 			fileItem.size = file.size;
@@ -1298,14 +1887,14 @@
 			fileItem.url = `${WEBUI_API_BASE_URL}/files/${uploadedFile.id}`;
 
 			files = files;
-			toast.success($i18n.t('File uploaded successfully'));
+			toast.success($i18n.t("File uploaded successfully"));
 		} catch (e) {
-			console.error('Error uploading file:', e);
+			console.error("Error uploading file:", e);
 			files = files.filter((f) => f.itemId !== tempItemId);
 			toast.error(
-				$i18n.t('Error uploading file: {{error}}', {
-					error: e.message || 'Unknown error'
-				})
+				$i18n.t("Error uploading file: {{error}}", {
+					error: e.message || "Unknown error",
+				}),
 			);
 		}
 	};
@@ -1314,24 +1903,24 @@
 		console.log(url);
 
 		const fileItem = {
-			type: 'text',
+			type: "text",
 			name: url,
-			collection_name: '',
-			status: 'uploading',
+			collection_name: "",
+			status: "uploading",
 			url: url,
-			error: ''
+			error: "",
 		};
 
 		try {
 			files = [...files, fileItem];
-			const res = await processWeb(localStorage.token, '', url);
+			const res = await processWeb(localStorage.token, "", url);
 
 			if (res) {
-				fileItem.status = 'uploaded';
+				fileItem.status = "uploaded";
 				fileItem.collection_name = res.collection_name;
 				fileItem.file = {
 					...res.file,
-					...fileItem.file
+					...fileItem.file,
 				};
 
 				files = files;
@@ -1347,13 +1936,13 @@
 		console.log(url);
 
 		const fileItem = {
-			type: 'text',
+			type: "text",
 			name: url,
-			collection_name: '',
-			status: 'uploading',
-			context: 'full',
+			collection_name: "",
+			status: "uploading",
+			context: "full",
 			url: url,
-			error: ''
+			error: "",
 		};
 
 		try {
@@ -1361,11 +1950,11 @@
 			const res = await processYoutubeVideo(localStorage.token, url);
 
 			if (res) {
-				fileItem.status = 'uploaded';
+				fileItem.status = "uploaded";
 				fileItem.collection_name = res.collection_name;
 				fileItem.file = {
 					...res.file,
-					...fileItem.file
+					...fileItem.file,
 				};
 				files = files;
 			}
@@ -1381,8 +1970,11 @@
 	//////////////////////////
 
 	const initNewChat = async () => {
-		console.log('initNewChat');
-		if ($user?.role !== 'admin' && $user?.permissions?.chat?.temporary_enforced) {
+		console.log("initNewChat");
+		if (
+			$user?.role !== "admin" &&
+			$user?.permissions?.chat?.temporary_enforced
+		) {
 			await temporaryChatEnabled.set(true);
 		}
 
@@ -1399,26 +1991,34 @@
 			.filter((m) => !(m?.info?.meta?.hidden ?? false))
 			.map((m) => m.id);
 
-		if ($page.url.searchParams.get('models') || $page.url.searchParams.get('model')) {
+		if (
+			$page.url.searchParams.get("models") ||
+			$page.url.searchParams.get("model")
+		) {
 			const urlModels = (
-				$page.url.searchParams.get('models') ||
-				$page.url.searchParams.get('model') ||
-				''
-			)?.split(',');
+				$page.url.searchParams.get("models") ||
+				$page.url.searchParams.get("model") ||
+				""
+			)?.split(",");
 
 			if (urlModels.length === 1) {
 				const m = $models.find((m) => m.id === urlModels[0]);
 				if (!m) {
-					const modelSelectorButton = document.getElementById('model-selector-0-button');
+					const modelSelectorButton = document.getElementById(
+						"model-selector-0-button",
+					);
 					if (modelSelectorButton) {
 						modelSelectorButton.click();
 						await tick();
 
-						const modelSelectorInput = document.getElementById('model-search-input');
+						const modelSelectorInput =
+							document.getElementById("model-search-input");
 						if (modelSelectorInput) {
 							modelSelectorInput.focus();
 							modelSelectorInput.value = urlModels[0];
-							modelSelectorInput.dispatchEvent(new Event('input'));
+							modelSelectorInput.dispatchEvent(
+								new Event("input"),
+							);
 						}
 					}
 				} else {
@@ -1429,7 +2029,7 @@
 			}
 
 			selectedModels = selectedModels.filter((modelId) =>
-				$models.map((m) => m.id).includes(modelId)
+				$models.map((m) => m.id).includes(modelId),
 			);
 		} else {
 			if ($selectedFolder?.data?.model_ids) {
@@ -1437,25 +2037,30 @@
 			} else {
 				if (sessionStorage.selectedModels) {
 					selectedModels = JSON.parse(sessionStorage.selectedModels);
-					sessionStorage.removeItem('selectedModels');
+					sessionStorage.removeItem("selectedModels");
 				} else {
 					if ($settings?.models) {
 						selectedModels = $settings?.models;
 					} else if ($config?.default_models) {
-						console.log($config?.default_models.split(',') ?? '');
-						selectedModels = $config?.default_models.split(',');
+						console.log($config?.default_models.split(",") ?? "");
+						selectedModels = $config?.default_models.split(",");
 					}
 				}
 			}
 
-			selectedModels = selectedModels.filter((modelId) => availableModels.includes(modelId));
+			selectedModels = selectedModels.filter((modelId) =>
+				availableModels.includes(modelId),
+			);
 		}
 
-		if (selectedModels.length === 0 || (selectedModels.length === 1 && selectedModels[0] === '')) {
+		if (
+			selectedModels.length === 0 ||
+			(selectedModels.length === 1 && selectedModels[0] === "")
+		) {
 			if (availableModels.length > 0) {
-				selectedModels = [availableModels?.at(0) ?? ''];
+				selectedModels = [availableModels?.at(0) ?? ""];
 			} else {
-				selectedModels = [''];
+				selectedModels = [""];
 			}
 		}
 
@@ -1464,71 +2069,73 @@
 		await showOverview.set(false);
 		await showArtifacts.set(false);
 
-		if ($page.url.pathname.includes('/c/')) {
-			window.history.replaceState(history.state, '', `/`);
+		if ($page.url.pathname.includes("/c/")) {
+			window.history.replaceState(history.state, "", `/`);
 		}
 
 		autoScroll = true;
 
 		resetInput();
-		await chatId.set('');
-		await chatTitle.set('');
+		await chatId.set("");
+		await chatTitle.set("");
 
 		history = {
 			messages: {},
-			currentId: null
+			currentId: null,
 		};
 
 		chatFiles = [];
 		params = {};
 
-		if ($page.url.searchParams.get('youtube')) {
+		if ($page.url.searchParams.get("youtube")) {
 			uploadYoutubeTranscription(
-				`https://www.youtube.com/watch?v=${$page.url.searchParams.get('youtube')}`
+				`https://www.youtube.com/watch?v=${$page.url.searchParams.get("youtube")}`,
 			);
 		}
 
-		if ($page.url.searchParams.get('load-url')) {
-			await uploadWeb($page.url.searchParams.get('load-url'));
+		if ($page.url.searchParams.get("load-url")) {
+			await uploadWeb($page.url.searchParams.get("load-url"));
 		}
 
-		if ($page.url.searchParams.get('web-search') === 'true') {
+		if ($page.url.searchParams.get("web-search") === "true") {
 			webSearchEnabled = true;
 		}
 
-		if ($page.url.searchParams.get('image-generation') === 'true') {
+		if ($page.url.searchParams.get("image-generation") === "true") {
 			imageGenerationEnabled = true;
 		}
 
-		if ($page.url.searchParams.get('code-interpreter') === 'true') {
+		if ($page.url.searchParams.get("code-interpreter") === "true") {
 			codeInterpreterEnabled = true;
 		}
 
-		if ($page.url.searchParams.get('tools')) {
+		if ($page.url.searchParams.get("tools")) {
 			selectedToolIds = $page.url.searchParams
-				.get('tools')
-				?.split(',')
+				.get("tools")
+				?.split(",")
 				.map((id) => id.trim())
 				.filter((id) => id);
-		} else if ($page.url.searchParams.get('tool-ids')) {
+		} else if ($page.url.searchParams.get("tool-ids")) {
 			selectedToolIds = $page.url.searchParams
-				.get('tool-ids')
-				?.split(',')
+				.get("tool-ids")
+				?.split(",")
 				.map((id) => id.trim())
 				.filter((id) => id);
 		}
 
-		if ($page.url.searchParams.get('call') === 'true') {
+		if ($page.url.searchParams.get("call") === "true") {
 			showCallOverlay.set(true);
 			showControls.set(true);
 		}
 
-		if ($page.url.searchParams.get('q')) {
-			const q = $page.url.searchParams.get('q') ?? '';
+		if ($page.url.searchParams.get("q")) {
+			const q = $page.url.searchParams.get("q") ?? "";
 			messageInput?.setText(q);
 
 			if (q) {
-				if (($page.url.searchParams.get('submit') ?? 'true') === 'true') {
+				if (
+					($page.url.searchParams.get("submit") ?? "true") === "true"
+				) {
 					await tick();
 					submitPrompt(q);
 				}
@@ -1536,7 +2143,7 @@
 		}
 
 		selectedModels = selectedModels.map((modelId) =>
-			$models.map((m) => m.id).includes(modelId) ? modelId : ''
+			$models.map((m) => m.id).includes(modelId) ? modelId : "",
 		);
 
 		const userSettings = await getUserSettings(localStorage.token);
@@ -1544,11 +2151,34 @@
 		if (userSettings) {
 			settings.set(userSettings.ui);
 		} else {
-			settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
+			settings.set(JSON.parse(localStorage.getItem("settings") ?? "{}"));
 		}
 
-		const chatInput = document.getElementById('chat-input');
+		const chatInput = document.getElementById("chat-input");
 		setTimeout(() => chatInput?.focus(), 0);
+
+		// ============================================
+		// [2026-01-22] 세션 요약 자동 반영 기능
+		// ============================================
+		// 이전 세션에서 저장된 요약 내용이 있으면 자동으로 입력창에 반영
+		// sessionStorage에 'sessionSummaryForNewChat' 키로 저장된 요약 확인
+		const storedSummary = sessionStorage.getItem('sessionSummaryForNewChat');
+		if (storedSummary) {
+			// 요약 내용을 입력창에 자동 입력 (새 세션 컨텍스트로 활용)
+			const contextPrefix = `[이전 세션 요약]\n${storedSummary}\n\n---\n이전 세션의 요약 내용입니다. 위 내용을 참고하여 대화를 이어가겠습니다.\n\n`;
+
+			await tick();
+			messageInput?.setText(contextPrefix);
+
+			// 사용 후 sessionStorage에서 제거 (일회성 사용)
+			sessionStorage.removeItem('sessionSummaryForNewChat');
+
+			console.log('✅ [세션 요약] 이전 세션 요약이 새 채팅에 자동 반영되었습니다.');
+			toast.success('이전 세션 요약이 입력창에 반영되었습니다. 대화를 이어가세요.');
+		}
+		// ============================================
+		// [2026-01-22] 세션 요약 자동 반영 기능 종료
+		// ============================================
 	};
 
 	const loadChat = async () => {
@@ -1558,15 +2188,19 @@
 			temporaryChatEnabled.set(false);
 		}
 
-		chat = await getChatById(localStorage.token, $chatId).catch(async (error) => {
-			await goto('/');
-			return null;
-		});
+		chat = await getChatById(localStorage.token, $chatId).catch(
+			async (error) => {
+				await goto("/");
+				return null;
+			},
+		);
 
 		if (chat) {
-			tags = await getTagsById(localStorage.token, $chatId).catch(async (error) => {
-				return [];
-			});
+			tags = await getTagsById(localStorage.token, $chatId).catch(
+				async (error) => {
+					return [];
+				},
+			);
 
 			const chatContent = chat.chat;
 
@@ -1576,10 +2210,16 @@
 				selectedModels =
 					(chatContent?.models ?? undefined) !== undefined
 						? chatContent.models
-						: [chatContent.models ?? ''];
+						: [chatContent.models ?? ""];
 
-				if (!($user?.role === 'admin' || ($user?.permissions?.chat?.multiple_models ?? true))) {
-					selectedModels = selectedModels.length > 0 ? [selectedModels[0]] : [''];
+				if (
+					!(
+						$user?.role === "admin" ||
+						($user?.permissions?.chat?.multiple_models ?? true)
+					)
+				) {
+					selectedModels =
+						selectedModels.length > 0 ? [selectedModels[0]] : [""];
 				}
 
 				oldSelectedModelIds = selectedModels;
@@ -1596,7 +2236,9 @@
 				if (userSettings) {
 					await settings.set(userSettings.ui);
 				} else {
-					await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
+					await settings.set(
+						JSON.parse(localStorage.getItem("settings") ?? "{}"),
+					);
 				}
 
 				params = chatContent?.params ?? {};
@@ -1607,13 +2249,16 @@
 
 				if (history.currentId) {
 					for (const message of Object.values(history.messages)) {
-						if (message.role === 'assistant') {
+						if (message.role === "assistant") {
 							message.done = true;
 						}
 					}
 				}
 
-				const taskRes = await getTaskIdsByChatId(localStorage.token, $chatId).catch((error) => {
+				const taskRes = await getTaskIdsByChatId(
+					localStorage.token,
+					$chatId,
+				).catch((error) => {
 					return null;
 				});
 
@@ -1630,16 +2275,21 @@
 		}
 	};
 
-	const scrollToBottom = async (behavior = 'auto') => {
+	const scrollToBottom = async (behavior = "auto") => {
 		await tick();
 		if (messagesContainerElement) {
 			messagesContainerElement.scrollTo({
 				top: messagesContainerElement.scrollHeight,
-				behavior
+				behavior,
 			});
 		}
 	};
-	const chatCompletedHandler = async (chatId, modelId, responseMessageId, messages) => {
+	const chatCompletedHandler = async (
+		chatId,
+		modelId,
+		responseMessageId,
+		messages,
+	) => {
 		const res = await chatCompleted(localStorage.token, {
 			model: modelId,
 			messages: messages.map((m) => ({
@@ -1649,13 +2299,14 @@
 				info: m.info ? m.info : undefined,
 				timestamp: m.timestamp,
 				...(m.usage ? { usage: m.usage } : {}),
-				...(m.sources ? { sources: m.sources } : {})
+				...(m.sources ? { sources: m.sources } : {}),
 			})),
-			filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
+			filter_ids:
+				selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 			model_item: $models.find((m) => m.id === modelId),
 			chat_id: chatId,
 			session_id: $socket?.id,
-			id: responseMessageId
+			id: responseMessageId,
 		}).catch((error) => {
 			toast.error(`${error}`);
 			messages.at(-1).error = { content: error };
@@ -1670,10 +2321,14 @@
 					// Add null check for message and message.id
 					history.messages[message.id] = {
 						...history.messages[message.id],
-						...(history.messages[message.id].content !== message.content
-							? { originalContent: history.messages[message.id].content }
+						...(history.messages[message.id].content !==
+						message.content
+							? {
+									originalContent:
+										history.messages[message.id].content,
+								}
 							: {}),
-						...message
+						...message,
 					};
 				}
 			}
@@ -1688,18 +2343,26 @@
 					messages: messages,
 					history: history,
 					params: params,
-					files: chatFiles
+					files: chatFiles,
 				});
 
 				currentChatPage.set(1);
-				await chats.set(await getChatList(localStorage.token, $currentChatPage));
+				await chats.set(
+					await getChatList(localStorage.token, $currentChatPage),
+				);
 			}
 		}
 
 		taskIds = null;
 	};
 
-	const chatActionHandler = async (chatId, actionId, modelId, responseMessageId, event = null) => {
+	const chatActionHandler = async (
+		chatId,
+		actionId,
+		modelId,
+		responseMessageId,
+		event = null,
+	) => {
 		const messages = createMessagesList(history, responseMessageId);
 
 		const res = await chatAction(localStorage.token, actionId, {
@@ -1710,13 +2373,13 @@
 				content: m.content,
 				info: m.info ? m.info : undefined,
 				timestamp: m.timestamp,
-				...(m.sources ? { sources: m.sources } : {})
+				...(m.sources ? { sources: m.sources } : {}),
 			})),
 			...(event ? { event: event } : {}),
 			model_item: $models.find((m) => m.id === modelId),
 			chat_id: chatId,
 			session_id: $socket?.id,
-			id: responseMessageId
+			id: responseMessageId,
 		}).catch((error) => {
 			toast.error(`${error}`);
 			messages.at(-1).error = { content: error };
@@ -1729,9 +2392,12 @@
 				history.messages[message.id] = {
 					...history.messages[message.id],
 					...(history.messages[message.id].content !== message.content
-						? { originalContent: history.messages[message.id].content }
+						? {
+								originalContent:
+									history.messages[message.id].content,
+							}
 						: {}),
-					...message
+					...message,
 				};
 			}
 		}
@@ -1743,35 +2409,41 @@
 					messages: messages,
 					history: history,
 					params: params,
-					files: chatFiles
+					files: chatFiles,
 				});
 
 				currentChatPage.set(1);
-				await chats.set(await getChatList(localStorage.token, $currentChatPage));
+				await chats.set(
+					await getChatList(localStorage.token, $currentChatPage),
+				);
 			}
 		}
 	};
 
-	const getChatEventEmitter = async (modelId: string, chatId: string = '') => {
+	const getChatEventEmitter = async (
+		modelId: string,
+		chatId: string = "",
+	) => {
 		return setInterval(() => {
-			$socket?.emit('usage', {
-				action: 'chat',
+			$socket?.emit("usage", {
+				action: "chat",
 				model: modelId,
-				chat_id: chatId
+				chat_id: chatId,
 			});
 		}, 1000);
 	};
 
 	const createMessagePair = async (userPrompt) => {
-		messageInput?.setText('');
+		messageInput?.setText("");
 		if (selectedModels.length === 0) {
-			toast.error($i18n.t('Model not selected'));
+			toast.error($i18n.t("Model not selected"));
 		} else {
 			const modelId = selectedModels[0];
 			const model = $models.filter((m) => m.id === modelId).at(0);
 
 			const messages = createMessagesList(history, history.currentId);
-			const parentMessage = messages.length !== 0 ? messages.at(-1) : null;
+			const parentMessage =
+				messages.length !== 0 ? messages.at(-1) : null;
 
 			const userMessageId = uuidv4();
 			const responseMessageId = uuidv4();
@@ -1780,23 +2452,23 @@
 				id: userMessageId,
 				parentId: parentMessage ? parentMessage.id : null,
 				childrenIds: [responseMessageId],
-				role: 'user',
+				role: "user",
 				content: userPrompt ? userPrompt : `[PROMPT] ${userMessageId}`,
-				timestamp: Math.floor(Date.now() / 1000)
+				timestamp: Math.floor(Date.now() / 1000),
 			};
 
 			const responseMessage = {
 				id: responseMessageId,
 				parentId: userMessageId,
 				childrenIds: [],
-				role: 'assistant',
+				role: "assistant",
 				content: `[RESPONSE] ${responseMessageId}`,
 				done: true,
 
 				model: modelId,
 				modelName: model.name ?? model.id,
 				modelIdx: 0,
-				timestamp: Math.floor(Date.now() / 1000)
+				timestamp: Math.floor(Date.now() / 1000),
 			};
 
 			if (parentMessage) {
@@ -1830,13 +2502,13 @@
 		for (const message of messages) {
 			let messageId = uuidv4();
 
-			if (message.role === 'user') {
+			if (message.role === "user") {
 				const userMessage = {
 					id: messageId,
 					parentId: currentParentId,
 					childrenIds: [],
 					timestamp: Math.floor(Date.now() / 1000),
-					...message
+					...message,
 				};
 
 				if (parentMessage) {
@@ -1857,7 +2529,7 @@
 					modelName: model.name ?? model.id,
 					modelIdx: 0,
 					timestamp: Math.floor(Date.now() / 1000),
-					...message
+					...message,
 				};
 
 				if (parentMessage) {
@@ -1886,7 +2558,16 @@
 	};
 
 	const chatCompletionEventHandler = async (data, message, chatId) => {
-		const { id, done, choices, content, sources, selected_model_id, error, usage } = data;
+		const {
+			id,
+			done,
+			choices,
+			content,
+			sources,
+			selected_model_id,
+			error,
+			usage,
+		} = data;
 
 		if (error) {
 			await handleOpenAIError(error, message);
@@ -1902,36 +2583,44 @@
 				message.content += choices[0]?.message?.content;
 			} else {
 				// Stream response
-				let value = choices[0]?.delta?.content ?? '';
-				if (message.content == '' && value == '\n') {
-					console.log('Empty response');
+				let value = choices[0]?.delta?.content ?? "";
+				if (message.content == "" && value == "\n") {
+					console.log("Empty response");
 				} else {
 					message.content += value;
 
-					if (navigator.vibrate && ($settings?.hapticFeedback ?? false)) {
+					if (
+						navigator.vibrate &&
+						($settings?.hapticFeedback ?? false)
+					) {
 						navigator.vibrate(5);
 					}
 
 					// Emit chat event for TTS
 					const messageContentParts = getMessageContentParts(
 						removeAllDetails(message.content),
-						$config?.audio?.tts?.split_on ?? 'punctuation'
+						$config?.audio?.tts?.split_on ?? "punctuation",
 					);
 					messageContentParts.pop();
 
 					// dispatch only last sentence and make sure it hasn't been dispatched before
 					if (
 						messageContentParts.length > 0 &&
-						messageContentParts[messageContentParts.length - 1] !== message.lastSentence
+						messageContentParts[messageContentParts.length - 1] !==
+							message.lastSentence
 					) {
-						message.lastSentence = messageContentParts[messageContentParts.length - 1];
+						message.lastSentence =
+							messageContentParts[messageContentParts.length - 1];
 						eventTarget.dispatchEvent(
-							new CustomEvent('chat', {
+							new CustomEvent("chat", {
 								detail: {
 									id: message.id,
-									content: messageContentParts[messageContentParts.length - 1]
-								}
-							})
+									content:
+										messageContentParts[
+											messageContentParts.length - 1
+										],
+								},
+							}),
 						);
 					}
 				}
@@ -1949,23 +2638,28 @@
 			// Emit chat event for TTS
 			const messageContentParts = getMessageContentParts(
 				removeAllDetails(message.content),
-				$config?.audio?.tts?.split_on ?? 'punctuation'
+				$config?.audio?.tts?.split_on ?? "punctuation",
 			);
 			messageContentParts.pop();
 
 			// dispatch only last sentence and make sure it hasn't been dispatched before
 			if (
 				messageContentParts.length > 0 &&
-				messageContentParts[messageContentParts.length - 1] !== message.lastSentence
+				messageContentParts[messageContentParts.length - 1] !==
+					message.lastSentence
 			) {
-				message.lastSentence = messageContentParts[messageContentParts.length - 1];
+				message.lastSentence =
+					messageContentParts[messageContentParts.length - 1];
 				eventTarget.dispatchEvent(
-					new CustomEvent('chat', {
+					new CustomEvent("chat", {
 						detail: {
 							id: message.id,
-							content: messageContentParts[messageContentParts.length - 1]
-						}
-					})
+							content:
+								messageContentParts[
+									messageContentParts.length - 1
+								],
+						},
+					}),
 				);
 			}
 		}
@@ -1975,9 +2669,15 @@
 			message.arena = true;
 		}
 
+		// ============================================
+		// [2024.12.30] 토큰 저장 - LLM 응답의 usage 저장 시작
+		// 역할: LLM에서 반환된 토큰 사용량을 메시지에 저장
+		// 저장 데이터: {prompt_tokens, completion_tokens, total_tokens}
+		// ============================================
 		if (usage) {
 			message.usage = usage;
 		}
+		// [2024.12.30] 토큰 저장 완료 ============================================
 
 		history.messages[message.id] = message;
 
@@ -1997,22 +2697,25 @@
 			let lastMessageContentPart =
 				getMessageContentParts(
 					removeAllDetails(message.content),
-					$config?.audio?.tts?.split_on ?? 'punctuation'
-				)?.at(-1) ?? '';
+					$config?.audio?.tts?.split_on ?? "punctuation",
+				)?.at(-1) ?? "";
 			if (lastMessageContentPart) {
 				eventTarget.dispatchEvent(
-					new CustomEvent('chat', {
-						detail: { id: message.id, content: lastMessageContentPart }
-					})
+					new CustomEvent("chat", {
+						detail: {
+							id: message.id,
+							content: lastMessageContentPart,
+						},
+					}),
 				);
 			}
 			eventTarget.dispatchEvent(
-				new CustomEvent('chat:finish', {
+				new CustomEvent("chat:finish", {
 					detail: {
 						id: message.id,
-						content: message.content
-					}
-				})
+						content: message.content,
+					},
+				}),
 			);
 
 			history.messages[message.id] = message;
@@ -2026,11 +2729,13 @@
 				chatId,
 				message.model,
 				message.id,
-				createMessagesList(history, message.id)
+				createMessagesList(history, message.id),
 			);
 		}
 
-		console.log(data);
+		// ========== [2026-01-27 시스템 프롬프트 노출 방지] 시작 ==========
+		// console.log(data); // 보안: 채팅 데이터 콘솔 노출 제거
+		// ========== [2026-01-27 시스템 프롬프트 노출 방지] 종료 ==========
 		await tick();
 
 		if (autoScroll) {
@@ -2042,27 +2747,39 @@
 	// Chat functions
 	//////////////////////////
 
-	const submitPrompt = async (userPrompt, { _raw = false, edmFiles = null } = {}) => {
-		console.log('[Chat] submitPrompt called:', userPrompt);
-		console.log('[Chat] Current chatId:', $chatId);
-		console.log('[Chat] temporaryChatEnabled:', $temporaryChatEnabled);
-		console.log('[Chat] selectedCategories:', $selectedCategories);
+	const submitPrompt = async (
+		userPrompt,
+		{ _raw = false, edmFiles = null } = {},
+	) => {
+		// ========== [2026-01-27 시스템 프롬프트 노출 방지] 시작 ==========
+		// console.log("[Chat] submitPrompt called:", userPrompt); // 보안: 사용자 프롬프트 콘솔 노출 제거
+		// console.log("[Chat] Current chatId:", $chatId);
+		// console.log("[Chat] temporaryChatEnabled:", $temporaryChatEnabled);
+		// console.log("[Chat] selectedCategories:", $selectedCategories);
+		// ========== [2026-01-27 시스템 프롬프트 노출 방지] 종료 ==========
 
 		// EDM 파일 지식화 요청용 변수
 		let currentEdmFiles = null;
 
 		// EDM 파일 지식화 요청인 경우
 		if (edmFiles && edmFiles.length > 0) {
-			console.log('🔵 [Chat] EDM 파일 지식화 요청:', edmFiles);
+			console.log("🔵 [Chat] EDM 파일 지식화 요청:", edmFiles);
 
 			// 나중에 userMessage에 추가하기 위해 저장
 			currentEdmFiles = edmFiles;
 
 			// edm_download_pipe_streaming 파이프라인 선택
-			const edmPipeModel = $models.find(m => m.id === 'edm_download_pipe_streaming' || m.id === 'dm_download_pipe_streaming');
+			const edmPipeModel = $models.find(
+				(m) =>
+					m.id === "edm_download_pipe_streaming" ||
+					m.id === "dm_download_pipe_streaming",
+			);
 			if (edmPipeModel) {
 				selectedModels = [edmPipeModel.id];
-				console.log('✅ [Chat] EDM 다운로드 파이프라인 자동 선택:', edmPipeModel.id);
+				console.log(
+					"✅ [Chat] EDM 다운로드 파이프라인 자동 선택:",
+					edmPipeModel.id,
+				);
 			}
 
 			// 프롬프트 생성
@@ -2076,61 +2793,184 @@
 			window.__edmFilesForPipeline[requestId] = edmFiles;
 		}
 
-		// 🔄 멀티턴 제한 체크 (해제됨)
-		// const currentUserMessageCount = Object.values(history.messages).filter(msg => msg.role === 'user').length;
-		// const nextUserMessageCount = currentUserMessageCount + 1;
-		// console.log(`🔄 [멀티턴] 현재 사용자 메시지: ${currentUserMessageCount}개, 전송 후: ${nextUserMessageCount}개/${MAX_TURNS}턴 제한`);
-		// console.log(`🔄 [멀티턴] 전체 메시지: ${Object.keys(history.messages).length}개`);
-		// if (nextUserMessageCount > MAX_TURNS) {
-		// 	console.log(`⚠️ [멀티턴] 최대 턴 수(${MAX_TURNS}) 초과 - 팝업 표시`);
-		// 	showMultiTurnModal = true;
-		// 	return;
-		// }
+		// ============================================
+		// [2024.12.30] 턴 및 토큰수 제약처리 - 제한 체크 로직 시작
+		// 역할: 메시지 전송 전 Max Turns, Max Tokens, Max Input Tokens 제한 확인
+		// 제한 초과 시: 세션 초기화 팝업 또는 토스트 경고 표시
+		// ============================================
+		// 🔄 모델별 세션 제한 체크
+		const currentModelId = selectedModels[0];
+		const modelLimits = modelSessionLimits[currentModelId];
+
+		if (modelLimits) {
+			const maxTurns = modelLimits.maxTurns || 0;
+			const maxTokens = modelLimits.maxTokens || 0;
+			// ----- 1225 maxInputTokens 체크 추가 시작 -----
+			const maxInputTokens = modelLimits.maxInputTokens || 0;
+
+			// 입력 토큰수 체크 (0이면 무제한)
+			if (maxInputTokens > 0) {
+				const inputTokens = estimateTokenCount(userPrompt);
+				console.log(`🔄 [입력제한] 입력 토큰수: ${inputTokens}/${maxInputTokens}`);
+
+				if (inputTokens > maxInputTokens) {
+					toast.error(
+						$i18n.t('Max Input 토큰 초과') + `: ${inputTokens.toLocaleString()} / ${maxInputTokens.toLocaleString()} 토큰\n` +
+						$i18n.t('입력 내용을 줄여주세요.'),
+						{ duration: 5000 }
+					);
+					// 메시지 전송 중단, 입력 내용은 유지됨 (return만 하면 됨)
+					return;
+				}
+			}
+			// ----- 1225 maxInputTokens 체크 추가 종료 -----
+
+			// 현재 턴수 계산 (사용자 메시지 수)
+			const currentTurns = Object.values(history.messages).filter(msg => msg.role === 'user').length;
+
+			// 현재 총 토큰수 계산 (usage.total_tokens 또는 info.total_tokens)
+			let currentTokens = 0;
+			Object.values(history.messages).forEach((msg: any) => {
+				const msgTokens = msg?.usage?.total_tokens || msg?.info?.total_tokens || msg?.info?.eval_count || 0;
+				currentTokens += msgTokens;
+			});
+
+			console.log(`🔄 [세션제한] 모델: ${currentModelId}, 현재 턴수: ${currentTurns}/${maxTurns}, 현재 토큰수: ${currentTokens}/${maxTokens}`);
+
+			// 토큰수 제한 체크 (0이면 무제한)
+			if (maxTokens > 0 && currentTokens >= maxTokens) {
+				sessionResetMessage = `토큰 제한(${maxTokens.toLocaleString()})을 초과하여 자동으로 세션이 초기화됩니다.`;
+				showSessionResetModal = true;
+				return;
+			}
+
+			// 턴수 제한 체크 (0이면 무제한)
+			if (maxTurns > 0) {
+				const nextTurns = currentTurns + 1;
+				// ----- 1225 warningTurns 설정 적용 시작 -----
+				// warningTurns: Max Turns 이전 몇 턴부터 경고할지 (설정값만 사용, 기본값 없음)
+				const warningTurns = modelLimits.warningTurns || 0;
+				// ----- 1225 warningTurns 설정 적용 종료 -----
+
+				// max 턴수 초과 시 세션 초기화 팝업
+				if (nextTurns > maxTurns) {
+					sessionResetMessage = `최대 턴수(${maxTurns}턴)를 초과했습니다.\n현재 턴수: ${currentTurns}턴 / 최대: ${maxTurns}턴\n자동으로 세션이 초기화됩니다.`;
+					showSessionResetModal = true;
+					return;
+				}
+
+				// ----- 1225 warningTurns 설정 적용 시작 -----
+				// warningTurns가 설정되어 있을 때만 토스트 경고 표시
+				// (예: warningTurns=3, maxTurns=10이면 7턴 이상에서 경고)
+				if (warningTurns > 0 && nextTurns >= maxTurns - warningTurns && nextTurns <= maxTurns) {
+					const remainingTurns = maxTurns - currentTurns;
+					// ----- 1227 팝업을 토스트로 변경 시작 -----
+					toast.warning(`세션 제한 경고: 남은 턴수 ${remainingTurns}턴 (현재: ${currentTurns}/${maxTurns}턴)`, {
+						duration: 5000
+					});
+					// ----- 1227 팝업을 토스트로 변경 종료 -----
+					// 경고는 표시하지만 메시지 전송은 계속 진행
+				}
+				// ----- 1225 warningTurns 설정 적용 종료 -----
+			}
+		}
+		// [2024.12.30] 턴 및 토큰수 제약처리 - 제한 체크 로직 완료 ============================================
 
 		// EDM 문서활용이 선택된 경우 모델에 따라 분기
 		// selectedCategories는 문자열 배열 ['edm', 'guide', ...] 형태
-		const shouldUseEdm = $selectedCategories.includes('edm');
+		const shouldUseEdm = $selectedCategories.includes("edm");
 
 		// 대사우 Assistant가 선택된 경우 확인
-		const shouldUseDaesawoo = $selectedCategories.some(cat =>
-			['guide', 'helpdesk', 'dictionary', 'etc'].includes(cat)
+		const shouldUseDaesawoo = $selectedCategories.some((cat) =>
+			["guide", "helpdesk", "dictionary", "etc"].includes(cat),
 		);
 
 		// EDM Search 파이프가 선택되었는지 확인
-		const isEdmPipeSelected = selectedModels.some(modelId => {
-			const model = $models.find(m => m.id === modelId);
-			return model && (
-				model.id === 'edm_search_milvus' ||
-				model.id === 'edm_search_pipe' ||
-				model.id === 'edm_n8n_pipe' ||
-				model.name?.includes('EDM Search') ||
-				(model.type === 'pipe' && model.id.includes('edm'))
+		const isEdmPipeSelected = selectedModels.some((modelId) => {
+			const model = $models.find((m) => m.id === modelId);
+			return (
+				model &&
+				(model.id === "edm_search_milvus" ||
+					model.id === "edm_search_pipe" ||
+					model.id === "edm_n8n_pipe" ||
+					model.name?.includes("EDM Search") ||
+					(model.type === "pipe" && model.id.includes("edm")))
 			);
 		});
 
 		// daesawoo 파이프가 선택되었는지 확인
-		const isDaesawooPipeSelected = selectedModels.some(modelId => {
-			const model = $models.find(m => m.id === modelId);
-			return model && (
-				model.id?.includes('daesawoo') ||
-				model.name?.includes('daesawoo')
+		const isDaesawooPipeSelected = selectedModels.some((modelId) => {
+			const model = $models.find((m) => m.id === modelId);
+			return (
+				model &&
+				(model.id?.includes("daesawoo") ||
+					model.name?.includes("daesawoo"))
 			);
 		});
 
-		if (shouldUseDaesawoo && isDaesawooPipeSelected) {
+		// Dify RAG 파이프가 선택되었는지 확인
+		const isDifyPipeSelected = selectedModels.some((modelId) => {
+			const model = $models.find((m) => m.id === modelId);
+			return (
+				model &&
+				(model.id?.includes("dify_rag") ||
+					model.id?.includes("dify-rag") ||
+					model.name?.toLowerCase().includes("dify"))
+			);
+		});
+
+		// Dify 문서 처리 파이프가 선택되었는지 확인
+		const isDifyDocPipeSelected = selectedModels.some((modelId) => {
+			const model = $models.find((m) => m.id === modelId);
+			return (
+				model &&
+				(model.id?.includes("dify_document") ||
+					model.id?.includes("dify-document") ||
+					model.name?.toLowerCase().includes("document processing"))
+			);
+		});
+
+		// 파일이 첨부되었는지 확인
+		const hasAttachedFiles = files && files.length > 0 && files.some(f => f.type !== 'image');
+
+		// 파일 첨부 + Dify 문서 처리 파이프 선택된 경우
+		if (hasAttachedFiles && isDifyDocPipeSelected) {
+			console.log("📄 [submitPrompt] Dify 문서 처리 파이프 선택됨", {
+				timestamp: new Date().toISOString(),
+				action: "dify_document_pipe_delegation",
+				isDifyDocPipeSelected: isDifyDocPipeSelected,
+				selectedModels: selectedModels,
+				attachedFiles: files.map(f => ({ name: f.name, type: f.type })),
+			});
+			// 문서 처리 진행 상태 표시 시작
+			resetDifyDocProgress();
+			showDifyDocProgress = true;
+			updateDifyDocProgress("upload", "running");
+			// Dify 문서 처리 파이프로 위임 - 파이프 내부에서 처리
+		} else if (isDifyPipeSelected) {
+			console.log("🟣 [submitPrompt] Dify RAG 파이프 선택됨", {
+				timestamp: new Date().toISOString(),
+				action: "dify_pipe_delegation",
+				isDifyPipeSelected: isDifyPipeSelected,
+				selectedModels: selectedModels,
+				userPrompt: userPrompt.substring(0, 100) + "...",
+			});
+			// Dify 파이프로 위임 - 파이프 내부에서 Dify API 호출 및 스트리밍 처리
+			// 일반 플로우로 진행하여 파이프라인에서 처리
+		} else if (shouldUseDaesawoo && isDaesawooPipeSelected) {
 			// 대사우 Assistant 체크 + daesawoo 파이프 선택
 			// → 전처리 없이 바로 daesawoo 파이프로 위임
 			// → daesawoo 파이프 내부에서 LLM 호출 및 응답 처리
-			console.log('🟢 [submitPrompt] 대사우 파이프 위임 (전처리 없음)', {
+			console.log("🟢 [submitPrompt] 대사우 파이프 위임 (전처리 없음)", {
 				timestamp: new Date().toISOString(),
-				action: 'daesawoo_pipe_delegation',
+				action: "daesawoo_pipe_delegation",
 				shouldUseDaesawoo: shouldUseDaesawoo,
 				isDaesawooPipeSelected: isDaesawooPipeSelected,
 				selectedModels: selectedModels,
 				selectedCategories: $selectedCategories,
-				userPrompt: userPrompt.substring(0, 100) + '...'
+				userPrompt: userPrompt.substring(0, 100) + "...",
 			});
-			console.log('   선택된 모델:', selectedModels);
+			console.log("   선택된 모델:", selectedModels);
 			// 파이프로 위임하기 위해 일반 플로우로 진행 (return 없음, 전처리 없음)
 		} else if (shouldUseEdm && isEdmPipeSelected) {
 			// EDM 문서활용 체크 + edm_search_pipe 선택
@@ -2139,17 +2979,19 @@
 			//   1. /tmp/download/imsi 폴더에 파일 다운로드
 			//   2. 파싱 - 청킹 - 임베딩 - 벡터 저장
 			//   3. RAG를 통해 응답
-			console.log('🔵 [submitPrompt] EDM 파이프 위임 (전처리 없음)', {
+			console.log("🔵 [submitPrompt] EDM 파이프 위임 (전처리 없음)", {
 				timestamp: new Date().toISOString(),
-				action: 'edm_pipe_delegation',
+				action: "edm_pipe_delegation",
 				shouldUseEdm: shouldUseEdm,
 				isEdmPipeSelected: isEdmPipeSelected,
 				selectedModels: selectedModels,
 				selectedCategories: $selectedCategories,
-				userPrompt: userPrompt.substring(0, 100) + '...'
+				userPrompt: userPrompt.substring(0, 100) + "...",
 			});
-			console.log('   선택된 모델:', selectedModels);
-			console.log('   📁 파이프 내부에서 /tmp/download/imsi 폴더 처리 예정');
+			console.log("   선택된 모델:", selectedModels);
+			console.log(
+				"   📁 파이프 내부에서 /tmp/download/imsi 폴더 처리 예정",
+			);
 			// 파이프로 위임하기 위해 일반 플로우로 진행 (return 없음, 전처리 없음)
 		}
 
@@ -2274,7 +3116,12 @@
 							console.log('📋 변환된 파일 리스트:', edmFileList);
 
 							learnedDocsCount = edmFileList.length;
-							sources = edmFileList.slice(0, 3).map(file => file.FILE_NAME);
+							// [2026.01.19] EDM 파일을 Citations 컴포넌트 포맷으로 변환 (기존: 파일명만 문자열 배열)
+							sources = edmFileList.map(file => ({
+								document: [file.SUMMARY || ''],
+								metadata: [{ source: file.DOC_ID || file.FILE_NAME, name: file.FILE_NAME }],
+								source: { id: file.DOC_ID || file.FILE_NAME, name: file.FILE_NAME }
+							}));
 						} else {
 							console.log('📭 파이프 결과 없음 - edmFileList는 빈 배열 유지');
 							edmFileList = [];
@@ -2446,8 +3293,7 @@
 
 		// 대사우 Assistant: 사용자 의도 분석 및 자동 분류
 		// 이전 의도 분석 로직 제거 - 파이프라인이 모든 처리를 담당
-		console.log('🚀 [submitPrompt] 대사우 파이프라인으로 직접 전달');
-
+		console.log("🚀 [submitPrompt] 대사우 파이프라인으로 직접 전달");
 
 		// 다른 모델 체크 주석 처리 - 기본 모델만 사용
 		// const _selectedModels = selectedModels.map((modelId) =>
@@ -2458,8 +3304,8 @@
 		// }
 
 		// 빈 프롬프트 체크만 유지
-		if (userPrompt === '') {
-			toast.error($i18n.t('Please enter a prompt'));
+		if (userPrompt === "") {
+			toast.error($i18n.t("Please enter a prompt"));
 			return;
 		}
 
@@ -2495,28 +3341,72 @@
 
 		if (history?.currentId) {
 			const lastMessage = history.messages[history.currentId];
-			if (lastMessage.done != true) {
-				// Response not done
-				return;
-			}
 
-			if (lastMessage.error && !lastMessage.content) {
-				// Error in response
-				toast.error($i18n.t(`Oops! There was an error in the previous response.`));
-				return;
+			// 디버그 로그: 메시지 상태 확인
+			console.log("[Chat] 📋 submitPrompt 체크:", {
+				currentId: history.currentId,
+				done: lastMessage?.done,
+				hasError: !!lastMessage?.error,
+				hasContent: !!lastMessage?.content,
+				generating,
+				taskIds: taskIds?.length
+			});
+
+			// 🔧 전처리: 비정상 상태 자동 복구 - 새 메시지 입력 시 이전 상태 무시
+			// 응답 미완료, 에러, 프로세스 정지 등 모든 비정상 상태에서 새 워크플로우 시작 허용
+			const needsRecovery = lastMessage.done != true || lastMessage.error || generating;
+
+			if (needsRecovery) {
+				console.log("[Chat] 🔧 전처리: 비정상 상태 감지 - 자동 복구 후 새 메시지 허용", {
+					notDone: lastMessage.done != true,
+					hasError: !!lastMessage.error,
+					wasGenerating: generating
+				});
+
+				// 진행 중인 모든 상태 초기화
+				generating = false;
+				generationController?.abort();
+				generationController = null;
+				taskIds = null;
+
+				// 이전 메시지 상태 정상화
+				const updatedMessage = { ...lastMessage, done: true };
+				delete updatedMessage.error;
+
+				// 컨텐츠가 없으면 기본 메시지 설정
+				if (!updatedMessage.content || updatedMessage.content.trim() === "") {
+					updatedMessage.content = "(이전 응답이 중단되었습니다)";
+				}
+
+				history = {
+					...history,
+					messages: {
+						...history.messages,
+						[history.currentId]: updatedMessage
+					}
+				};
+				// 복구 후 계속 진행
 			}
 		}
 
-		messageInput?.setText('');
-		prompt = '';
+		messageInput?.setText("");
+		prompt = "";
 
 		const messages = createMessagesList(history, history.currentId);
 		const _files = JSON.parse(JSON.stringify(files));
 
 		chatFiles.push(
 			..._files.filter((item) =>
-				['doc', 'text', 'file', 'note', 'chat', 'folder', 'collection'].includes(item.type)
-			)
+				[
+					"doc",
+					"text",
+					"file",
+					"note",
+					"chat",
+					"folder",
+					"collection",
+				].includes(item.type),
+			),
 		);
 
 		// Knowledge Base 추가 기능 주석 처리 - 기본 모델만 사용
@@ -2547,11 +3437,13 @@
 		chatFiles = chatFiles.filter(
 			// Remove duplicates
 			(item, index, array) =>
-				array.findIndex((i) => JSON.stringify(i) === JSON.stringify(item)) === index
+				array.findIndex(
+					(i) => JSON.stringify(i) === JSON.stringify(item),
+				) === index,
 		);
 
 		files = [];
-		messageInput?.setText('');
+		messageInput?.setText("");
 
 		// Create user message
 		let userMessageId = uuidv4();
@@ -2559,20 +3451,20 @@
 			id: userMessageId,
 			parentId: messages.length !== 0 ? messages.at(-1).id : null,
 			childrenIds: [],
-			role: 'user',
+			role: "user",
 			content: userPrompt,
 			files: _files.length > 0 ? _files : undefined,
 			timestamp: Math.floor(Date.now() / 1000), // Unix epoch
 			models: selectedModels,
-			edm_files: currentEdmFiles // EDM 파일 지식화 요청 정보 추가
+			edm_files: currentEdmFiles, // EDM 파일 지식화 요청 정보 추가
 		};
 
 		// EDM 파일 지식화 디버그 로그
 		if (currentEdmFiles && currentEdmFiles.length > 0) {
-			console.log('✅ [Chat] userMessage에 edm_files 추가됨:', {
+			console.log("✅ [Chat] userMessage에 edm_files 추가됨:", {
 				filesCount: currentEdmFiles.length,
 				files: currentEdmFiles,
-				messageId: userMessageId
+				messageId: userMessageId,
 			});
 		}
 
@@ -2582,19 +3474,23 @@
 
 		// Append messageId to childrenIds of parent message
 		if (messages.length !== 0) {
-			history.messages[messages.at(-1).id].childrenIds.push(userMessageId);
+			history.messages[messages.at(-1).id].childrenIds.push(
+				userMessageId,
+			);
 		}
 
 		// focus on chat input
-		const chatInput = document.getElementById('chat-input');
+		const chatInput = document.getElementById("chat-input");
 		chatInput?.focus();
 
 		saveSessionSelectedModels();
 
-		console.log('[Chat] About to call sendMessage with newChat=true');
-		console.log('[Chat] User message parentId:', userMessage.parentId);
+		// ========== [2026-01-27 시스템 프롬프트 노출 방지] 시작 ==========
+		// console.log("[Chat] About to call sendMessage with newChat=true");
+		// console.log("[Chat] User message parentId:", userMessage.parentId);
+		// ========== [2026-01-27 시스템 프롬프트 노출 방지] 종료 ==========
 		await sendMessage(history, userMessageId, { newChat: true });
-		console.log('[Chat] sendMessage completed');
+		// console.log("[Chat] sendMessage completed"); // 보안: 디버그 로그 제거
 	};
 
 	const sendMessage = async (
@@ -2604,21 +3500,21 @@
 			messages = null,
 			modelId = null,
 			modelIdx = null,
-			newChat = false
+			newChat = false,
 		}: {
 			messages?: any[] | null;
 			modelId?: string | null;
 			modelIdx?: number | null;
 			newChat?: boolean;
-		} = {}
+		} = {},
 	) => {
-		console.log('🔵 [sendMessage 시작]', {
+		console.log("🔵 [sendMessage 시작]", {
 			timestamp: new Date().toISOString(),
-			action: 'send_message_start',
+			action: "send_message_start",
 			parentId: parentId,
 			newChat: newChat,
 			modelId: modelId,
-			modelIdx: modelIdx
+			modelIdx: modelIdx,
 		});
 
 		if (autoScroll) {
@@ -2646,12 +3542,12 @@
 					parentId: parentId,
 					id: responseMessageId,
 					childrenIds: [],
-					role: 'assistant',
-					content: '',
+					role: "assistant",
+					content: "",
 					model: model.id,
 					modelName: model.name ?? model.id,
 					modelIdx: modelIdx ? modelIdx : _modelIdx,
-					timestamp: Math.floor(Date.now() / 1000) // Unix epoch
+					timestamp: Math.floor(Date.now() / 1000), // Unix epoch
 				};
 
 				// Add message to history and Set currentId to messageId
@@ -2663,28 +3559,35 @@
 					// Add null check before accessing childrenIds
 					history.messages[parentId].childrenIds = [
 						...history.messages[parentId].childrenIds,
-						responseMessageId
+						responseMessageId,
 					];
 				}
 
-				responseMessageIds[`${modelId}-${modelIdx ? modelIdx : _modelIdx}`] = responseMessageId;
+				responseMessageIds[
+					`${modelId}-${modelIdx ? modelIdx : _modelIdx}`
+				] = responseMessageId;
 			}
 		}
 		history = history;
 
 		// Create new chat if newChat is true and first user message
-		console.log('[Chat] sendMessage - newChat check:', {
+		console.log("[Chat] sendMessage - newChat check:", {
 			newChat,
 			currentId: _history.currentId,
 			hasMessage: !!_history.messages[_history.currentId],
 			parentId: _history.messages[_history.currentId]?.parentId,
-			willCreateChat: newChat && _history.messages[_history.currentId]?.parentId === null
+			willCreateChat:
+				newChat &&
+				_history.messages[_history.currentId]?.parentId === null,
 		});
 
-		if (newChat && _history.messages[_history.currentId].parentId === null) {
-			console.log('[Chat] Creating new chat with initChatHandler');
+		if (
+			newChat &&
+			_history.messages[_history.currentId].parentId === null
+		) {
+			console.log("[Chat] Creating new chat with initChatHandler");
 			_chatId = await initChatHandler(_history);
-			console.log('[Chat] New chat created, chatId:', _chatId);
+			console.log("[Chat] New chat created, chatId:", _chatId);
 		}
 
 		await tick();
@@ -2695,26 +3598,40 @@
 
 		await Promise.all(
 			selectedModelIds.map(async (modelId, _modelIdx) => {
-				console.log('modelId', modelId);
+				console.log("modelId", modelId);
 				const model = $models.filter((m) => m.id === modelId).at(0);
 
 				if (model) {
 					// If there are image files, check if model is vision capable
-					const hasImages = createMessagesList(_history, parentId).some((message) =>
-						message.files?.some((file) => file.type === 'image')
+					const hasImages = createMessagesList(
+						_history,
+						parentId,
+					).some((message) =>
+						message.files?.some((file) => file.type === "image"),
 					);
 
-					if (hasImages && !(model.info?.meta?.capabilities?.vision ?? true)) {
+					if (
+						hasImages &&
+						!(model.info?.meta?.capabilities?.vision ?? true)
+					) {
 						toast.error(
-							$i18n.t('Model {{modelName}} is not vision capable', {
-								modelName: model.name ?? model.id
-							})
+							$i18n.t(
+								"Model {{modelName}} is not vision capable",
+								{
+									modelName: model.name ?? model.id,
+								},
+							),
 						);
 					}
 
 					let responseMessageId =
-						responseMessageIds[`${modelId}-${modelIdx ? modelIdx : _modelIdx}`];
-					const chatEventEmitter = await getChatEventEmitter(model.id, _chatId);
+						responseMessageIds[
+							`${modelId}-${modelIdx ? modelIdx : _modelIdx}`
+						];
+					const chatEventEmitter = await getChatEventEmitter(
+						model.id,
+						_chatId,
+					);
 
 					scrollToBottom();
 					await sendMessageSocket(
@@ -2724,14 +3641,16 @@
 							: createMessagesList(_history, responseMessageId),
 						_history,
 						responseMessageId,
-						_chatId
+						_chatId,
 					);
 
 					if (chatEventEmitter) clearInterval(chatEventEmitter);
 				} else {
-					toast.error($i18n.t(`Model {{modelId}} not found`, { modelId }));
+					toast.error(
+						$i18n.t(`Model {{modelId}} not found`, { modelId }),
+					);
 				}
-			})
+			}),
 		);
 
 		currentChatPage.set(1);
@@ -2745,28 +3664,38 @@
 			features = {
 				image_generation:
 					$config?.features?.enable_image_generation &&
-					($user?.role === 'admin' || $user?.permissions?.features?.image_generation)
+					($user?.role === "admin" ||
+						$user?.permissions?.features?.image_generation)
 						? imageGenerationEnabled
 						: false,
 				code_interpreter:
 					$config?.features?.enable_code_interpreter &&
-					($user?.role === 'admin' || $user?.permissions?.features?.code_interpreter)
+					($user?.role === "admin" ||
+						$user?.permissions?.features?.code_interpreter)
 						? codeInterpreterEnabled
 						: false,
 				web_search:
 					$config?.features?.enable_web_search &&
-					($user?.role === 'admin' || $user?.permissions?.features?.web_search)
+					($user?.role === "admin" ||
+						$user?.permissions?.features?.web_search)
 						? webSearchEnabled
-						: false
+						: false,
 			};
 
-		const currentModels = atSelectedModel?.id ? [atSelectedModel.id] : selectedModels;
+		const currentModels = atSelectedModel?.id
+			? [atSelectedModel.id]
+			: selectedModels;
 		if (
 			currentModels.filter(
-				(model) => $models.find((m) => m.id === model)?.info?.meta?.capabilities?.web_search ?? true
+				(model) =>
+					$models.find((m) => m.id === model)?.info?.meta
+						?.capabilities?.web_search ?? true,
 			).length === currentModels.length
 		) {
-			if ($config?.features?.enable_web_search && ($settings?.webSearch ?? false) === 'always') {
+			if (
+				$config?.features?.enable_web_search &&
+				($settings?.webSearch ?? false) === "always"
+			) {
 				features = { ...features, web_search: true };
 			}
 		}
@@ -2778,16 +3707,22 @@
 		return features;
 	};
 
-	const sendMessageSocket = async (model, _messages, _history, responseMessageId, _chatId) => {
+	const sendMessageSocket = async (
+		model,
+		_messages,
+		_history,
+		responseMessageId,
+		_chatId,
+	) => {
 		const responseMessage = _history.messages[responseMessageId];
 		const userMessage = _history.messages[responseMessage.parentId];
 
 		// EDM 파일 지식화 요청 정보 추출
 		const edmFiles = userMessage?.edm_files || null;
 		if (edmFiles && edmFiles.length > 0) {
-			console.log('✅ [sendMessageSocket] EDM 파일 정보 발견:', {
+			console.log("✅ [sendMessageSocket] EDM 파일 정보 발견:", {
 				filesCount: edmFiles.length,
-				files: edmFiles
+				files: edmFiles,
 			});
 		}
 
@@ -2799,10 +3734,12 @@
 		// BUT: Always keep collection type (Knowledge Base) files
 		chatFiles = chatFiles.filter((item) => {
 			// collection 타입(Knowledge Base)은 항상 유지
-			if (item.type === 'collection') {
+			if (item.type === "collection") {
 				return true;
 			}
-			const fileExists = chatMessageFiles.some((messageFile) => messageFile.id === item.id);
+			const fileExists = chatMessageFiles.some(
+				(messageFile) => messageFile.id === item.id,
+			);
 			return fileExists;
 		});
 
@@ -2813,36 +3750,53 @@
 		let files = JSON.parse(JSON.stringify(chatFiles));
 		if (hasEdm) {
 			// EDM 선택 시에는 collection 타입 파일 모두 제외
-			files = files.filter(item => item.type !== 'collection');
-			console.log("🔵 [EDM 선택됨] collection 타입 파일 제외:", files.length);
+			files = files.filter((item) => item.type !== "collection");
+			console.log(
+				"🔵 [EDM 선택됨] collection 타입 파일 제외:",
+				files.length,
+			);
 		}
 
 		files.push(
-			...(userMessage?.files ?? []).filter((item) =>
-				hasEdm
-					? ['doc', 'text', 'file', 'note', 'chat'].includes(item.type) // EDM: collection 제외
-					: ['doc', 'text', 'file', 'note', 'chat', 'collection'].includes(item.type) // 일반: collection 포함
-			)
+			...(userMessage?.files ?? []).filter(
+				(item) =>
+					hasEdm
+						? ["doc", "text", "file", "note", "chat"].includes(
+								item.type,
+							) // EDM: collection 제외
+						: [
+								"doc",
+								"text",
+								"file",
+								"note",
+								"chat",
+								"collection",
+							].includes(item.type), // 일반: collection 포함
+			),
 		);
 		// Remove duplicates
 		files = files.filter(
 			(item, index, array) =>
-				array.findIndex((i) => JSON.stringify(i) === JSON.stringify(item)) === index
+				array.findIndex(
+					(i) => JSON.stringify(i) === JSON.stringify(item),
+				) === index,
 		);
 
 		scrollToBottom();
 		eventTarget.dispatchEvent(
-			new CustomEvent('chat:start', {
+			new CustomEvent("chat:start", {
 				detail: {
-					id: responseMessageId
-				}
-			})
+					id: responseMessageId,
+				},
+			}),
 		);
 		await tick();
 
 		let userLocation;
 		if ($settings?.userLocation) {
-			userLocation = await getAndUpdateUserLocation(localStorage.token).catch((err) => {
+			userLocation = await getAndUpdateUserLocation(
+				localStorage.token,
+			).catch((err) => {
 				console.error(err);
 				return undefined;
 			});
@@ -2857,49 +3811,57 @@
 		let messages = [
 			params?.system || $settings.system
 				? {
-						role: 'system',
-						content: `${params?.system ?? $settings?.system ?? ''}`
+						role: "system",
+						content: `${params?.system ?? $settings?.system ?? ""}`,
 					}
 				: undefined,
 			..._messages.map((message) => ({
 				...message,
-				content: processDetails(message.content)
-			}))
+				content: processDetails(message.content),
+			})),
 		].filter((message) => message);
 
 		messages = messages
 			.map((message, idx, arr) => ({
 				role: message.role,
-				...((message.files?.filter((file) => file.type === 'image').length > 0 ?? false) &&
-				message.role === 'user'
+				...((message.files?.filter((file) => file.type === "image")
+					.length > 0 ??
+					false) &&
+				message.role === "user"
 					? {
 							content: [
 								{
-									type: 'text',
-									text: message?.merged?.content ?? message.content
+									type: "text",
+									text:
+										message?.merged?.content ??
+										message.content,
 								},
 								...message.files
-									.filter((file) => file.type === 'image')
+									.filter((file) => file.type === "image")
 									.map((file) => ({
-										type: 'image_url',
+										type: "image_url",
 										image_url: {
-											url: file.url
-										}
-									}))
-							]
+											url: file.url,
+										},
+									})),
+							],
 						}
 					: {
-							content: message?.merged?.content ?? message.content
-						})
+							content:
+								message?.merged?.content ?? message.content,
+						}),
 			}))
-			.filter((message) => message?.role === 'user' || message?.content?.trim());
+			.filter(
+				(message) =>
+					message?.role === "user" || message?.content?.trim(),
+			);
 
 		const toolIds = [];
 		const toolServerIds = [];
 
 		for (const toolId of selectedToolIds) {
-			if (toolId.startsWith('direct_server:')) {
-				let serverId = toolId.replace('direct_server:', '');
+			if (toolId.startsWith("direct_server:")) {
+				let serverId = toolId.replace("direct_server:", "");
 				// Check if serverId is a number
 				if (!isNaN(parseInt(serverId))) {
 					toolServerIds.push(parseInt(serverId));
@@ -2913,38 +3875,61 @@
 
 		// EDM 선택 시 EDM Search Pipeline을 모델로 설정
 		if (hasEdm) {
-			selectedModels = ['edm_search_pipe'];
-			console.log('🔵 [EDM 선택됨] EDM Search Pipeline 모델로 설정:', selectedModels);
+			selectedModels = ["edm_search_pipe"];
+			console.log(
+				"🔵 [EDM 선택됨] EDM Search Pipeline 모델로 설정:",
+				selectedModels,
+			);
 		}
 
 		const res = await generateOpenAIChatCompletion(
 			localStorage.token,
 			{
 				stream: stream,
-				model: hasEdm ? 'edm_search_pipe' : model.id,
+				model: hasEdm ? "edm_search_pipe" : model.id,
 				messages: messages,
 				params: {
 					...$settings?.params,
 					...params,
 					stop:
 						(params?.stop ?? $settings?.params?.stop ?? undefined)
-							? (params?.stop.split(',').map((token) => token.trim()) ?? $settings.params.stop).map(
-									(str) => decodeURIComponent(JSON.parse('"' + str.replace(/\"/g, '\\"') + '"'))
+							? (
+									params?.stop
+										.split(",")
+										.map((token) => token.trim()) ??
+									$settings.params.stop
+								).map((str) =>
+									decodeURIComponent(
+										JSON.parse(
+											'"' +
+												str.replace(/\"/g, '\\"') +
+												'"',
+										),
+									),
 								)
-							: undefined
+							: undefined,
 				},
 
 				files: (files?.length ?? 0) > 0 ? files : undefined,
-				edm_files: edmFiles && edmFiles.length > 0 ? edmFiles : undefined,
+				edm_files:
+					edmFiles && edmFiles.length > 0 ? edmFiles : undefined,
 
-				filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
+				filter_ids:
+					selectedFilterIds.length > 0
+						? selectedFilterIds
+						: undefined,
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
 				tool_servers: ($toolServers ?? []).filter(
-					(server, idx) => toolServerIds.includes(idx) || toolServerIds.includes(server?.id)
+					(server, idx) =>
+						toolServerIds.includes(idx) ||
+						toolServerIds.includes(server?.id),
 				),
 				features: getFeatures(),
 				variables: {
-					...getPromptVariables($user?.name, $settings?.userLocation ? userLocation : undefined)
+					...getPromptVariables(
+						$user?.name,
+						$settings?.userLocation ? userLocation : undefined,
+					),
 				},
 				model_item: $models.find((m) => m.id === model.id),
 
@@ -2956,46 +3941,116 @@
 					...(!$temporaryChatEnabled &&
 					(messages.length == 1 ||
 						(messages.length == 2 &&
-							messages.at(0)?.role === 'system' &&
-							messages.at(1)?.role === 'user')) &&
-					(selectedModels[0] === model.id || atSelectedModel !== undefined)
+							messages.at(0)?.role === "system" &&
+							messages.at(1)?.role === "user")) &&
+					(selectedModels[0] === model.id ||
+						atSelectedModel !== undefined)
 						? {
-								title_generation: $settings?.title?.auto ?? true,
-								tags_generation: $settings?.autoTags ?? true
+								title_generation:
+									$settings?.title?.auto ?? true,
+								tags_generation: $settings?.autoTags ?? true,
 							}
 						: {}),
-					follow_up_generation: $settings?.autoFollowUps ?? false
+					follow_up_generation: $settings?.autoFollowUps ?? false,
 				},
 
 				...(stream && (model.info?.meta?.capabilities?.usage ?? false)
 					? {
 							stream_options: {
-								include_usage: true
-							}
+								include_usage: true,
+							},
 						}
-					: {})
+					: {}),
 			},
-			`${WEBUI_BASE_URL}/api`
+			`${WEBUI_BASE_URL}/api`,
 		).catch(async (error) => {
-			console.log(error);
+			console.log("[Chat] catch error:", error);
 
-			let errorMessage = error;
-			if (error?.error?.message) {
+			// 에러 메시지 추출 - 다양한 형식 지원
+			let errorMessage = "";
+			const errorStr = JSON.stringify(error || {}) + String(error?.detail || "") + String(error?.message || "");
+
+			// (500, 'message') 튜플 형식 파싱 - 줄바꿈 포함
+			const tupleMatch = errorStr.match(/\((\d+),\s*['"]([\s\S]+?)['"]\s*\)/);
+			if (tupleMatch) {
+				errorMessage = tupleMatch[2]; // 메시지 부분만 추출
+			} else if (error?.detail) {
+				if (Array.isArray(error.detail)) {
+					errorMessage = error.detail.find(item => typeof item === "string") || "";
+				} else if (typeof error.detail === "string") {
+					errorMessage = error.detail;
+				}
+			} else if (error?.error?.message) {
 				errorMessage = error.error.message;
 			} else if (error?.message) {
 				errorMessage = error.message;
+			} else if (typeof error === "string") {
+				errorMessage = error;
 			}
 
-			if (typeof errorMessage === 'object') {
+			if (!errorMessage || typeof errorMessage === "object") {
 				errorMessage = $i18n.t(`Uh-oh! There was an issue with the response.`);
 			}
 
-			toast.error(`${errorMessage}`);
-			responseMessage.error = {
-				content: error
-			};
+			// 가드레일 차단 에러 감지 - 정상 메시지로 표시
+			const isGuardrailBlock = errorStr.includes("보안 정책") ||
+				errorStr.includes("guardrail") ||
+				errorStr.includes("위반") ||
+				errorStr.includes("차단");
 
+			if (isGuardrailBlock) {
+				console.log("[Chat] 🛡️ catch: 가드레일 차단 감지 - 정상 메시지로 표시");
+
+				// 메시지 정리 - \\n을 실제 줄바꿈으로 변환, 이스케이프 처리
+				let cleanMessage = errorMessage
+					.replace(/\\n/g, "\n")
+					.replace(/\\'/g, "'")
+					.replace(/\\"/g, '"');
+
+				// 새 메시지 객체 생성 (Svelte 반응성 보장)
+				const updatedMessage = {
+					...responseMessage,
+					content: cleanMessage,
+					done: true
+				};
+				// error 속성 명시적 제거
+				if ('error' in updatedMessage) {
+					delete updatedMessage.error;
+				}
+
+				// 모든 상태 초기화 - 다음 입력 가능하게
+				generating = false;
+				generationController = null;
+				taskIds = null;
+
+				// 새 history 객체 생성으로 Svelte 반응성 확실히 트리거
+				history = {
+					...history,
+					currentId: responseMessageId,
+					messages: {
+						...history.messages,
+						[responseMessageId]: updatedMessage
+					}
+				};
+
+				console.log("[Chat] 🛡️ 상태 업데이트 완료:", {
+					done: history.messages[responseMessageId]?.done,
+					hasError: 'error' in (history.messages[responseMessageId] || {}),
+					hasContent: !!history.messages[responseMessageId]?.content,
+					generating,
+					taskIds
+				});
+
+				await saveChatHandler($chatId, history);
+				return null;
+			}
+
+			toast.error(`${errorMessage}`);
+			responseMessage.error = { content: error };
 			responseMessage.done = true;
+
+			generating = false;
+			generationController = null;
 
 			history.messages[responseMessageId] = responseMessage;
 			history.currentId = responseMessageId;
@@ -3020,42 +4075,133 @@
 	};
 
 	const handleOpenAIError = async (error, responseMessage) => {
-		let errorMessage = '';
+		let errorMessage = "";
 		let innerError;
 
 		if (error) {
 			innerError = error;
 		}
 
+		// 에러 문자열로 변환하여 체크
+		const errorStr = JSON.stringify(innerError || {});
+
+		// 404 에러는 무시하고 다음 메시지를 받을 수 있도록 처리
+		const is404Error = errorStr.includes("404") || errorStr.includes("Not Found");
+
+		if (is404Error) {
+			console.warn("[Chat] 404 에러 무시 - 다음 메시지 계속 처리:", innerError);
+			// 404 에러는 toast 표시하지 않고 메시지만 완료 처리
+			responseMessage.done = true;
+			history.messages[responseMessage.id] = responseMessage;
+			return; // 에러 메시지 표시 없이 종료
+		}
+
+		// 가드레일 차단 에러 감지 - 정상 메시지로 표시하고 다음 입력 가능하게 처리
+		const isGuardrailBlock = errorStr.includes("보안 정책") ||
+			errorStr.includes("guardrail") ||
+			errorStr.includes("위반") ||
+			errorStr.includes("차단");
+
+		if (isGuardrailBlock) {
+			console.log("[Chat] 🛡️ 가드레일 차단 감지 - 정상 메시지로 표시:", innerError);
+
+			// 에러 메시지 추출 - (500, 'message') 튜플 형식 파싱 - 줄바꿈 포함
+			let blockMessage = "⚠️ 보안 정책에 의해 차단되었습니다.";
+			const tupleMatch = errorStr.match(/\((\d+),\s*['"]([\s\S]+?)['"]\s*\)/);
+
+			if (tupleMatch) {
+				blockMessage = tupleMatch[2];
+			} else if (innerError?.detail) {
+				if (Array.isArray(innerError.detail)) {
+					blockMessage = innerError.detail.find(item => typeof item === "string") || blockMessage;
+				} else if (typeof innerError.detail === "string") {
+					blockMessage = innerError.detail;
+				}
+			} else if (innerError?.error?.message) {
+				blockMessage = innerError.error.message;
+			} else if (innerError?.message) {
+				blockMessage = innerError.message;
+			} else if (typeof innerError === "string") {
+				blockMessage = innerError;
+			}
+
+			// 메시지 정리 - \\n을 실제 줄바꿈으로 변환, 이스케이프 처리
+			blockMessage = blockMessage
+				.replace(/\\n/g, "\n")
+				.replace(/\\'/g, "'")
+				.replace(/\\"/g, '"');
+
+			// 새 메시지 객체 생성 (Svelte 반응성 보장)
+			const updatedMessage = {
+				...responseMessage,
+				content: blockMessage,
+				done: true
+			};
+			// error 속성 명시적 제거
+			if ('error' in updatedMessage) {
+				delete updatedMessage.error;
+			}
+
+			// 모든 상태 초기화 - 다음 입력 가능하게
+			generating = false;
+			generationController = null;
+			taskIds = null;
+
+			// 새 history 객체 생성으로 Svelte 반응성 확실히 트리거
+			history = {
+				...history,
+				currentId: responseMessage.id,
+				messages: {
+					...history.messages,
+					[responseMessage.id]: updatedMessage
+				}
+			};
+
+			console.log("[Chat] 🛡️ handleOpenAIError 상태 업데이트 완료:", {
+				done: history.messages[responseMessage.id]?.done,
+				hasError: 'error' in (history.messages[responseMessage.id] || {}),
+				hasContent: !!history.messages[responseMessage.id]?.content,
+				generating,
+				taskIds
+			});
+
+			await saveChatHandler($chatId, history);
+			return; // 정상 완료 (다음 메시지 입력 가능)
+		}
+
 		console.error(innerError);
-		if ('detail' in innerError) {
+		if ("detail" in innerError) {
 			// FastAPI error
 			toast.error(innerError.detail);
 			errorMessage = innerError.detail;
-		} else if ('error' in innerError) {
+		} else if ("error" in innerError) {
 			// OpenAI error
-			if ('message' in innerError.error) {
+			if ("message" in innerError.error) {
 				toast.error(innerError.error.message);
 				errorMessage = innerError.error.message;
 			} else {
 				toast.error(innerError.error);
 				errorMessage = innerError.error;
 			}
-		} else if ('message' in innerError) {
+		} else if ("message" in innerError) {
 			// OpenAI error
 			toast.error(innerError.message);
 			errorMessage = innerError.message;
 		}
 
 		responseMessage.error = {
-			content: $i18n.t(`Uh-oh! There was an issue with the response.`) + '\n' + errorMessage
+			content:
+				$i18n.t(`Uh-oh! There was an issue with the response.`) +
+				"\n" +
+				errorMessage,
 		};
 		responseMessage.done = true;
 
 		if (responseMessage.statusHistory) {
-			responseMessage.statusHistory = responseMessage.statusHistory.filter(
-				(status) => status.action !== 'knowledge_search'
-			);
+			responseMessage.statusHistory =
+				responseMessage.statusHistory.filter(
+					(status) => status.action !== "knowledge_search",
+				);
 		}
 
 		history.messages[responseMessage.id] = responseMessage;
@@ -3064,17 +4210,20 @@
 	const stopResponse = async () => {
 		if (taskIds) {
 			for (const taskId of taskIds) {
-				const res = await stopTask(localStorage.token, taskId).catch((error) => {
-					toast.error(`${error}`);
-					return null;
-				});
+				const res = await stopTask(localStorage.token, taskId).catch(
+					(error) => {
+						toast.error(`${error}`);
+						return null;
+					},
+				);
 			}
 
 			taskIds = null;
 
 			const responseMessage = history.messages[history.currentId];
 			// Set all response messages to done
-			for (const messageId of history.messages[responseMessage.parentId].childrenIds) {
+			for (const messageId of history.messages[responseMessage.parentId]
+				.childrenIds) {
 				history.messages[messageId].done = true;
 			}
 
@@ -3100,16 +4249,16 @@
 			id: userMessageId,
 			parentId: parentId,
 			childrenIds: [],
-			role: 'user',
+			role: "user",
 			content: userPrompt,
 			models: selectedModels,
-			timestamp: Math.floor(Date.now() / 1000) // Unix epoch
+			timestamp: Math.floor(Date.now() / 1000), // Unix epoch
 		};
 
 		if (parentId !== null) {
 			history.messages[parentId].childrenIds = [
 				...history.messages[parentId].childrenIds,
-				userMessageId
+				userMessageId,
 			];
 		}
 
@@ -3126,7 +4275,7 @@
 	};
 
 	const regenerateResponse = async (message, suggestionPrompt = null) => {
-		console.log('regenerateResponse');
+		console.log("regenerateResponse");
 
 		if (history.currentId) {
 			let userMessage = history.messages[message.parentId];
@@ -3141,34 +4290,42 @@
 							messages: [
 								...createMessagesList(history, message.id),
 								{
-									role: 'user',
-									content: suggestionPrompt
-								}
-							]
+									role: "user",
+									content: suggestionPrompt,
+								},
+							],
 						}
 					: {}),
 				...((userMessage?.models ?? [...selectedModels]).length > 1
 					? {
 							// If multiple models are selected, use the model from the message
 							modelId: message.model,
-							modelIdx: message.modelIdx
+							modelIdx: message.modelIdx,
 						}
-					: {})
+					: {}),
 			});
 		}
 	};
 
 	const continueResponse = async () => {
-		console.log('continueResponse');
+		console.log("continueResponse");
 		const _chatId = JSON.parse(JSON.stringify($chatId));
 
-		if (history.currentId && history.messages[history.currentId].done == true) {
+		if (
+			history.currentId &&
+			history.messages[history.currentId].done == true
+		) {
 			const responseMessage = history.messages[history.currentId];
 			responseMessage.done = false;
 			await tick();
 
 			const model = $models
-				.filter((m) => m.id === (responseMessage?.selectedModelId ?? responseMessage.model))
+				.filter(
+					(m) =>
+						m.id ===
+						(responseMessage?.selectedModelId ??
+							responseMessage.model),
+				)
 				.at(0);
 
 			if (model) {
@@ -3177,18 +4334,20 @@
 					createMessagesList(history, responseMessage.id),
 					history,
 					responseMessage.id,
-					_chatId
+					_chatId,
 				);
 			}
 		}
 	};
 
 	const mergeResponses = async (messageId, responses, _chatId) => {
-		console.log('mergeResponses', messageId, responses);
+		// ========== [2026-01-27 시스템 프롬프트 노출 방지] 시작 ==========
+		// console.log("mergeResponses", messageId, responses); // 보안: 응답 데이터 콘솔 노출 제거
+		// ========== [2026-01-27 시스템 프롬프트 노출 방지] 종료 ==========
 		const message = history.messages[messageId];
 		const mergedResponse = {
 			status: true,
-			content: ''
+			content: "",
 		};
 		message.merged = mergedResponse;
 		history.messages[messageId] = message;
@@ -3199,12 +4358,15 @@
 				localStorage.token,
 				message.model,
 				history.messages[message.parentId].content,
-				responses
+				responses,
 			);
 
 			if (res && res.ok && res.body && generating) {
 				generationController = controller;
-				const textStream = await createOpenAITextStream(res.body, $settings.splitLargeChunks);
+				const textStream = await createOpenAITextStream(
+					res.body,
+					$settings.splitLargeChunks,
+				);
 				for await (const update of textStream) {
 					const { value, done, sources, error, usage } = update;
 					if (error || done) {
@@ -3213,7 +4375,7 @@
 						break;
 					}
 
-					if (mergedResponse.content == '' && value == '\n') {
+					if (mergedResponse.content == "" && value == "\n") {
 						continue;
 					} else {
 						mergedResponse.content += value;
@@ -3242,26 +4404,28 @@
 				localStorage.token,
 				{
 					id: _chatId,
-					title: $i18n.t('New Chat'),
+					title: $i18n.t("New Chat"),
 					models: selectedModels,
 					system: $settings.system ?? undefined,
 					params: params,
 					history: history,
 					messages: createMessagesList(history, history.currentId),
 					tags: [],
-					timestamp: Date.now()
+					timestamp: Date.now(),
 				},
-				$selectedFolder?.id
+				$selectedFolder?.id,
 			);
 
 			_chatId = chat.id;
 			await chatId.set(_chatId);
 
-			window.history.replaceState(history.state, '', `/c/${_chatId}`);
+			window.history.replaceState(history.state, "", `/c/${_chatId}`);
 
 			await tick();
 
-			await chats.set(await getChatList(localStorage.token, $currentChatPage));
+			await chats.set(
+				await getChatList(localStorage.token, $currentChatPage),
+			);
 			currentChatPage.set(1);
 
 			selectedFolder.set(null);
@@ -3279,25 +4443,28 @@
 			if (!$temporaryChatEnabled) {
 				// 🎯 자동 제목 생성: 제목이 "새 채팅"이면 첫 메시지로 교체
 				let titleToUpdate = chat?.title;
-				const isDefaultTitle = !titleToUpdate ||
-					titleToUpdate === $i18n.t('New Chat') ||
-					titleToUpdate === 'New Chat' ||
-					titleToUpdate === '새 채팅';
+				const isDefaultTitle =
+					!titleToUpdate ||
+					titleToUpdate === $i18n.t("New Chat") ||
+					titleToUpdate === "New Chat" ||
+					titleToUpdate === "새 채팅";
 
 				if (isDefaultTitle && history?.messages) {
 					// 첫 번째 사용자 메시지 찾기
-					const firstUserMessage = Object.values(history.messages).find(msg => msg.role === 'user');
+					const firstUserMessage = Object.values(
+						history.messages,
+					).find((msg) => msg.role === "user");
 
 					if (firstUserMessage?.content) {
 						// 제목 생성: 첫 50자 사용, 줄바꿈 제거, 공백 정리
-						titleToUpdate = (firstUserMessage.content || '')
+						titleToUpdate = (firstUserMessage.content || "")
 							.substring(0, 50)
-							.replace(/\n/g, ' ')
-							.replace(/\s+/g, ' ')
+							.replace(/\n/g, " ")
+							.replace(/\s+/g, " ")
 							.trim();
 
 						if (titleToUpdate) {
-							console.log('🎯 [자동 제목] 생성:', titleToUpdate);
+							console.log("🎯 [자동 제목] 생성:", titleToUpdate);
 							chatTitle.set(titleToUpdate);
 						}
 					}
@@ -3309,10 +4476,14 @@
 					messages: createMessagesList(history, history.currentId),
 					params: params,
 					files: chatFiles,
-					...(titleToUpdate && titleToUpdate !== chat?.title ? { title: titleToUpdate } : {})
+					...(titleToUpdate && titleToUpdate !== chat?.title
+						? { title: titleToUpdate }
+						: {}),
 				});
 				currentChatPage.set(1);
-				await chats.set(await getChatList(localStorage.token, $currentChatPage));
+				await chats.set(
+					await getChatList(localStorage.token, $currentChatPage),
+				);
 			}
 		}
 	};
@@ -3328,12 +4499,14 @@
 		if (draft.prompt !== null && draft.prompt.length < MAX_DRAFT_LENGTH) {
 			saveDraftTimeout = setTimeout(async () => {
 				await sessionStorage.setItem(
-					`chat-input${chatId ? `-${chatId}` : ''}`,
-					JSON.stringify(draft)
+					`chat-input${chatId ? `-${chatId}` : ""}`,
+					JSON.stringify(draft),
 				);
 			}, 500);
 		} else {
-			sessionStorage.removeItem(`chat-input${chatId ? `-${chatId}` : ''}`);
+			sessionStorage.removeItem(
+				`chat-input${chatId ? `-${chatId}` : ""}`,
+			);
 		}
 	};
 
@@ -3341,40 +4514,47 @@
 		if (saveDraftTimeout) {
 			clearTimeout(saveDraftTimeout);
 		}
-		await sessionStorage.removeItem(`chat-input${chatId ? `-${chatId}` : ''}`);
+		await sessionStorage.removeItem(
+			`chat-input${chatId ? `-${chatId}` : ""}`,
+		);
 	};
 
 	const moveChatHandler = async (chatId, folderId) => {
 		if (chatId && folderId) {
-			const res = await updateChatFolderIdById(localStorage.token, chatId, folderId).catch(
-				(error) => {
-					toast.error(`${error}`);
-					return null;
-				}
-			);
+			const res = await updateChatFolderIdById(
+				localStorage.token,
+				chatId,
+				folderId,
+			).catch((error) => {
+				toast.error(`${error}`);
+				return null;
+			});
 
 			if (res) {
 				currentChatPage.set(1);
-				await chats.set(await getChatList(localStorage.token, $currentChatPage));
-				await pinnedChats.set(await getPinnedChatList(localStorage.token));
+				await chats.set(
+					await getChatList(localStorage.token, $currentChatPage),
+				);
+				await pinnedChats.set(
+					await getPinnedChatList(localStorage.token),
+				);
 
-				toast.success($i18n.t('Chat moved successfully'));
+				toast.success($i18n.t("Chat moved successfully"));
 			}
 		} else {
-			toast.error($i18n.t('Failed to move chat'));
+			toast.error($i18n.t("Failed to move chat"));
 		}
 	};
 
 	// ===== EDM 문서 목록 및 뷰어 관련 함수 =====
 
-
 	// 문서 뷰어 모달 열기
 	const openDocumentViewer = async (document) => {
-		console.log('🔵 문서 뷰어 열기:', document.title);
+		console.log("🔵 문서 뷰어 열기:", document.title);
 		selectedDocument = document;
 		edmDocumentViewerModal = true;
 		isLoadingDocument = true;
-		documentContent = '';
+		documentContent = "";
 
 		try {
 			// 문서 내용 로드
@@ -3383,11 +4563,11 @@
 				throw new Error(`Failed to load document: ${response.status}`);
 			}
 			documentContent = await response.text();
-			console.log('✅ 문서 로드 완료:', document.title);
+			console.log("✅ 문서 로드 완료:", document.title);
 		} catch (error) {
-			console.error('❌ 문서 로드 실패:', error);
-			toast.error('문서를 불러오는데 실패했습니다.');
-			documentContent = '문서를 불러올 수 없습니다.';
+			console.error("❌ 문서 로드 실패:", error);
+			toast.error("문서를 불러오는데 실패했습니다.");
+			documentContent = "문서를 불러올 수 없습니다.";
 		} finally {
 			isLoadingDocument = false;
 		}
@@ -3395,10 +4575,10 @@
 
 	// 문서 뷰어 모달 닫기
 	const closeDocumentViewer = () => {
-		console.log('🔵 문서 뷰어 닫기');
+		console.log("🔵 문서 뷰어 닫기");
 		edmDocumentViewerModal = false;
 		selectedDocument = null;
-		documentContent = '';
+		documentContent = "";
 	};
 
 	// 문서 선택/선택 해제
@@ -3450,16 +4630,14 @@
 	}}
 /> -->
 
-<div
-	class="h-screen max-h-[100dvh] w-full flex flex-col"
-	id="chat-container"
->
+<div class="h-screen max-h-[100dvh] w-full flex flex-col" id="chat-container">
 	{#if !loading}
 		<div in:fade={{ duration: 50 }} class="w-full h-full flex flex-col">
 			{#if $selectedFolder && $selectedFolder?.meta?.background_image_url}
 				<div
-				class="absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
-					style="background-image: url({$selectedFolder?.meta?.background_image_url})  "
+					class="absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
+					style="background-image: url({$selectedFolder?.meta
+						?.background_image_url})  "
 				/>
 
 				<div
@@ -3467,7 +4645,7 @@
 				/>
 			{:else if $settings?.backgroundImageUrl ?? $config?.license_metadata?.background_image_url ?? null}
 				<div
-				class="absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
+					class="absolute top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat"
 					style="background-image: url({$settings?.backgroundImageUrl ??
 						$config?.license_metadata?.background_image_url})  "
 				/>
@@ -3477,8 +4655,16 @@
 				/>
 			{/if}
 
-			<PaneGroup direction="horizontal" class="w-full h-full" autoSaveId="chat-panes">
-				<Pane defaultSize={100} minSize={70} class="h-full flex relative max-w-full flex-col">
+			<PaneGroup
+				direction="horizontal"
+				class="w-full h-full"
+				autoSaveId="chat-panes"
+			>
+				<Pane
+					defaultSize={100}
+					minSize={70}
+					class="h-full flex relative max-w-full flex-col"
+				>
 					<Navbar
 						bind:this={navbarElement}
 						chat={{
@@ -3489,8 +4675,8 @@
 								system: $settings.system ?? undefined,
 								params: params,
 								history: history,
-								timestamp: Date.now()
-							}
+								timestamp: Date.now(),
+							},
 						}}
 						{history}
 						title={$chatTitle}
@@ -3502,350 +4688,647 @@
 						modelSelectorDisabled={isModelSelectorDisabled}
 						onSaveTempChat={async () => {
 							try {
-								if (!history?.currentId || !Object.keys(history.messages).length) {
-									toast.error($i18n.t('No conversation to save'));
+								if (
+									!history?.currentId ||
+									!Object.keys(history.messages).length
+								) {
+									toast.error(
+										$i18n.t("No conversation to save"),
+									);
 									return;
 								}
-								const messages = createMessagesList(history, history.currentId);
+								const messages = createMessagesList(
+									history,
+									history.currentId,
+								);
 								const title =
-									messages.find((m) => m.role === 'user')?.content ?? $i18n.t('New Chat');
+									messages.find((m) => m.role === "user")
+										?.content ?? $i18n.t("New Chat");
 
 								const savedChat = await createNewChat(
 									localStorage.token,
 									{
 										id: uuidv4(),
-										title: title.length > 50 ? `${title.slice(0, 50)}...` : title,
+										title:
+											title.length > 50
+												? `${title.slice(0, 50)}...`
+												: title,
 										models: selectedModels,
 										history: history,
 										messages: messages,
-										timestamp: Date.now()
+										timestamp: Date.now(),
 									},
-									null
+									null,
 								);
 
 								if (savedChat) {
 									temporaryChatEnabled.set(false);
 									chatId.set(savedChat.id);
-									chats.set(await getChatList(localStorage.token, $currentChatPage));
+									chats.set(
+										await getChatList(
+											localStorage.token,
+											$currentChatPage,
+										),
+									);
 
 									await goto(`/c/${savedChat.id}`);
-									toast.success($i18n.t('Conversation saved successfully'));
+									toast.success(
+										$i18n.t(
+											"Conversation saved successfully",
+										),
+									);
 								}
 							} catch (error) {
-								console.error('Error saving conversation:', error);
-								toast.error($i18n.t('Failed to save conversation'));
+								console.error(
+									"Error saving conversation:",
+									error,
+								);
+								toast.error(
+									$i18n.t("Failed to save conversation"),
+								);
 							}
 						}}
 					/>
 
 					<!-- 2분할 레이아웃: 중앙 콘텐츠 - 하단 입력 -->
 					<div class="flex flex-col h-full w-full">
-
 						<!-- 중앙 콘텐츠 영역 (flex-1로 남은 공간 차지) -->
 						<div class="flex-1 overflow-hidden relative">
-						{#if ($settings?.landingPageMode === 'chat' && !$selectedFolder) || createMessagesList(history, history.currentId).length > 0}
-							<!-- 채팅 메시지 영역 (스크롤 가능) -->
-							<div
-								class="h-full w-full overflow-y-auto overflow-x-hidden scrollbar-hidden"
-								id="messages-container"
-								bind:this={messagesContainerElement}
-								on:scroll={(e) => {
-									autoScroll =
-										messagesContainerElement.scrollHeight - messagesContainerElement.scrollTop <=
-										messagesContainerElement.clientHeight + 5;
-								}}
-							>
-								<div class="w-full max-w-5xl mx-auto flex flex-col pb-4">
-									<Messages
-										chatId={$chatId}
-										bind:history
-										bind:autoScroll
-										bind:prompt
-										setInputText={(text) => {
-											messageInput?.setText(text);
-										}}
-										{selectedModels}
-										{atSelectedModel}
-										{sendMessage}
-										{showMessage}
-										{submitMessage}
-										{continueResponse}
-										{regenerateResponse}
-										{mergeResponses}
-										{chatActionHandler}
-										{addMessages}
-										topPadding={true}
-										bottomPadding={files.length > 0}
-										{onSelect}
-										on:openEdmFileList={(e) => {
-											console.log('[Chat] 📂 EDM 파일 리스트 열기 이벤트 수신, 파일:', e.detail?.files);
-										edmFileList = e.detail?.files || [];
-											showEdmFileListModal = true;
-										}}
-										on:edmFeedback={(e) => {
-											const { messageId, type } = e.detail;
-											console.log('[Chat] 👍👎 EDM 피드백 이벤트 수신:', { messageId, type });
-											currentEdmMessageId = messageId;
-											edmFeedbackType = type;
-											showEdmFeedbackModal = true;
-										}}
-									/>
-								</div>
-							</div>
-
-
-
-
-						{:else}
-							<!-- 초기 화면 (카테고리 선택) -->
-							<div class="h-full w-full overflow-y-auto flex items-center justify-center">
-								{#if $modelType === 'internal'}
-									<!-- 대사우 Assistant 선택 시: 3개 카테고리 카드 -->
-									{#if ['guide', 'helpdesk', 'dictionary', 'etc'].some(id => $selectedCategories.includes(id))}
-										<div class="w-full max-w-6xl p-6">
-											<!-- 헤더 메시지 -->
-											<div class="mb-6 text-center">
-												<h3 class="text-lg font-medium text-gray-700 dark:text-gray-300">
-													다음과 같은 질문을 물어볼 수 있어요
-												</h3>
-											</div>
-
-											<!-- 3개 카테고리 카드 -->
-											<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-												<!-- 회사생활가이드 -->
-												<div class="flex flex-col gap-2 p-4 rounded-xl bg-gray-100 dark:bg-gray-800/60 border-2 border-gray-300 dark:border-gray-600 shadow-sm opacity-40 pointer-events-none cursor-not-allowed">
-													<div class="flex items-center gap-2 mb-2">
-														<span class="text-2xl">📋</span>
-														<h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
-															회사생활가이드
-														</h4>
-													</div>
-													<div class="flex flex-col gap-2">
-														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
-															disabled
-														>
-															<div class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
-																육아휴직 신청 방법 알려 줘.
-															</div>
-														</button>
-														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
-															disabled
-														>
-															<div class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
-																연간 패밀리넷 사용 가능 금액 알려 줘
-															</div>
-														</button>
-													</div>
+							{#if ($settings?.landingPageMode === "chat" && !$selectedFolder) || createMessagesList(history, history.currentId).length > 0}
+								<!-- 채팅 메시지 영역 (스크롤 가능) -->
+								<div
+									class="h-full w-full overflow-y-auto overflow-x-hidden scrollbar-hidden"
+									id="messages-container"
+									bind:this={messagesContainerElement}
+									on:scroll={(e) => {
+										autoScroll =
+											messagesContainerElement.scrollHeight -
+												messagesContainerElement.scrollTop <=
+											messagesContainerElement.clientHeight +
+												5;
+									}}
+								>
+									<div
+										class="w-full max-w-5xl mx-auto flex flex-col pb-4"
+									>
+										<!-- Dify Workflow 진행 상태 표시 -->
+										{#if showDifyProgress}
+											<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 mb-4 mx-4 border border-gray-200 dark:border-gray-700">
+												<div class="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">
+													🔄 Dify Workflow 처리 중...
 												</div>
-												<!-- IT Help Desk -->
-												<div class="flex flex-col gap-2 p-4 rounded-xl bg-gray-100 dark:bg-gray-800/60 border-2 border-gray-300 dark:border-gray-600 shadow-sm opacity-40 pointer-events-none cursor-not-allowed">
-													<div class="flex items-center gap-2 mb-2">
-														<span class="text-2xl">💻</span>
-														<h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
-															IT Help Desk
-														</h4>
-													</div>
-													<div class="flex flex-col gap-2">
-														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
-															disabled
-														>
-															<div class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
-																Knox 비밀번호 초기화 방법 알려 줘.
-															</div>
-														</button>
-														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
-															disabled
-														>
-															<div class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
-																Wave 운영팀 내선 번호 알려 줘.
-															</div>
-														</button>
-													</div>
-												</div>
-
-												<!-- 지식용어 사전 -->
-												<div class="flex flex-col gap-2 p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
-													<div class="flex items-center gap-2 mb-2">
-														<span class="text-2xl">📚</span>
-														<h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
-															지식용어 사전
-														</h4>
-													</div>
-													<div class="flex flex-col gap-2">
-														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
-															on:click={async () => {
-																const sampleText = '우리회사 PCCB 절차는 어떻게 돼';
-																prompt = sampleText;
-																await tick();
-																if (messageInput) { await messageInput.setText(sampleText); }
-															}}
-														>
-															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
-																우리회사 PCCB 절차는 어떻게 돼
-															</div>
-														</button>
-														<button
-															class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
-															on:click={async () => {
-																const sampleText = 'Rfzen, Rpsc와 관련된 WSD는 어떤 뜻이야';
-																prompt = sampleText;
-																await tick();
-																if (messageInput) { await messageInput.setText(sampleText); }
-															}}
-														>
-															<div class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2">
-																Rfzen, Rpsc와 관련된 WSD는 어떤 뜻이야
-															</div>
-														</button>
-													</div>
+												<div class="space-y-2">
+													{#each difyProgressStages as stage}
+														<div class="flex items-center gap-2 text-sm {stage.status === 'running' ? 'text-blue-600 dark:text-blue-400 font-medium' : stage.status === 'completed' ? 'text-green-600 dark:text-green-400' : stage.status === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-500'}">
+															<span>
+																{#if stage.status === 'completed'}✅{:else if stage.status === 'running'}<span class="inline-block animate-spin">⏳</span>{:else if stage.status === 'error'}❌{:else}⬜{/if}
+															</span>
+															<span>{stage.icon} {stage.name}</span>
+															{#if stage.status === 'running'}<span class="text-xs text-gray-500">(처리 중...)</span>{/if}
+														</div>
+													{/each}
 												</div>
 											</div>
-										</div>
-									{:else}
-										<!-- 기존 6개 카테고리 카드 -->
-										<div class="w-full max-w-6xl p-6">
-											<div class="w-full">
-												<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-													{#each categories as category}
-													<div
-																							class="{category.comingSoon 
-																								? 'bg-gray-100 dark:bg-gray-800/60 rounded-xl shadow-md transition-all duration-300 overflow-hidden border-2 border-gray-300 dark:border-gray-600 opacity-40 pointer-events-none cursor-not-allowed' 
-																								: 'bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 dark:border-gray-700'}"
-																																														>
-														<div class="p-6">
-															<!-- Category header -->
-															<div class="flex items-center gap-3 mb-4">
-																<!-- 카테고리 아이콘 -->
-																<div class="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg shadow-sm flex-shrink-0">
-																	{#if category.id === 'edm'}
-																		<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-																			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-																		</svg>
-																	{:else if category.id === 'guide'}
-																		<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-																			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-																		</svg>
-																	{:else if category.id === 'helpdesk'}
-																		<svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-																			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"></path>
-																		</svg>
-																	{/if}
-																</div>
-
-																<h3 class="text-xl font-bold text-gray-800 dark:text-gray-100">
-																	{#if category.name.includes('[')}
-																		{category.name.split('[')[0].trim()}
-																	{:else}
-																		{category.name}
-																	{/if}
-																</h3>
-															</div>
-
-
-															<!-- Action button -->
-															<div class="mt-4">
-																{#if category.id === 'edm-file-search-hidden'}
-																	<!-- EDM 전용 파일 검색 버튼 (기능 보존, 현재 숨김) -->
-																	<button
-																		class="w-full px-4 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-md hover:shadow-lg"
-																		on:click={() => {
-																			console.log('🔵 EDM 파일 검색 버튼 클릭 - 카테고리 선택됨');
-																			selectedCategories.set([category]);
-																			console.log('✅ EDM 모드 활성화 - 이제 메시지를 입력하고 전송하세요');
-																		}}
-																	>
-																		EDM 파일 검색
-																	</button>
+										{/if}
+										<!-- Dify 문서 처리 진행 상태 표시 -->
+										{#if showDifyDocProgress}
+											<div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 mb-4 mx-4 border border-blue-200 dark:border-blue-700">
+												<div class="text-sm font-semibold mb-3 text-blue-700 dark:text-blue-300">
+													📄 문서 처리 중...
+												</div>
+												<div class="space-y-2">
+													{#each difyDocProgressStages as stage}
+														<div class="flex items-center gap-2 text-sm {stage.status === 'running' ? 'text-blue-600 dark:text-blue-400 font-medium' : stage.status === 'completed' ? 'text-green-600 dark:text-green-400' : stage.status === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-500'}">
+															<span>
+																{#if stage.status === 'completed'}
+																	✅
+																{:else if stage.status === 'running'}
+																	<span class="inline-block animate-spin">⏳</span>
+																{:else if stage.status === 'error'}
+																	❌
 																{:else}
-																	<!-- 샘플 질문 표시 (모든 카테고리 동일) -->
-																	<div class="space-y-2">
-																		{#each category.samples as sample}
-																			<button
-																				class="w-full text-left px-3 py-2 text-sm transition-colors border rounded-lg {category.comingSoon ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 cursor-not-allowed opacity-40 pointer-events-none' : 'bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700'}"
-																disabled={category.comingSoon}
-																				on:click={async () => {
-																// 준비중 카테고리 체크
-																if (category.comingSoon) {
-																	toast.error('🚧 아직 준비중입니다');
-																	return;
-																}
-
-																// 🎯 카테고리별 처리 - 항상 첫번째 처리로 동작
-																if (category.id === 'edm' || category.id === 'dictionary' || category.id === 'guide' || category.id === 'helpdesk') {
-																		// EDM 문서활용 또는 대사우 Assistant 카테고리
-																		console.log('🔵 EDM/대사우 샘플 질문 클릭 - 카테고리:', category.name);
-
-																		// 카테고리에 맞는 displayCategory 찾기
-																		let displayCategory = null;
-																		if (category.id === 'edm') {
-																			displayCategory = DISPLAY_CATEGORIES[0];  // EDM 문서활용
-																		} else if (category.id === 'dictionary' || category.id === 'guide' || category.id === 'helpdesk') {
-																			displayCategory = DISPLAY_CATEGORIES[1];  // 대사우 Assistant
-																		}
-
-																		// selectedCategories 무조건 업데이트 (reactive statement가 모델 변경)
-																		if (displayCategory) {
-																			const { actualIds } = displayCategory;
-																			selectedCategories.set(actualIds);  // 직접 설정 (기존 카테고리 초기화)
-																			console.log('✅ 카테고리 설정:', actualIds);
-																		}
-
-																		// 메시지 입력창에 샘플 질문 채우기
-																		prompt = sample;
-																		await tick();
-																		if (messageInput) {
-																			await messageInput.setText(sample);
-																		}
-																	} else {
-																		// 그 이외 카드 버튼 (보고서 초안 작성, Code 개발 지원, 외부정보검색 등)
-																		console.log('🔵 일반 카테고리 샘플 질문 클릭 - 카테고리:', category.name);
-
-																		// selectedCategories 초기화 (카테고리 선택 해제)
-																		selectedCategories.set([]);
-																		console.log('✅ 카테고리 초기화 (선택 해제)');
-
-																		// 내부 기본 모델로 무조건 설정
-																		const defaultModelId = getDefaultInternalModelId();
-																		if (defaultModelId) {
-																			selectedModels = [defaultModelId];
-																			console.log('✅ 내부 기본 모델 설정:', defaultModelId);
-																		}
-
-																		// 메시지 입력창에 샘플 질문 채우기
-																		prompt = sample;
-																		await tick();
-																		if (messageInput) {
-																			await messageInput.setText(sample);
-																		}
-																	}
-																				}}
-																			>
-																				<span class="text-gray-700 dark:text-gray-300">{sample}</span>
-																			</button>
-																		{/each}
-																	</div>
+																	⬜
 																{/if}
-															</div>
+															</span>
+															<span>{stage.icon} {stage.name}</span>
+															{#if stage.status === 'completed' && difyDocStageTimes[stage.id]}
+																<span class="text-xs text-green-500">({difyDocStageTimes[stage.id].toFixed(2)}초)</span>
+															{:else if stage.status === 'running'}
+																<span class="text-xs text-gray-500">(처리 중...)</span>
+															{/if}
+														</div>
+													{/each}
+												</div>
+											</div>
+										{/if}
+										<Messages
+											chatId={$chatId}
+											bind:history
+											bind:autoScroll
+											bind:prompt
+											setInputText={(text) => {
+												messageInput?.setText(text);
+											}}
+											{selectedModels}
+											{atSelectedModel}
+											{sendMessage}
+											{showMessage}
+											{submitMessage}
+											{continueResponse}
+											{regenerateResponse}
+											{mergeResponses}
+											{chatActionHandler}
+											{addMessages}
+											topPadding={true}
+											bottomPadding={files.length > 0}
+											{onSelect}
+											on:openEdmFileList={(e) => {
+												console.log(
+													"[Chat] 📂 EDM 파일 리스트 열기 이벤트 수신, 파일:",
+													e.detail?.files,
+												);
+												edmFileList =
+													e.detail?.files || [];
+												showEdmFileListModal = true;
+											}}
+											on:edmFeedback={(e) => {
+												const { messageId, type } =
+													e.detail;
+												console.log(
+													"[Chat] 👍👎 EDM 피드백 이벤트 수신:",
+													{ messageId, type },
+												);
+												currentEdmMessageId = messageId;
+												edmFeedbackType = type;
+												showEdmFeedbackModal = true;
+											}}
+										/>
+									</div>
+								</div>
+							{:else}
+								<!-- 초기 화면 (카테고리 선택) -->
+								<div
+									class="h-full w-full overflow-y-auto flex items-center justify-center"
+								>
+									{#if $modelType === "internal"}
+										<!-- 대사우 Assistant 선택 시: 3개 카테고리 카드 -->
+										{#if ["guide", "helpdesk", "dictionary", "etc"].some( (id) => $selectedCategories.includes(id), )}
+											<div class="w-full max-w-6xl p-6">
+												<!-- 헤더 메시지 -->
+												<div class="mb-6 text-center">
+													<h3
+														class="text-lg font-medium text-gray-700 dark:text-gray-300"
+													>
+														다음과 같은 질문을
+														물어볼 수 있어요
+													</h3>
+												</div>
+
+												<!-- 3개 카테고리 카드 -->
+												<div
+													class="grid grid-cols-1 md:grid-cols-3 gap-4"
+												>
+													<!-- 회사생활가이드 -->
+													<div
+														class="flex flex-col gap-2 p-4 rounded-xl bg-gray-100 dark:bg-gray-800/60 border-2 border-gray-300 dark:border-gray-600 shadow-sm opacity-40 pointer-events-none cursor-not-allowed"
+													>
+														<div
+															class="flex items-center gap-2 mb-2"
+														>
+															<span
+																class="text-2xl"
+																>📋</span
+															>
+															<h4
+																class="text-sm font-semibold text-gray-800 dark:text-gray-200"
+															>
+																회사생활가이드
+															</h4>
+														</div>
+														<div
+															class="flex flex-col gap-2"
+														>
+															<button
+																class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
+																disabled
+															>
+																<div
+																	class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2"
+																>
+																	육아휴직
+																	신청 방법
+																	알려 줘.
+																</div>
+															</button>
+															<button
+																class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
+																disabled
+															>
+																<div
+																	class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2"
+																>
+																	연간
+																	패밀리넷
+																	사용 가능
+																	금액 알려 줘
+																</div>
+															</button>
 														</div>
 													</div>
-												{/each}
+													<!-- IT Help Desk -->
+													<div
+														class="flex flex-col gap-2 p-4 rounded-xl bg-gray-100 dark:bg-gray-800/60 border-2 border-gray-300 dark:border-gray-600 shadow-sm opacity-40 pointer-events-none cursor-not-allowed"
+													>
+														<div
+															class="flex items-center gap-2 mb-2"
+														>
+															<span
+																class="text-2xl"
+																>💻</span
+															>
+															<h4
+																class="text-sm font-semibold text-gray-800 dark:text-gray-200"
+															>
+																IT Help Desk
+															</h4>
+														</div>
+														<div
+															class="flex flex-col gap-2"
+														>
+															<button
+																class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
+																disabled
+															>
+																<div
+																	class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2"
+																>
+																	Knox
+																	비밀번호
+																	초기화 방법
+																	알려 줘.
+																</div>
+															</button>
+															<button
+																class="text-left px-3 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 cursor-not-allowed"
+																disabled
+															>
+																<div
+																	class="text-sm text-gray-500 dark:text-gray-400 line-clamp-2"
+																>
+																	Wave 운영팀
+																	내선 번호
+																	알려 줘.
+																</div>
+															</button>
+														</div>
+													</div>
+
+													<!-- 지식용어 사전 -->
+													<div
+														class="flex flex-col gap-2 p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm"
+													>
+														<div
+															class="flex items-center gap-2 mb-2"
+														>
+															<span
+																class="text-2xl"
+																>📚</span
+															>
+															<h4
+																class="text-sm font-semibold text-gray-800 dark:text-gray-200"
+															>
+																지식용어 사전
+															</h4>
+														</div>
+														<div
+															class="flex flex-col gap-2"
+														>
+															<button
+																class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
+																on:click={async () => {
+																	const sampleText =
+																		"우리회사 PCCB 절차는 어떻게 돼";
+																	prompt =
+																		sampleText;
+																	await tick();
+																	if (
+																		messageInput
+																	) {
+																		await messageInput.setText(
+																			sampleText,
+																		);
+																	}
+																}}
+															>
+																<div
+																	class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2"
+																>
+																	우리회사
+																	PCCB 절차는
+																	어떻게 돼
+																</div>
+															</button>
+															<button
+																class="text-left px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200 group"
+																on:click={async () => {
+																	const sampleText =
+																		"Rfzen, Rpsc와 관련된 WSD는 어떤 뜻이야";
+																	prompt =
+																		sampleText;
+																	await tick();
+																	if (
+																		messageInput
+																	) {
+																		await messageInput.setText(
+																			sampleText,
+																		);
+																	}
+																}}
+															>
+																<div
+																	class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-300 line-clamp-2"
+																>
+																	Rfzen,
+																	Rpsc와
+																	관련된 WSD는
+																	어떤 뜻이야
+																</div>
+															</button>
+														</div>
+													</div>
+												</div>
 											</div>
-										</div>
-									</div>
-									{/if}
-								{:else}
-								{/if}
-							</div>
-						{/if}
+										{:else}
+											<!-- 기존 6개 카테고리 카드 -->
+											<div class="w-full max-w-6xl p-6">
+												<div class="w-full">
+													<div
+														class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+													>
+														{#each categories as category}
+															<div
+																class={category.comingSoon
+																	? "bg-gray-100 dark:bg-gray-800/60 rounded-xl shadow-md transition-all duration-300 overflow-hidden border-2 border-gray-300 dark:border-gray-600 opacity-40 pointer-events-none cursor-not-allowed"
+																	: "bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 dark:border-gray-700"}
+															>
+																<div
+																	class="p-6"
+																>
+																	<!-- Category header -->
+																	<div
+																		class="flex items-center gap-3 mb-4"
+																	>
+																		<!-- 카테고리 아이콘 -->
+																		<div
+																			class="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg shadow-sm flex-shrink-0"
+																		>
+																			{#if category.id === "edm"}
+																				<svg
+																					class="w-5 h-5 text-gray-500 dark:text-gray-400"
+																					fill="none"
+																					stroke="currentColor"
+																					viewBox="0 0 24 24"
+																				>
+																					<path
+																						stroke-linecap="round"
+																						stroke-linejoin="round"
+																						stroke-width="1.5"
+																						d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+
+																					></path>
+																				</svg>
+																			{:else if category.id === "guide"}
+																				<svg
+																					class="w-5 h-5 text-gray-500 dark:text-gray-400"
+																					fill="none"
+																					stroke="currentColor"
+																					viewBox="0 0 24 24"
+																				>
+																					<path
+																						stroke-linecap="round"
+																						stroke-linejoin="round"
+																						stroke-width="1.5"
+																						d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+
+																					></path>
+																				</svg>
+																			{:else if category.id === "helpdesk"}
+																				<svg
+																					class="w-5 h-5 text-gray-500 dark:text-gray-400"
+																					fill="none"
+																					stroke="currentColor"
+																					viewBox="0 0 24 24"
+																				>
+																					<path
+																						stroke-linecap="round"
+																						stroke-linejoin="round"
+																						stroke-width="1.5"
+																						d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"
+
+																					></path>
+																				</svg>
+																			{/if}
+																		</div>
+
+																		<h3
+																			class="text-xl font-bold text-gray-800 dark:text-gray-100"
+																		>
+																			{#if category.name.includes("[")}
+																				{category.name
+																					.split(
+																						"[",
+																					)[0]
+																					.trim()}
+																			{:else}
+																				{category.name}
+																			{/if}
+																		</h3>
+																	</div>
+
+																	<!-- Action button -->
+																	<div
+																		class="mt-4"
+																	>
+																		{#if category.id === "edm-file-search-hidden"}
+																			<!-- EDM 전용 파일 검색 버튼 (기능 보존, 현재 숨김) -->
+																			<button
+																				class="w-full px-4 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-md hover:shadow-lg"
+																				on:click={() => {
+																					console.log(
+																						"🔵 EDM 파일 검색 버튼 클릭 - 카테고리 선택됨",
+																					);
+																					selectedCategories.set(
+																						[
+																							category,
+																						],
+																					);
+																					console.log(
+																						"✅ EDM 모드 활성화 - 이제 메시지를 입력하고 전송하세요",
+																					);
+																				}}
+																			>
+																				EDM
+																				파일
+																				검색
+																			</button>
+																		{:else}
+																			<!-- 샘플 질문 표시 (모든 카테고리 동일) -->
+																			<div
+																				class="space-y-2"
+																			>
+																				{#each category.samples as sample}
+																					<button
+																						class="w-full text-left px-3 py-2 text-sm transition-colors border rounded-lg {category.comingSoon
+																							? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 cursor-not-allowed opacity-40 pointer-events-none'
+																							: 'bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700'}"
+																						disabled={category.comingSoon}
+																						on:click={async () => {
+																							// 준비중 카테고리 체크
+																							if (
+																								category.comingSoon
+																							) {
+																								toast.error(
+																									"🚧 아직 준비중입니다",
+																								);
+																								return;
+																							}
+
+																							// 🎯 카테고리별 처리 - 항상 첫번째 처리로 동작
+																							if (
+																								category.id ===
+																									"edm" ||
+																								category.id ===
+																									"dictionary" ||
+																								category.id ===
+																									"guide" ||
+																								category.id ===
+																									"helpdesk"
+																							) {
+																								// EDM 문서활용 또는 대사우 Assistant 카테고리
+																								console.log(
+																									"🔵 EDM/대사우 샘플 질문 클릭 - 카테고리:",
+																									category.name,
+																								);
+
+																								// 카테고리에 맞는 displayCategory 찾기
+																								let displayCategory =
+																									null;
+																								if (
+																									category.id ===
+																									"edm"
+																								) {
+																									displayCategory =
+																										DISPLAY_CATEGORIES[0]; // EDM 문서활용
+																								} else if (
+																									category.id ===
+																										"dictionary" ||
+																									category.id ===
+																										"guide" ||
+																									category.id ===
+																										"helpdesk"
+																								) {
+																									displayCategory =
+																										DISPLAY_CATEGORIES[1]; // 대사우 Assistant
+																								}
+
+																								// selectedCategories 무조건 업데이트 (reactive statement가 모델 변경)
+																								if (
+																									displayCategory
+																								) {
+																									const {
+																										actualIds,
+																									} =
+																										displayCategory;
+																									selectedCategories.set(
+																										actualIds,
+																									); // 직접 설정 (기존 카테고리 초기화)
+																									console.log(
+																										"✅ 카테고리 설정:",
+																										actualIds,
+																									);
+																								}
+
+																								// 메시지 입력창에 샘플 질문 채우기
+																								prompt =
+																									sample;
+																								await tick();
+																								if (
+																									messageInput
+																								) {
+																									await messageInput.setText(
+																										sample,
+																									);
+																								}
+																							} else {
+																								// 그 이외 카드 버튼 (보고서 초안 작성, Code 개발 지원, 외부정보검색 등)
+																								console.log(
+																									"🔵 일반 카테고리 샘플 질문 클릭 - 카테고리:",
+																									category.name,
+																								);
+
+																								// selectedCategories 초기화 (카테고리 선택 해제)
+																								selectedCategories.set(
+																									[],
+																								);
+																								console.log(
+																									"✅ 카테고리 초기화 (선택 해제)",
+																								);
+
+																								// 내부 기본 모델로 무조건 설정
+																								const defaultModelId =
+																									getDefaultInternalModelId();
+																								if (
+																									defaultModelId
+																								) {
+																									selectedModels =
+																										[
+																											defaultModelId,
+																										];
+																									console.log(
+																										"✅ 내부 기본 모델 설정:",
+																										defaultModelId,
+																									);
+																								}
+
+																								// 메시지 입력창에 샘플 질문 채우기
+																								prompt =
+																									sample;
+																								await tick();
+																								if (
+																									messageInput
+																								) {
+																									await messageInput.setText(
+																										sample,
+																									);
+																								}
+																							}
+																						}}
+																					>
+																						<span
+																							class="text-gray-700 dark:text-gray-300"
+																							>{sample}</span
+																						>
+																					</button>
+																				{/each}
+																			</div>
+																		{/if}
+																	</div>
+																</div>
+															</div>
+														{/each}
+													</div>
+												</div>
+											</div>
+										{/if}
+									{:else}{/if}
+								</div>
+							{/if}
 						</div>
 
 						<!-- 하단 고정 입력 영역 (내부/외부 모델 모두 표시) -->
-						<div class="flex-shrink-0 border-t border-gray-300 dark:border-gray-700">
+						<div
+							class="flex-shrink-0 border-t border-gray-300 dark:border-gray-700"
+						>
 							<MessageInput
 								bind:this={messageInput}
 								{history}
@@ -3875,7 +5358,7 @@
 								on:upload={async (e) => {
 									const _response = await uploadFiles(
 										localStorage.token,
-										e.detail.files
+										e.detail.files,
 									).catch((error) => {
 										toast.error(error);
 										return null;
@@ -3885,66 +5368,105 @@
 										files = [
 											...files,
 											..._response.map((file) => ({
-												type: 'file',
-												...file
-											}))
+												type: "file",
+												...file,
+											})),
 										];
 									}
 								}}
 								on:submit={async (e) => {
 									await submitPrompt(
 										e.detail.prompt,
-										e.detail.systemPrompt
+										e.detail.systemPrompt,
 									);
 								}}
 							/>
 						</div>
 
 						<!-- Model type toggle buttons (항상 표시) -->
-						<div class="flex justify-between gap-2 px-4 py-2 border-t border-gray-200 dark:border-gray-700">
-						<!-- Selected category display -->
-						{#if displayCategoriesForUI.length > 0}
-							<div class="flex items-center gap-2 overflow-x-auto scrollbar-hidden flex-1 max-w-[60%]">
-								{#each displayCategoriesForUI as cat}
-									<div class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 dark:bg-blue-900/30 rounded-full border border-blue-300 dark:border-blue-700 whitespace-nowrap flex-shrink-0">
-										<span class="text-xs font-medium text-blue-700 dark:text-blue-300">{cat.name}</span>
-									</div>
-								{/each}
-							</div>
-						{:else}
-							<div></div> <!-- Spacer when no category selected -->
-						{/if}
+						<div
+							class="flex justify-between gap-2 px-4 py-2 border-t border-gray-200 dark:border-gray-700"
+						>
+							<!-- Selected category display -->
+							{#if displayCategoriesForUI.length > 0}
+								<div
+									class="flex items-center gap-2 overflow-x-auto scrollbar-hidden flex-1 max-w-[60%]"
+								>
+									{#each displayCategoriesForUI as cat}
+										<div
+											class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 dark:bg-blue-900/30 rounded-full border border-blue-300 dark:border-blue-700 whitespace-nowrap flex-shrink-0"
+										>
+											<span
+												class="text-xs font-medium text-blue-700 dark:text-blue-300"
+												>{cat.name}</span
+											>
+										</div>
+									{/each}
+								</div>
+							{:else}
+								<div></div>
+								<!-- Spacer when no category selected -->
+							{/if}
 
-						<!-- Toggle buttons container -->
-						<div class="flex gap-2">
-							<button
-								class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm {$modelType === 'internal'
-									? 'bg-gray-700 dark:bg-gray-600 text-white'
-									: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-750'}"
-								on:click={() => handleModelTypeChange('internal')}
-							>
-								내부모델
-							</button>
-							<button
-								class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm {$modelType === 'external'
-									? 'bg-gray-700 dark:bg-gray-600 text-white'
-									: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-750'}"
-								on:click={() => handleModelTypeChange('external')}
-							>
-								외부모델
-							</button>
-						</div>
-						</div>
-
+							<!-- Toggle buttons container -->
+							<div class="flex gap-2">
+								<button
+									class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm {$modelType ===
+									'internal'
+										? 'bg-gray-700 dark:bg-gray-600 text-white'
+										: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-750'}"
+									on:click={() =>
+										handleModelTypeChange("internal")}
+								>
+									내부모델
+								</button>
+								<button
+									class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm {$modelType ===
+									'external'
+										? 'bg-gray-700 dark:bg-gray-600 text-white'
+										: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-750'}"
+									on:click={() =>
+										handleModelTypeChange("external")}
+								>
+									외부모델
+								</button>
+								<button
+									class="px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm {$selectedCategories.includes('tavily')
+										? 'bg-purple-600 dark:bg-purple-500 text-white'
+										: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-purple-100 dark:hover:bg-purple-900/30 hover:text-purple-600 dark:hover:text-purple-400'}"
+									on:click={() => {
+										// 내부모델로 전환하고 tavily 카테고리 선택
+										if ($modelType !== 'internal') {
+											handleModelTypeChange("internal");
+										}
+										// tavily 카테고리 토글
+										if ($selectedCategories.includes('tavily')) {
+											selectedCategories.set([]);
+										} else {
+											selectedCategories.set(['tavily']);
+										}
+									}}
+								>
+									외부검색
+								</button>
 							</div>
+						</div>
+					</div>
 				</Pane>
 
 				<!-- Right Sidebar Pane (Category Selection) - 내부모델일 때만 표시 -->
-				{#if $modelType === 'internal'}
-				<PaneResizer class="w-1 hover:bg-gray-300 dark:hover:bg-gray-700 transition-colors" />
-				<Pane defaultSize={20} minSize={15} maxSize={30} class="h-full">
-					<RightSidebar />
-				</Pane>
+				{#if $modelType === "internal"}
+					<PaneResizer
+						class="w-1 hover:bg-gray-300 dark:hover:bg-gray-700 transition-colors"
+					/>
+					<Pane
+						defaultSize={20}
+						minSize={15}
+						maxSize={30}
+						class="h-full"
+					>
+						<RightSidebar />
+					</Pane>
 				{/if}
 			</PaneGroup>
 		</div>
@@ -3958,29 +5480,51 @@
 
 	<!-- Security Warning Modal for External Model -->
 	{#if showSecurityWarning}
-		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-			<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+		<div
+			class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+		>
+			<div
+				class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden"
+			>
 				<!-- 아이콘 -->
 				<div class="flex justify-center mb-4 pt-6">
-					<div class="flex items-center justify-center w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-900/30">
-						<svg class="w-6 h-6 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+					<div
+						class="flex items-center justify-center w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-900/30"
+					>
+						<svg
+							class="w-6 h-6 text-amber-600 dark:text-amber-400"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+							/>
 						</svg>
 					</div>
 				</div>
 
 				<!-- 제목 -->
-				<h3 class="text-center text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3 px-6">
+				<h3
+					class="text-center text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3 px-6"
+				>
 					외부모델로 전환
 				</h3>
 
 				<!-- 메시지 -->
-				<div class="px-6 pb-6 space-y-2 text-sm text-gray-600 dark:text-gray-400 text-center">
+				<div
+					class="px-6 pb-6 space-y-2 text-sm text-gray-600 dark:text-gray-400 text-center"
+				>
 					<p class="font-medium text-amber-700 dark:text-amber-400">
 						외부 검색 전용 공간입니다.
 					</p>
 					<p>내부 데이터와 분리됩니다.</p>
-					<p>내부모델의 채팅내역은 외부모델에서 사용할 수 없습니다.</p>
+					<p>
+						내부모델의 채팅내역은 외부모델에서 사용할 수 없습니다.
+					</p>
 				</div>
 
 				<!-- 버튼 -->
@@ -4019,27 +5563,27 @@
 			showEdmFileListModal = false;
 		}}
 		on:embed={async (event) => {
-			console.log('🔵 [on:embed 핸들러 시작]', {
+			console.log("🔵 [on:embed 핸들러 시작]", {
 				timestamp: new Date().toISOString(),
-				action: 'embed_handler_start',
+				action: "embed_handler_start",
 				filesCount: event.detail.files.length,
-				files: event.detail.files.map(f => ({
+				files: event.detail.files.map((f) => ({
 					objid: f.objid,
 					fileName: f.fileName || f.objtNm,
-					filePath: f.filePath
-				}))
+					filePath: f.filePath,
+				})),
 			});
 			const selectedFiles = event.detail.files;
 
 			showEdmFileListModal = false;
 
 			try {
-				const token = localStorage.getItem('token') || '';
+				const token = localStorage.getItem("token") || "";
 				let successCount = 0;
 				let failCount = 0;
 
 				// EDM 지식 베이스 ID (없으면 생성)
-				let knowledgeBaseId = 'edm-knowledge-base';
+				let knowledgeBaseId = "edm-knowledge-base";
 
 				// 각 파일 처리 - 실제 벡터화 파이프 사용
 				for (let i = 0; i < selectedFiles.length; i++) {
@@ -4050,122 +5594,177 @@
 					try {
 						// 📂 [Chat.svelte:3827] 벡터화 시작 로그
 						console.log("=" + "=".repeat(79));
-						console.log('📂 [COMPONENT] Chat.svelte:3827');
-						console.log('📂 [ACTION] 파일 벡터화 시작');
-						console.log(`📂 [FILE_INFO] ${fileNum}/${totalFiles} - ${file.objtNm}`);
-						console.log(`📂 [FILE_NAME] ${file.fileName || file.objtNm}`);
+						console.log("📂 [COMPONENT] Chat.svelte:3827");
+						console.log("📂 [ACTION] 파일 벡터화 시작");
+						console.log(
+							`📂 [FILE_INFO] ${fileNum}/${totalFiles} - ${file.objtNm}`,
+						);
+						console.log(
+							`📂 [FILE_NAME] ${file.fileName || file.objtNm}`,
+						);
 						console.log(`📂 [FILE_PATH] ${file.filePath}`);
 						console.log(`📂 [OBJID] ${file.objid}`);
 						console.log("=" + "=".repeat(79));
 
 						// 1단계: 파일 파싱 시작
-						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 읽고 있습니다...`);
+						toast.info(
+							`[${fileNum}/${totalFiles}] ${file.objtNm} - 파일을 읽고 있습니다...`,
+						);
 						console.log(`📄 벡터화 처리 중: ${file.objtNm}`, {
 							fileName: file.fileName,
 							filePath: file.filePath,
-							objid: file.objid
+							objid: file.objid,
 						});
 
 						// 2단계: 파싱, 청킹, 임베딩 파이프라인 호출
-						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 파싱 및 청킹 중...`);
+						toast.info(
+							`[${fileNum}/${totalFiles}] ${file.objtNm} - 파싱 및 청킹 중...`,
+						);
 
-						const vectorizePipeName = 'edm_embedding_pipe';
+						const vectorizePipeName = "edm_embedding_pipe";
 						const vectorizePayload = {
 							file_id: file.objid,
 							file_name: file.fileName || file.objtNm,
-							file_path: file.filePath,  // edm_download_pipe에서 받은 로컬 파일 경로
-							file_type: 'application/octet-stream',
+							file_path: file.filePath, // edm_download_pipe에서 받은 로컬 파일 경로
+							file_type: "application/octet-stream",
 							user_id: $user?.id,
 							chat_id: $chatId,
-							collection_name: 'edm-knowledge'  // Milvus collection
+							collection_name: "edm-knowledge", // Milvus collection
 						};
 
 						// 🔌 [Chat.svelte:3858] 벡터화 파이프 호출 로그
 						console.log("=" + "=".repeat(79));
-						console.log('🔌 [PIPELINE] edm_embedding_pipe');
-						console.log('🔌 [COMPONENT] Chat.svelte:3858');
-						console.log('🔌 [ACTION] 벡터화 파이프 호출');
-						console.log(`🔌 [FILE_PATH] ${vectorizePayload.file_path}`);
-						console.log(`🔌 [COLLECTION] ${vectorizePayload.collection_name}`);
+						console.log("🔌 [PIPELINE] edm_embedding_pipe");
+						console.log("🔌 [COMPONENT] Chat.svelte:3858");
+						console.log("🔌 [ACTION] 벡터화 파이프 호출");
+						console.log(
+							`🔌 [FILE_PATH] ${vectorizePayload.file_path}`,
+						);
+						console.log(
+							`🔌 [COLLECTION] ${vectorizePayload.collection_name}`,
+						);
 						console.log(`🔌 [PAYLOAD]`, vectorizePayload);
 						console.log("=" + "=".repeat(79));
 
-						console.log('🔵 [벡터화 파이프 호출]', {
-						timestamp: new Date().toISOString(),
-						action: 'vectorization_pipe_call',
-						pipeName: vectorizePipeName,
-						fileNum: fileNum,
-						totalFiles: totalFiles,
-						payload: vectorizePayload
-					});
-
-						const vectorizeResponse = await fetch(`/api/pipelines/${vectorizePipeName}`, {
-							method: 'POST',
-							headers: {
-								'Content-Type': 'application/json',
-								'Authorization': `Bearer ${localStorage.token}`
-							},
-							body: JSON.stringify(vectorizePayload)
+						console.log("🔵 [벡터화 파이프 호출]", {
+							timestamp: new Date().toISOString(),
+							action: "vectorization_pipe_call",
+							pipeName: vectorizePipeName,
+							fileNum: fileNum,
+							totalFiles: totalFiles,
+							payload: vectorizePayload,
 						});
 
+						const vectorizeResponse = await fetch(
+							`/api/pipelines/${vectorizePipeName}`,
+							{
+								method: "POST",
+								headers: {
+									"Content-Type": "application/json",
+									Authorization: `Bearer ${localStorage.token}`,
+								},
+								body: JSON.stringify(vectorizePayload),
+							},
+						);
+
 						if (!vectorizeResponse.ok) {
-							throw new Error(`벡터화 파이프 실패: ${vectorizeResponse.status}`);
+							throw new Error(
+								`벡터화 파이프 실패: ${vectorizeResponse.status}`,
+							);
 						}
 
 						const vectorizeResult = await vectorizeResponse.json();
-						console.log('🟢 [벡터화 파이프 응답 성공]', {
-						timestamp: new Date().toISOString(),
-						action: 'vectorization_pipe_response',
-						fileNum: fileNum,
-						fileName: file.objtNm,
-						success: vectorizeResult.success || vectorizeResult.status === 'success',
-						doc_id: vectorizeResult.doc_id || vectorizeResult.document_id,
-						chunks_count: vectorizeResult.chunks_count || vectorizeResult.total_chunks,
-						embeddings_count: vectorizeResult.embeddings_count || vectorizeResult.total_embeddings,
-						response: vectorizeResult
-					});
+						console.log("🟢 [벡터화 파이프 응답 성공]", {
+							timestamp: new Date().toISOString(),
+							action: "vectorization_pipe_response",
+							fileNum: fileNum,
+							fileName: file.objtNm,
+							success:
+								vectorizeResult.success ||
+								vectorizeResult.status === "success",
+							doc_id:
+								vectorizeResult.doc_id ||
+								vectorizeResult.document_id,
+							chunks_count:
+								vectorizeResult.chunks_count ||
+								vectorizeResult.total_chunks,
+							embeddings_count:
+								vectorizeResult.embeddings_count ||
+								vectorizeResult.total_embeddings,
+							response: vectorizeResult,
+						});
 
 						// 3단계: 벡터 임베딩 처리
-						toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - 벡터 임베딩 생성 중...`);
+						toast.info(
+							`[${fileNum}/${totalFiles}] ${file.objtNm} - 벡터 임베딩 생성 중...`,
+						);
 
-						if (vectorizeResult.success || vectorizeResult.status === 'success') {
+						if (
+							vectorizeResult.success ||
+							vectorizeResult.status === "success"
+						) {
 							console.log(`✅ 벡터화 성공: ${file.objtNm}`);
-							console.log(`   - 문서 ID: ${vectorizeResult.doc_id || vectorizeResult.document_id}`);
-							console.log(`   - 청크 수: ${vectorizeResult.chunks_count || vectorizeResult.total_chunks}`);
-							console.log(`   - 임베딩 수: ${vectorizeResult.embeddings_count || vectorizeResult.total_embeddings}`);
+							console.log(
+								`   - 문서 ID: ${vectorizeResult.doc_id || vectorizeResult.document_id}`,
+							);
+							console.log(
+								`   - 청크 수: ${vectorizeResult.chunks_count || vectorizeResult.total_chunks}`,
+							);
+							console.log(
+								`   - 임베딩 수: ${vectorizeResult.embeddings_count || vectorizeResult.total_embeddings}`,
+							);
 
 							// 4단계: Milvus DB 저장 완료
-							toast.info(`[${fileNum}/${totalFiles}] ${file.objtNm} - Milvus DB에 저장 완료`);
+							toast.info(
+								`[${fileNum}/${totalFiles}] ${file.objtNm} - Milvus DB에 저장 완료`,
+							);
 
 							// 5단계: 완료
-							const chunkCount = vectorizeResult.chunks_count || vectorizeResult.total_chunks || 0;
-							toast.success(`[${fileNum}/${totalFiles}] ${file.objtNm} - 지식화 완료! (${chunkCount}개 청크)`);
+							const chunkCount =
+								vectorizeResult.chunks_count ||
+								vectorizeResult.total_chunks ||
+								0;
+							toast.success(
+								`[${fileNum}/${totalFiles}] ${file.objtNm} - 지식화 완료! (${chunkCount}개 청크)`,
+							);
 							successCount++;
 						} else {
-							throw new Error(vectorizeResult.error || vectorizeResult.message || '벡터화 실패');
+							throw new Error(
+								vectorizeResult.error ||
+									vectorizeResult.message ||
+									"벡터화 실패",
+							);
 						}
 					} catch (fileError) {
-						console.error(`❌ 파일 처리 실패: ${file.objtNm}`, fileError);
-						toast.error(`[${fileNum}/${totalFiles}] ${file.objtNm} - 처리 실패: ${fileError.message}`);
+						console.error(
+							`❌ 파일 처리 실패: ${file.objtNm}`,
+							fileError,
+						);
+						toast.error(
+							`[${fileNum}/${totalFiles}] ${file.objtNm} - 처리 실패: ${fileError.message}`,
+						);
 						failCount++;
 					}
 
 					// 파일 간 짧은 대기 (UI 업데이트 및 서버 부하 방지)
-					await new Promise(resolve => setTimeout(resolve, 500));
+					await new Promise((resolve) => setTimeout(resolve, 500));
 				}
 
 				// 최종 결과 표시
 				if (successCount > 0 && failCount === 0) {
-					toast.success(`🎉 모든 파일(${successCount}개) 지식화 완료! 이제 채팅에서 문서 내용을 검색할 수 있습니다.`);
+					toast.success(
+						`🎉 모든 파일(${successCount}개) 지식화 완료! 이제 채팅에서 문서 내용을 검색할 수 있습니다.`,
+					);
 				} else if (successCount > 0 && failCount > 0) {
-					toast.info(`✅ ${successCount}개 지식화 성공, ❌ ${failCount}개 실패`);
+					toast.info(
+						`✅ ${successCount}개 지식화 성공, ❌ ${failCount}개 실패`,
+					);
 				} else {
 					toast.error(`모든 파일 지식화 실패 (${failCount}개)`);
 				}
-
 			} catch (error) {
-				console.error('❌ EDM 파일 지식화 실패:', error);
-				toast.error('파일 지식화 중 오류 발생: ' + error.message);
+				console.error("❌ EDM 파일 지식화 실패:", error);
+				toast.error("파일 지식화 중 오류 발생: " + error.message);
 			}
 		}}
 	/>
@@ -4177,19 +5776,23 @@
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
 		on:click={() => {
 			showEdmFeedbackModal = false;
-			edmFeedbackReason = '';
-			edmFeedbackDetail = '';
+			edmFeedbackReason = "";
+			edmFeedbackDetail = "";
 		}}
 	>
 		<div
 			class="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
 			on:click|stopPropagation
 		>
-			<h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-				{edmFeedbackType === 'thumbs-down' ? '어떤 점이 마음에 들지 않으셨나요?' : '피드백 감사합니다!'}
+			<h3
+				class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4"
+			>
+				{edmFeedbackType === "thumbs-down"
+					? "어떤 점이 마음에 들지 않으셨나요?"
+					: "피드백 감사합니다!"}
 			</h3>
 
-			{#if edmFeedbackType === 'thumbs-down'}
+			{#if edmFeedbackType === "thumbs-down"}
 				<!-- 불만족 이유 선택 -->
 				<div class="space-y-3 mb-4">
 					<label class="flex items-center space-x-2 cursor-pointer">
@@ -4200,7 +5803,9 @@
 							bind:group={edmFeedbackReason}
 							class="w-4 h-4"
 						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">질문과 답변의 관련성이 낮음</span>
+						<span class="text-sm text-gray-700 dark:text-gray-300"
+							>질문과 답변의 관련성이 낮음</span
+						>
 					</label>
 
 					<label class="flex items-center space-x-2 cursor-pointer">
@@ -4211,7 +5816,9 @@
 							bind:group={edmFeedbackReason}
 							class="w-4 h-4"
 						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">사실과 다르거나 오류가 있음</span>
+						<span class="text-sm text-gray-700 dark:text-gray-300"
+							>사실과 다르거나 오류가 있음</span
+						>
 					</label>
 
 					<label class="flex items-center space-x-2 cursor-pointer">
@@ -4222,7 +5829,9 @@
 							bind:group={edmFeedbackReason}
 							class="w-4 h-4"
 						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">지시한 조건이나 형식을 무시함</span>
+						<span class="text-sm text-gray-700 dark:text-gray-300"
+							>지시한 조건이나 형식을 무시함</span
+						>
 					</label>
 
 					<label class="flex items-center space-x-2 cursor-pointer">
@@ -4233,13 +5842,17 @@
 							bind:group={edmFeedbackReason}
 							class="w-4 h-4"
 						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">도움이 되지 않음</span>
+						<span class="text-sm text-gray-700 dark:text-gray-300"
+							>도움이 되지 않음</span
+						>
 					</label>
 				</div>
 
 				<!-- 상세 의견 입력 -->
 				<div class="mb-4">
-					<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+					<label
+						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+					>
 						기타 의견 입력
 					</label>
 					<textarea
@@ -4263,8 +5876,8 @@
 				<button
 					on:click={() => {
 						showEdmFeedbackModal = false;
-						edmFeedbackReason = '';
-						edmFeedbackDetail = '';
+						edmFeedbackReason = "";
+						edmFeedbackDetail = "";
 					}}
 					class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300
 						   bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
@@ -4273,31 +5886,35 @@
 				</button>
 				<button
 					on:click={() => {
-						console.log('📊 EDM 피드백 제출:', {
+						console.log("📊 EDM 피드백 제출:", {
 							messageId: currentEdmMessageId,
 							type: edmFeedbackType,
 							reason: edmFeedbackReason,
-							detail: edmFeedbackDetail
+							detail: edmFeedbackDetail,
 						});
 
 						// 메시지에 평가 정보 저장
-						if (currentEdmMessageId && history.messages[currentEdmMessageId]) {
+						if (
+							currentEdmMessageId &&
+							history.messages[currentEdmMessageId]
+						) {
 							history.messages[currentEdmMessageId].feedback = {
 								type: edmFeedbackType,
 								reason: edmFeedbackReason,
 								detail: edmFeedbackDetail,
-								timestamp: Date.now()
+								timestamp: Date.now(),
 							};
 						}
 
-						toast.success('피드백이 제출되었습니다. 감사합니다!');
+						toast.success("피드백이 제출되었습니다. 감사합니다!");
 						showEdmFeedbackModal = false;
-						edmFeedbackReason = '';
-						edmFeedbackDetail = '';
+						edmFeedbackReason = "";
+						edmFeedbackDetail = "";
 					}}
 					class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg
 						   hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-					disabled={edmFeedbackType === 'thumbs-down' && !edmFeedbackReason}
+					disabled={edmFeedbackType === "thumbs-down" &&
+						!edmFeedbackReason}
 				>
 					제출
 				</button>
@@ -4305,7 +5922,6 @@
 		</div>
 	</div>
 {/if}
-
 
 <!-- EDM 문서 뷰어 모달 -->
 {#if edmDocumentViewerModal && selectedDocument}
@@ -4318,12 +5934,18 @@
 			on:click|stopPropagation
 		>
 			<!-- 뷰어 헤더 -->
-			<div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+			<div
+				class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between"
+			>
 				<div class="flex-1 min-w-0">
-					<h2 class="text-xl font-bold text-gray-900 dark:text-gray-100 truncate">
+					<h2
+						class="text-xl font-bold text-gray-900 dark:text-gray-100 truncate"
+					>
 						📄 {selectedDocument.title}
 					</h2>
-					<div class="flex items-center space-x-4 mt-1 text-sm text-gray-600 dark:text-gray-400">
+					<div
+						class="flex items-center space-x-4 mt-1 text-sm text-gray-600 dark:text-gray-400"
+					>
 						<span>👤 {selectedDocument.author}</span>
 						<span>📅 {selectedDocument.date}</span>
 						<span>📏 {selectedDocument.size}</span>
@@ -4333,30 +5955,51 @@
 					on:click={closeDocumentViewer}
 					class="ml-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
 				>
-					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+					<svg
+						class="w-6 h-6"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M6 18L18 6M6 6l12 12"
+						/>
 					</svg>
 				</button>
 			</div>
 
 			<!-- 문서 내용 -->
-			<div class="flex-1 overflow-y-auto px-6 py-4 bg-gray-50 dark:bg-gray-900">
+			<div
+				class="flex-1 overflow-y-auto px-6 py-4 bg-gray-50 dark:bg-gray-900"
+			>
 				{#if isLoadingDocument}
 					<div class="flex items-center justify-center h-full">
 						<div class="flex flex-col items-center space-y-3">
 							<Spinner className="w-8 h-8" />
-							<span class="text-gray-700 dark:text-gray-300">문서를 불러오는 중...</span>
+							<span class="text-gray-700 dark:text-gray-300"
+								>문서를 불러오는 중...</span
+							>
 						</div>
 					</div>
 				{:else}
-					<pre class="whitespace-pre-wrap font-sans text-sm text-gray-800 dark:text-gray-200 leading-relaxed">{documentContent}</pre>
+					<pre
+						class="whitespace-pre-wrap font-sans text-sm text-gray-800 dark:text-gray-200 leading-relaxed">{documentContent}</pre>
 				{/if}
 			</div>
 
 			<!-- 뷰어 푸터 -->
-			<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
-				<div class="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
-					<span class="px-2 py-1 rounded bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+			<div
+				class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between"
+			>
+				<div
+					class="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400"
+				>
+					<span
+						class="px-2 py-1 rounded bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200"
+					>
 						{selectedDocument.type}
 					</span>
 					<span>•</span>
@@ -4372,3 +6015,120 @@
 		</div>
 	</div>
 {/if}
+
+<!-- ============================================ -->
+<!-- [2024.12.30] 턴 및 토큰수 제약처리 - 세션 초기화 UI 시작 -->
+<!-- 역할: Max Turns/Tokens 초과 시 세션 초기화 팝업 표시 -->
+<!-- ============================================ -->
+<!-- ----- 1227 세션 제한 경고 팝업 -> 토스트로 변경 (모달 제거) ----- -->
+
+<!-- 세션 초기화 팝업 -->
+<!-- [2026-01-22] 세션 요약 기능 추가 -->
+{#if showSessionResetModal}
+	<div
+		class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50"
+	>
+		<div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+			<div class="flex items-center gap-3 mb-4">
+				<div class="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900 flex items-center justify-center">
+					<svg class="w-6 h-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+					</svg>
+				</div>
+				<h3 class="text-lg font-semibold text-gray-900 dark:text-white">세션 초기화</h3>
+			</div>
+			<p class="text-gray-600 dark:text-gray-300 mb-4">{sessionResetMessage}</p>
+
+			<!-- [2026-01-22] 세션 요약 섹션 시작 -->
+			<div class="mb-4 p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800">
+				<div class="flex items-center gap-2 mb-2">
+					<svg class="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+					</svg>
+					<span class="font-medium text-blue-800 dark:text-blue-200">세션 요약</span>
+				</div>
+				<p class="text-sm text-blue-700 dark:text-blue-300 mb-3">
+					새 세션으로 이동하기 전에 현재 대화 내용을 요약하여 저장할 수 있습니다.
+				</p>
+
+				{#if !showSummaryResult}
+					<button
+						on:click={generateSessionSummary}
+						disabled={isGeneratingSummary}
+						class="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+					>
+						{#if isGeneratingSummary}
+							<svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+								<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+							</svg>
+							<span>요약 생성 중...</span>
+						{:else}
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7" />
+							</svg>
+							<span>세션 요약 생성 (~4000 토큰)</span>
+						{/if}
+					</button>
+				{:else}
+					<!-- 요약 결과 표시 -->
+					<div class="mt-2">
+						<div class="flex items-center justify-between mb-2">
+							<span class="text-sm font-medium text-blue-800 dark:text-blue-200">요약 결과</span>
+							<button
+								on:click={() => {
+									showSummaryResult = false;
+									sessionSummary = '';
+								}}
+								class="text-xs px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-800 rounded transition-colors"
+							>
+								🔄 다시 생성
+							</button>
+						</div>
+						<div class="bg-white dark:bg-gray-900 rounded-lg p-3 max-h-64 overflow-y-auto border border-blue-200 dark:border-blue-700">
+							<pre class="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-sans">{sessionSummary}</pre>
+						</div>
+						<!-- [2026-01-22] 새 채팅에 요약 반영 버튼 -->
+						<button
+							on:click={() => {
+								// 요약 내용을 sessionStorage에 저장 (새 채팅에서 자동 반영)
+								sessionStorage.setItem('sessionSummaryForNewChat', sessionSummary);
+								showSessionResetModal = false;
+								showSummaryResult = false;
+								sessionSummary = '';
+								isGeneratingSummary = false;
+								toast.success('요약 내용이 새 채팅에 반영됩니다.');
+								// 새 채팅 시작
+								goto('/');
+							}}
+							class="mt-3 w-full px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+							</svg>
+							<span>새 채팅에 요약 반영</span>
+						</button>
+					</div>
+				{/if}
+			</div>
+			<!-- [2026-01-22] 세션 요약 섹션 종료 -->
+
+			<div class="flex justify-end gap-3">
+				<button
+					on:click={() => {
+						showSessionResetModal = false;
+						showSummaryResult = false;
+						sessionSummary = '';
+						isGeneratingSummary = false;
+						// 새 채팅 시작 (요약 없이)
+						goto('/');
+					}}
+					class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+				>
+					요약 없이 새 채팅
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+<!-- [2024.12.30] 턴 및 토큰수 제약처리 - 세션 초기화 UI 완료 ============================================ -->
