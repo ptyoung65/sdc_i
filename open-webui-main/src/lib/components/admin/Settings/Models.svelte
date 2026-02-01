@@ -38,8 +38,276 @@
 	import EyeSlash from '$lib/components/icons/EyeSlash.svelte';
 	import Eye from '$lib/components/icons/Eye.svelte';
 	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { getModelsConfig, setModelsConfig, getModelColors, setModelColors, syncConfigToAllServers, getClusterServers } from '$lib/apis/configs';
+	// [2026.01.19] 모델 색상 설정 Store
+	import { modelColors as modelColorsStore, AVAILABLE_COLORS, DEFAULT_MODEL_COLORS } from '$lib/stores';
 
 	let shiftKey = false;
+
+	// ============================================================================================================
+	// [2025.01.05] 세션 제한 설정 저장 기능 (턴 및 토큰수 제약처리)
+	// ============================================================================================================
+	//
+	// ■ 기능 개요:
+	//   모델별로 Max Turns, Max Tokens, Max Input Tokens, Warning Turns 값을 설정하고 config DB에 저장
+	//
+	// ■ 설정 화면: /admin/settings/models
+	//
+	// ■ 데이터 구조:
+	//   modelSessionLimits = {
+	//     "모델ID": {
+	//       maxTurns: 10,        // 최대 대화 턴수 (0=무제한)
+	//       maxTokens: 50000,    // 세션 전체 최대 토큰수 (0=무제한)
+	//       maxInputTokens: 4000, // 1턴당 입력 가능 토큰수 (0=무제한)
+	//       warningTurns: 2      // Max Turns 이전 몇 턴부터 경고할지 (0=경고없음)
+	//     }
+	//   }
+	//
+	// ■ 저장 흐름 (상세):
+	//   [프론트엔드]
+	//   1. 관리자가 UI에서 값 입력 → setModelLimit() 호출 → modelSessionLimits 객체 업데이트
+	//   2. "세션 제한 저장" 버튼 클릭 → saveSessionLimits() 호출
+	//   3. getModelsConfig() → 기존 설정 조회 (src/lib/apis/configs/index.ts)
+	//   4. setModelsConfig() → MODEL_SESSION_LIMITS 키로 저장 요청
+	//
+	//   [백엔드 API - configs.py]
+	//   5. POST /api/v1/configs/models → set_models_config() 함수 실행
+	//   6. get_config()로 기존 config 전체 조회
+	//   7. config["MODEL_SESSION_LIMITS"] = 새로운 값 병합
+	//   8. save_config(config) 호출
+	//
+	//   [DB 저장 - config.py]
+	//   9. save_config() → save_to_db() 호출
+	//   10. SQLAlchemy ORM으로 config 테이블 UPDATE
+	//   11. data 컬럼(JSONB)에 전체 설정 JSON 저장
+	//   12. CONFIG_DATA 전역 변수 업데이트 (메모리 캐시)
+	//   13. PERSISTENT_CONFIG_REGISTRY 업데이트 트리거
+	//
+	// ■ DB 저장 위치:
+	//   - 테이블: config
+	//   - 컬럼: data (JSONB 타입)
+	//   - 키: MODEL_SESSION_LIMITS
+	//
+	// ■ API 엔드포인트:
+	//   - GET  /api/v1/configs/models → 설정 조회
+	//   - POST /api/v1/configs/models → 설정 저장
+	//
+	// ■ 컨테이너 재시작: 불필요 (즉시 적용)
+	//   - DB에 직접 저장되고 메모리 캐시도 동기화됨
+	//   - 신규 채팅: 즉시 적용
+	//   - 기존 채팅: 다음 메시지부터 적용
+	//
+	// ■ 관련 파일:
+	//   - src/lib/components/admin/Settings/Models.svelte (현재 파일 - UI)
+	//   - src/lib/apis/configs/index.ts (API 클라이언트)
+	//   - backend/open_webui/routers/configs.py (백엔드 API)
+	//   - backend/open_webui/config.py (DB 저장/조회 핵심 함수)
+	//
+	// ============================================================================================================
+	// ----- [2025.01.05] 세션 제한 설정 저장 기능 시작 -----
+
+	// ▼ 상태 변수 정의
+	let modelSessionLimits = {};       // 모델별 세션 제한 설정 저장 객체
+	let showSessionLimitsSection = true; // 세션 제한 섹션 표시 여부
+	let sessionLimitsLoading = false;    // 저장 중 로딩 상태
+	let limitsLoaded = false;            // 설정 로드 완료 여부
+
+	// ▼ 설정 로드 함수 - config DB에서 MODEL_SESSION_LIMITS 조회
+	const loadSessionLimits = async () => {
+		try {
+			// API 호출: GET /api/v1/configs/models
+			const config = await getModelsConfig(localStorage.token);
+			// config.MODEL_SESSION_LIMITS에서 모델별 제한 설정 추출
+			if (config?.MODEL_SESSION_LIMITS) {
+				modelSessionLimits = config.MODEL_SESSION_LIMITS;
+			}
+			limitsLoaded = true;
+		} catch (e) {
+			console.error('세션 제한 설정 로드 실패:', e);
+			limitsLoaded = true;
+		}
+	};
+
+	// ▼ 설정 저장 함수 - config DB에 MODEL_SESSION_LIMITS 저장
+	const saveSessionLimits = async () => {
+		sessionLimitsLoading = true;
+		try {
+			// 1. 기존 설정 조회 (다른 설정 유지를 위해)
+			const config = await getModelsConfig(localStorage.token);
+
+			// 2. MODEL_SESSION_LIMITS 키로 설정 저장
+			// API 호출: POST /api/v1/configs/models
+			// 요청 본문: { ...기존설정, MODEL_SESSION_LIMITS: modelSessionLimits }
+			await setModelsConfig(localStorage.token, {
+				...config,
+				MODEL_SESSION_LIMITS: modelSessionLimits
+			});
+
+			toast.success($i18n.t('Session limits saved successfully'));
+		} catch (e) {
+			console.error('세션 제한 설정 저장 실패:', e);
+			toast.error($i18n.t('Failed to save session limits'));
+		}
+		sessionLimitsLoading = false;
+	};
+
+	// ▼ 모델별 제한값 조회 헬퍼 함수
+	const getModelLimit = (modelId, field) => {
+		// modelSessionLimits[모델ID][필드명] 반환, 없으면 0
+		return modelSessionLimits[modelId]?.[field] || 0;
+	};
+
+	// ▼ 모델별 제한값 설정 헬퍼 함수
+	const setModelLimit = (modelId, field, value) => {
+		// 해당 모델의 설정이 없으면 기본 구조 생성
+		if (!modelSessionLimits[modelId]) {
+			// 기본 구조: maxTurns, maxTokens, maxInputTokens, warningTurns
+			modelSessionLimits[modelId] = {
+				maxTurns: 0,        // 최대 대화 턴수
+				maxTokens: 0,       // 세션 전체 최대 토큰수
+				maxInputTokens: 0,  // 1턴당 입력 가능 토큰수
+				warningTurns: 0     // 경고 시작 턴수 (Max Turns - warningTurns 도달 시 경고)
+			};
+		}
+		// 입력값을 정수로 변환하여 저장
+		modelSessionLimits[modelId][field] = parseInt(value) || 0;
+	};
+	// ----- [2025.01.05] 세션 제한 설정 저장 기능 종료 -----
+	// ============================================================================================================
+	// [2025.01.05] 세션 제한 설정 저장 기능 완료
+	// ============================================================================================================
+
+	// ============================================================================================================
+	// ----- [2026-01-31] Active-Active 서버 동기화 기능 시작 -----
+	// ============================================================================================================
+	//
+	// ■ 기능 개요:
+	//   Active-Active 환경에서 설정 변경 후 모든 서버의 메모리 캐시를 동기화
+	//
+	// ■ 환경변수 설정 필요 (백엔드):
+	//   CLUSTER_SERVER_URLS=http://192.168.122.178:8080,http://192.168.122.177:8080
+	//
+	// ============================================================================================================
+
+	let syncLoading = false;           // 동기화 중 로딩 상태
+	let clusterServers = [];           // 클러스터 서버 목록
+	let clusterConfigured = false;     // 클러스터 설정 여부
+
+	// ▼ 클러스터 서버 정보 로드
+	const loadClusterServers = async () => {
+		try {
+			const result = await getClusterServers(localStorage.token);
+			if (result) {
+				clusterServers = result.servers || [];
+				clusterConfigured = result.configured || false;
+			}
+		} catch (e) {
+			console.error('클러스터 서버 정보 로드 실패:', e);
+		}
+	};
+
+	// ▼ 모든 서버 동기화 함수
+	const syncAllServers = async () => {
+		syncLoading = true;
+		try {
+			const result = await syncConfigToAllServers(localStorage.token);
+			if (result?.success) {
+				toast.success($i18n.t(`서버 동기화 완료: ${result.successful_servers}/${result.total_servers}`));
+			} else {
+				// 부분 실패
+				const failedServers = result?.results?.filter(r => !r.success).map(r => r.server).join(', ');
+				toast.warning($i18n.t(`일부 서버 동기화 실패: ${failedServers}`));
+			}
+			console.log('[Sync] 동기화 결과:', result);
+		} catch (e) {
+			console.error('서버 동기화 실패:', e);
+			toast.error($i18n.t('서버 동기화 실패'));
+		}
+		syncLoading = false;
+	};
+
+	// ----- [2026-01-31] Active-Active 서버 동기화 기능 종료 -----
+	// ============================================================================================================
+
+	// ============================================================================================================
+	// [2026.01.19] 모델 색상 설정 기능
+	// ============================================================================================================
+	//
+	// ■ 기능 개요:
+	//   모델명에 포함된 키워드를 기반으로 채팅 화면에서 모델명을 색상으로 구분하여 표시
+	//
+	// ■ 데이터 구조:
+	//   modelColorsList = [
+	//     { keyword: "gpt", color: "emerald", label: "GPT (OpenAI)" },
+	//     { keyword: "claude", color: "orange", label: "Claude (Anthropic)" },
+	//     ...
+	//   ]
+	//
+	// ■ API 엔드포인트:
+	//   - GET  /api/v1/configs/model-colors → 설정 조회
+	//   - POST /api/v1/configs/model-colors → 설정 저장
+	//
+	// ----- [2026.01.19] 모델 색상 설정 기능 시작 -----
+
+	// ▼ 상태 변수 정의
+	let modelColorsList = [...DEFAULT_MODEL_COLORS]; // 모델 색상 매핑 배열
+	let showModelColorsSection = true;               // 색상 설정 섹션 표시 여부
+	let modelColorsLoading = false;                  // 저장 중 로딩 상태
+	let colorsLoaded = false;                        // 설정 로드 완료 여부
+
+	// ▼ 설정 로드 함수 - config DB에서 MODEL_COLORS 조회
+	const loadModelColors = async () => {
+		try {
+			const result = await getModelColors(localStorage.token);
+			if (result?.colors && Array.isArray(result.colors)) {
+				modelColorsList = result.colors;
+				// Store도 업데이트
+				modelColorsStore.set(result.colors);
+			}
+			colorsLoaded = true;
+		} catch (e) {
+			console.error('모델 색상 설정 로드 실패:', e);
+			colorsLoaded = true;
+		}
+	};
+
+	// ▼ 설정 저장 함수 - config DB에 MODEL_COLORS 저장
+	const saveModelColors = async () => {
+		modelColorsLoading = true;
+		try {
+			await setModelColors(localStorage.token, modelColorsList);
+			// Store도 업데이트
+			modelColorsStore.set(modelColorsList);
+			toast.success($i18n.t('Model colors saved successfully'));
+		} catch (e) {
+			console.error('모델 색상 설정 저장 실패:', e);
+			toast.error($i18n.t('Failed to save model colors'));
+		}
+		modelColorsLoading = false;
+	};
+
+	// ▼ 색상 매핑 추가
+	const addColorMapping = () => {
+		modelColorsList = [...modelColorsList, { keyword: '', color: 'gray', label: '' }];
+	};
+
+	// ▼ 색상 매핑 삭제
+	const removeColorMapping = (index) => {
+		modelColorsList = modelColorsList.filter((_, i) => i !== index);
+	};
+
+	// ▼ 색상 매핑 업데이트
+	const updateColorMapping = (index, field, value) => {
+		modelColorsList[index][field] = value;
+		modelColorsList = [...modelColorsList]; // 반응성 트리거
+	};
+
+	// ▼ 기본값으로 초기화
+	const resetModelColors = () => {
+		modelColorsList = [...DEFAULT_MODEL_COLORS];
+	};
+	// ----- [2026.01.19] 모델 색상 설정 기능 종료 -----
+	// ============================================================================================================
 
 	let modelsImportInProgress = false;
 	let importFiles;
@@ -221,6 +489,9 @@
 
 	onMount(async () => {
 		await init();
+		await loadSessionLimits(); // 세션 제한 설정 로드
+		await loadModelColors(); // [2026.01.19] 모델 색상 설정 로드
+		await loadClusterServers(); // [2026-01-31] 클러스터 서버 정보 로드
 		const id = $page.url.searchParams.get('id');
 
 		if (id) {
@@ -322,6 +593,271 @@
 				</div>
 			</div>
 		</div>
+
+		<!-- ============================================ -->
+		<!-- [2024.12.30] 턴 및 토큰수 제약처리 - 관리자 UI 시작 -->
+		<!-- 역할: 모델별 세션 제한 설정 UI (Max Turns/Tokens/Input Tokens/Warning) -->
+		<!-- 설정 화면: /admin/settings/models -->
+		<!-- ============================================ -->
+		<!-- ----- 1225 maxInputTokens UI 추가 시작 ----- -->
+		<!-- 세션 제한 설정 섹션 -->
+		<div class="my-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+			<button
+				class="w-full flex justify-between items-center text-left"
+				on:click={() => { showSessionLimitsSection = !showSessionLimitsSection; }}
+			>
+				<div class="flex items-center gap-2">
+					<span class="text-lg font-medium text-gray-900 dark:text-white">
+						세션 제한 설정
+					</span>
+					<span class="text-xs text-gray-500">(모델별 최대 턴수/토큰수/입력토큰수)</span>
+				</div>
+				<svg class="w-5 h-5 transform transition-transform {showSessionLimitsSection ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+				</svg>
+			</button>
+
+			{#if showSessionLimitsSection}
+				<div class="mt-4 space-y-3">
+					<div class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+						* 0 = 무제한 또는 경고없음 / Warning = Max Turns 이전 몇 턴부터 경고할지 / Max Input = 1턴당 입력 가능 토큰수
+					</div>
+
+					<div class="max-h-80 overflow-y-auto space-y-2">
+						{#if limitsLoaded}
+						{#each filteredModels as model (model.id)}
+							<div class="flex flex-wrap items-center gap-2 p-2 bg-white dark:bg-gray-700 rounded border border-gray-100 dark:border-gray-600">
+								<div class="flex-1 min-w-0" style="min-width: 120px;">
+									<div class="text-sm font-medium text-gray-700 dark:text-gray-200 truncate" title={model.name || model.id}>
+										{model.name || model.id}
+									</div>
+								</div>
+								<div class="flex items-center gap-1 shrink-0">
+									<label class="text-xs text-gray-500 whitespace-nowrap">Max Turns:</label>
+									<input
+										type="number"
+										min="0"
+										max="100"
+										class="w-14 px-1 py-1 text-sm border border-gray-300 dark:border-gray-500 rounded bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+										value={getModelLimit(model.id, 'maxTurns')}
+										on:change={(e) => setModelLimit(model.id, 'maxTurns', e.target.value)}
+										placeholder="0"
+									/>
+								</div>
+								<div class="flex items-center gap-1 shrink-0">
+									<label class="text-xs text-gray-500 whitespace-nowrap" title="Max Turns 이전 몇 턴부터 경고할지 (0=경고없음)">Warning:</label>
+									<input
+										type="number"
+										min="0"
+										max="10"
+										class="w-12 px-1 py-1 text-sm border border-gray-300 dark:border-gray-500 rounded bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+										value={getModelLimit(model.id, 'warningTurns')}
+										on:change={(e) => setModelLimit(model.id, 'warningTurns', e.target.value)}
+										placeholder="0"
+										title="Max Turns 이전 몇 턴부터 경고할지 (0=경고없음, 예: 2 입력 시 Max Turns-2 도달 시 경고)"
+									/>
+								</div>
+								<div class="flex items-center gap-1 shrink-0">
+									<label class="text-xs text-gray-500 whitespace-nowrap">Max Tokens:</label>
+									<input
+										type="number"
+										min="0"
+										step="1000"
+										class="w-20 px-1 py-1 text-sm border border-gray-300 dark:border-gray-500 rounded bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+										value={getModelLimit(model.id, 'maxTokens')}
+										on:change={(e) => setModelLimit(model.id, 'maxTokens', e.target.value)}
+										placeholder="0"
+									/>
+								</div>
+								<div class="flex items-center gap-1 shrink-0">
+									<label class="text-xs text-gray-500 whitespace-nowrap">Max Input:</label>
+									<input
+										type="number"
+										min="0"
+										step="500"
+										class="w-20 px-1 py-1 text-sm border border-gray-300 dark:border-gray-500 rounded bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+										value={getModelLimit(model.id, 'maxInputTokens')}
+										on:change={(e) => setModelLimit(model.id, 'maxInputTokens', e.target.value)}
+										placeholder="0"
+										title="1턴당 입력 가능한 최대 토큰수"
+									/>
+								</div>
+							</div>
+						{/each}
+						{/if}
+					</div>
+
+					<!-- [2026-01-31] 저장 및 동기화 버튼 영역 -->
+					<div class="flex justify-between items-center pt-2">
+						<!-- 클러스터 서버 정보 표시 -->
+						<div class="text-xs text-gray-500 dark:text-gray-400">
+							{#if clusterConfigured}
+								<span class="text-green-600 dark:text-green-400">● 클러스터 구성됨 ({clusterServers.length}대)</span>
+							{:else}
+								<span class="text-yellow-600 dark:text-yellow-400">● 단일 서버 모드</span>
+							{/if}
+						</div>
+
+						<div class="flex gap-2">
+							<!-- 수동 동기화 버튼 -->
+							<button
+								class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 rounded-lg transition-colors disabled:opacity-50"
+								on:click={syncAllServers}
+								disabled={syncLoading}
+								title="모든 클러스터 서버의 설정 캐시를 동기화합니다"
+							>
+								{#if syncLoading}
+									<span class="flex items-center gap-2">
+										<Spinner className="size-4" />
+										동기화 중...
+									</span>
+								{:else}
+									<span class="flex items-center gap-2">
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+										</svg>
+										서버 동기화
+									</span>
+								{/if}
+							</button>
+
+							<!-- 저장 버튼 -->
+							<button
+								class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+								on:click={saveSessionLimits}
+								disabled={sessionLimitsLoading}
+							>
+								{#if sessionLimitsLoading}
+									<span class="flex items-center gap-2">
+										<Spinner className="size-4" />
+										저장 중...
+									</span>
+								{:else}
+									세션 제한 저장
+								{/if}
+							</button>
+						</div>
+					</div>
+				</div>
+			{/if}
+		</div>
+		<!-- ----- 1225 maxInputTokens UI 추가 종료 ----- -->
+		<!-- [2024.12.30] 턴 및 토큰수 제약처리 - 관리자 UI 완료 ============================================ -->
+
+		<!-- ============================================ -->
+		<!-- [2026.01.19] 모델 색상 설정 - 관리자 UI 시작 -->
+		<!-- 역할: 모델명 키워드별 색상 매핑 설정 UI -->
+		<!-- ============================================ -->
+		<div class="my-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+			<button
+				class="w-full flex justify-between items-center text-left"
+				on:click={() => { showModelColorsSection = !showModelColorsSection; }}
+			>
+				<div class="flex items-center gap-2">
+					<span class="text-lg font-medium text-gray-900 dark:text-white">
+						모델 색상 설정
+					</span>
+					<span class="text-xs text-gray-500">(모델명 키워드별 색상 지정)</span>
+				</div>
+				<svg class="w-5 h-5 transform transition-transform {showModelColorsSection ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+				</svg>
+			</button>
+
+			{#if showModelColorsSection}
+				<div class="mt-4 space-y-3">
+					<div class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+						* 모델명에 포함된 키워드를 기준으로 채팅 화면에서 모델명 색상이 적용됩니다. (위에서부터 우선순위 적용)
+					</div>
+
+					<div class="max-h-80 overflow-y-auto space-y-2">
+						{#if colorsLoaded}
+							{#each modelColorsList as colorItem, index (index)}
+								<div class="flex flex-wrap items-center gap-2 p-2 bg-white dark:bg-gray-700 rounded border border-gray-100 dark:border-gray-600">
+									<div class="flex items-center gap-1 shrink-0">
+										<label class="text-xs text-gray-500 whitespace-nowrap">키워드:</label>
+										<input
+											type="text"
+											class="w-24 px-2 py-1 text-sm border border-gray-300 dark:border-gray-500 rounded bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+											value={colorItem.keyword}
+											on:change={(e) => updateColorMapping(index, 'keyword', e.target.value)}
+											placeholder="gpt"
+										/>
+									</div>
+									<div class="flex items-center gap-1 shrink-0">
+										<label class="text-xs text-gray-500 whitespace-nowrap">라벨:</label>
+										<input
+											type="text"
+											class="w-32 px-2 py-1 text-sm border border-gray-300 dark:border-gray-500 rounded bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+											value={colorItem.label}
+											on:change={(e) => updateColorMapping(index, 'label', e.target.value)}
+											placeholder="GPT (OpenAI)"
+										/>
+									</div>
+									<div class="flex items-center gap-1 shrink-0">
+										<label class="text-xs text-gray-500 whitespace-nowrap">색상:</label>
+										<select
+											class="w-36 px-2 py-1 text-sm border border-gray-300 dark:border-gray-500 rounded bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+											value={colorItem.color}
+											on:change={(e) => updateColorMapping(index, 'color', e.target.value)}
+										>
+											{#each AVAILABLE_COLORS as color}
+												<option value={color.value}>{color.label}</option>
+											{/each}
+										</select>
+									</div>
+									<div class="flex items-center gap-1 shrink-0">
+										<!-- 색상 미리보기 -->
+										<span class="px-2 py-0.5 rounded text-sm font-semibold {AVAILABLE_COLORS.find(c => c.value === colorItem.color)?.light || 'text-gray-700'} bg-gray-100 dark:bg-gray-600">
+											{colorItem.label || colorItem.keyword || '미리보기'}
+										</span>
+									</div>
+									<button
+										class="p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+										on:click={() => removeColorMapping(index)}
+										title="삭제"
+									>
+										<XMark className="size-4" />
+									</button>
+								</div>
+							{/each}
+						{/if}
+					</div>
+
+					<div class="flex justify-between items-center pt-2">
+						<div class="flex gap-2">
+							<button
+								class="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 rounded-lg transition-colors"
+								on:click={addColorMapping}
+							>
+								+ 매핑 추가
+							</button>
+							<button
+								class="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 rounded-lg transition-colors"
+								on:click={resetModelColors}
+							>
+								기본값 복원
+							</button>
+						</div>
+						<button
+							class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+							on:click={saveModelColors}
+							disabled={modelColorsLoading}
+						>
+							{#if modelColorsLoading}
+								<span class="flex items-center gap-2">
+									<Spinner className="size-4" />
+									저장 중...
+								</span>
+							{:else}
+								색상 설정 저장
+							{/if}
+						</button>
+					</div>
+				</div>
+			{/if}
+		</div>
+		<!-- [2026.01.19] 모델 색상 설정 - 관리자 UI 종료 ============================================ -->
 
 		<div class=" my-2 mb-5" id="model-list">
 			{#if models.length > 0}
