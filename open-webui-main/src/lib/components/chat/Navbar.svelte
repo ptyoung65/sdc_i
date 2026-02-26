@@ -16,7 +16,8 @@
 		temporaryChatEnabled,
 		user,
 		modelType,
-		theme
+		theme,
+		showHelpModal
 	} from '$lib/stores';
 
 	import { slide } from 'svelte/transition';
@@ -44,6 +45,23 @@
 	import Settings from '../icons/Settings.svelte';
 	import UserGroup from '../icons/UserGroup.svelte';
 
+	// ----- [2025.01.05] 외부 서버 연결 상태 표시 컴포넌트 추가 시작 -----
+	import ServerStatusIndicator from '$lib/components/layout/ServerStatusIndicator.svelte';
+	// ----- [2025.01.05] 외부 서버 연결 상태 표시 컴포넌트 추가 종료 -----
+
+	// ----- [2026.01.07] 도움말 이미지 뷰어 컴포넌트 추가 시작 -----
+	import HelpImageViewer from '$lib/components/chat/HelpImageViewer.svelte';
+	// ----- [2026.01.07] 도움말 이미지 뷰어 컴포넌트 추가 종료 -----
+
+	// ----- [2026-02-19] 공지사항 다시보기 기능 추가 시작 -----
+	// [2026-02-26] import 설명:
+	//   - PopupAnnouncementModal: 공지 팝업 모달 컴포넌트 (제목, 내용, 네비게이션, 오늘 하루 보지 않기)
+	//   - getActiveAnnouncements: GET /api/v1/configs/announcements/active 호출
+	//     → 백엔드에서 MAX_POPUP_COUNT 적용하여 활성 공지 N개 반환
+	import PopupAnnouncementModal from '$lib/components/common/PopupAnnouncementModal.svelte';
+	import { getActiveAnnouncements } from '$lib/apis/announcements';
+	// ----- [2026-02-19] 공지사항 다시보기 기능 추가 종료 -----
+
 	const i18n = getContext('i18n');
 
 	export let initNewChat: Function;
@@ -64,6 +82,49 @@
 
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
+
+	// ----- [2026-02-19] 공지사항 다시보기 상태 시작 -----
+	// ----- [2026-02-26] 공지사항 다시보기 기능 상세 설명 시작 -----
+	// ■ 기능: Navbar 메가폰 아이콘 클릭 시 활성 공지사항을 팝업으로 다시 표시
+	//
+	// ■ 데이터 흐름:
+	//   1. 사용자가 Navbar의 메가폰(확성기) 아이콘 클릭
+	//   2. loadAndShowAnnouncements() 호출
+	//   3. getActiveAnnouncements(token) → GET /api/v1/configs/announcements/active
+	//   4. 백엔드 configs.py get_active_announcements():
+	//      - get_config()에서 MAX_POPUP_COUNT 조회 (config 테이블 data JSONB)
+	//      - PopupAnnouncements.get_active_announcements(limit=max_popup_count)
+	//      - 활성 공지 중 최근 N개만 반환 (관리자 설정값 적용)
+	//   5. 반환된 공지를 start_date 내림차순 정렬
+	//   6. PopupAnnouncementModal에 전달하여 팝업 표시
+	//
+	// ■ MAX_POPUP_COUNT 설정 변경 시 즉시 반영:
+	//   관리자가 /admin/settings/notification에서 개수 변경 → config 테이블 저장
+	//   → 이 버튼 클릭 시 백엔드에서 변경된 값으로 제한된 공지 반환
+	//
+	// ■ "오늘 하루 보지 않기" 무시:
+	//   이 버튼은 로그인 시 자동 팝업과 달리 dismiss 상태를 무시하고 항상 표시
+	// ----- [2026-02-26] 공지사항 다시보기 기능 상세 설명 종료 -----
+	let showAnnouncementPopup = false;
+	let popupAnnouncements: any[] = [];
+
+	const loadAndShowAnnouncements = async () => {
+		try {
+			// [2026-02-26] 백엔드 get_active_announcements가 MAX_POPUP_COUNT를 서버에서 적용하므로
+			// exportConfig 호출 불필요 (설정 개수 제한은 백엔드에서 처리)
+			const announcements = await getActiveAnnouncements(localStorage.token);
+			if (announcements && announcements.length > 0) {
+				const sorted = [...announcements].sort((a: any, b: any) => b.start_date - a.start_date);
+				popupAnnouncements = sorted;
+				showAnnouncementPopup = true;
+			} else {
+				toast.info('등록된 공지사항이 없습니다.');
+			}
+		} catch (err) {
+			toast.error('공지사항을 불러올 수 없습니다.');
+		}
+	};
+	// ----- [2026-02-19] 공지사항 다시보기 상태 종료 -----
 
 	// 왼쪽 사이드바가 닫혔을 때만 토글 버튼 표시 (내부/외부 모델 모두)
 	$: showLeftSidebarToggle = !$showSidebar;
@@ -301,6 +362,59 @@
 						</Menu>
 					{/if}
 
+					<!-- ----- [2025.01.05] 외부 서버 연결 상태 인디케이터 시작 ----- -->
+					<!-- [2026-02-04] 숨김 처리 -->
+					<!-- <ServerStatusIndicator /> -->
+					<!-- ----- [2025.01.05] 외부 서버 연결 상태 인디케이터 종료 ----- -->
+
+					<!-- ----- [2026-02-19] 공지사항 다시보기 버튼 (모든 사용자) 시작 ----- -->
+					<!-- [2026-02-26] 공지사항 다시보기 아이콘 버튼 상세 설명
+					     ■ 대상: 모든 사용자 (admin + user 공통)
+					     ■ 아이콘: 메가폰(확성기) SVG - 기존 벨 아이콘(Notification Settings, admin 전용)과 구분
+					     ■ 위치: Navbar 우측 아이콘 중 첫 번째 (알림설정 벨 아이콘 왼쪽)
+					     ■ 클릭 시 동작:
+					       1. loadAndShowAnnouncements() 호출
+					       2. getActiveAnnouncements(token) → GET /api/v1/configs/announcements/active
+					       3. 백엔드에서 MAX_POPUP_COUNT 적용된 활성 공지 반환
+					       4. 공지 있으면 → PopupAnnouncementModal 팝업 표시
+					       5. 공지 없으면 → toast.info('등록된 공지사항이 없습니다.') 표시
+					     ■ 로그인 시 자동 팝업과의 차이:
+					       - "오늘 하루 보지 않기" 상태를 무시하고 항상 표시
+					       - exportConfig 호출 없이 getActiveAnnouncements만 호출 (404 오류 방지)
+					-->
+					<Tooltip content="공지사항 다시보기">
+						<button
+							class="flex cursor-pointer rounded-xl p-1.5 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+							on:click={loadAndShowAnnouncements}
+							aria-label="공지사항 다시보기"
+						>
+							<div class="self-center">
+								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 1 1 0-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 0 1-1.44-4.282m3.102.069a18.03 18.03 0 0 1-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 0 1 8.835 2.535M10.34 6.66a23.847 23.847 0 0 0 8.835-2.535m0 0A23.74 23.74 0 0 0 18.795 3m.38 1.125a23.91 23.91 0 0 1 1.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 0 0 1.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 0 1 0 3.46" />
+								</svg>
+							</div>
+						</button>
+					</Tooltip>
+					<!-- ----- [2026-02-19] 공지사항 다시보기 버튼 종료 ----- -->
+
+					<!-- ----- [2026-02-04] 공지사항 알림 버튼 (Admin만 표시) 시작 ----- -->
+					{#if $user?.role === 'admin'}
+						<Tooltip content={$i18n.t('Notification Settings')}>
+							<a
+								href="/admin/settings/notification"
+								class="flex cursor-pointer rounded-xl p-1.5 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								aria-label="Notification Settings"
+							>
+								<div class="self-center">
+									<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
+									</svg>
+								</div>
+							</a>
+						</Tooltip>
+					{/if}
+					<!-- ----- [2026-02-04] 공지사항 알림 버튼 종료 ----- -->
+
 					<!-- 관리자 기능 버튼 (Admin만 표시) -->
 					{#if $user?.role === 'admin'}
 						<Tooltip content={$i18n.t('Admin Panel')}>
@@ -388,6 +502,30 @@
 								</div>
 							</div>
 						</UserMenu>
+
+						<!-- ============================================ -->
+						<!-- [2026.01.07] 도움말 아이콘 추가 시작 -->
+						<!-- 역할: 사용자 아이콘 오른쪽에 ? 아이콘을 표시하여 -->
+						<!--       클릭 시 도움말 이미지 뷰어 모달을 열기 -->
+						<!-- ============================================ -->
+						<Tooltip content="도움말">
+							<button
+								class="flex cursor-pointer rounded-xl p-1.5 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								on:click={() => showHelpModal.set(true)}
+								aria-label="도움말"
+							>
+								<div class="self-center">
+									<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+										 stroke-width="1.5" stroke="currentColor" class="size-6">
+										<path stroke-linecap="round" stroke-linejoin="round"
+											  d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/>
+									</svg>
+								</div>
+							</button>
+						</Tooltip>
+						<!-- ============================================ -->
+						<!-- [2026.01.07] 도움말 아이콘 추가 종료 -->
+						<!-- ============================================ -->
 					{/if}
 
 					<!-- 오른쪽 Controls 토글 버튼: Controls가 닫혔을 때만 표시 -->
@@ -482,3 +620,23 @@
 		{/if}
 	</div>
 </nav>
+
+<!-- [2026.01.07] 도움말 이미지 뷰어 모달 -->
+<HelpImageViewer />
+
+<!-- ----- [2026-02-19] 공지사항 다시보기 모달 시작 ----- -->
+<!-- [2026-02-26] PopupAnnouncementModal 렌더링 상세 설명
+     ■ 역할: 메가폰 아이콘 클릭 시 팝업 공지사항을 모달로 표시
+     ■ Props:
+       - bind:show={showAnnouncementPopup}: 모달 표시/숨김 제어 (양방향 바인딩)
+       - announcements={popupAnnouncements}: 백엔드에서 MAX_POPUP_COUNT 적용된 공지 목록
+     ■ Events:
+       - on:close: 모달 닫기 시 showAnnouncementPopup = false 설정
+     ■ 동일 컴포넌트가 +layout.svelte에서도 로그인 시 자동 팝업용으로 사용됨
+-->
+<PopupAnnouncementModal
+	bind:show={showAnnouncementPopup}
+	announcements={popupAnnouncements}
+	on:close={() => { showAnnouncementPopup = false; }}
+/>
+<!-- ----- [2026-02-19] 공지사항 다시보기 모달 종료 ----- -->

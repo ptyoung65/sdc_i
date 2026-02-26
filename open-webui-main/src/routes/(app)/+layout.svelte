@@ -15,8 +15,11 @@
 	import { getAllTags } from '$lib/apis/chats';
 	import { getPrompts } from '$lib/apis/prompts';
 	import { getTools } from '$lib/apis/tools';
-	import { getBanners } from '$lib/apis/configs';
+	import { getBanners, getModelColors, exportConfig } from '$lib/apis/configs';
 	import { getUserSettings } from '$lib/apis/users';
+	// ----- [2026-02-04] 팝업 공지사항 API import 시작 -----
+	import { getActiveAnnouncements, type PopupAnnouncement } from '$lib/apis/announcements';
+	// ----- [2026-02-04] 팝업 공지사항 API import 종료 -----
 
 	import { WEBUI_VERSION } from '$lib/constants';
 	import { compareVersion } from '$lib/utils';
@@ -39,7 +42,14 @@
 		toolServers,
 		showSearch,
 		showSidebar,
-		showRightSidebar
+		showRightSidebar,
+		// ----- [2025.01.05] 외부 서버 연결 상태 추적 기능 추가 시작 -----
+		updateServerStatus,
+		removeServerStatus,
+		type ExternalServerType,
+		// ----- [2025.01.05] 외부 서버 연결 상태 추적 기능 추가 종료 -----
+		// ----- [2026.01.19] 모델 색상 설정 Store -----
+		modelColors
 	} from '$lib/stores';
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -48,12 +58,20 @@
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
 	import UpdateInfoToast from '$lib/components/layout/UpdateInfoToast.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	// ----- [2026-02-04] 팝업 공지사항 컴포넌트 import 시작 -----
+	import PopupAnnouncementModal from '$lib/components/common/PopupAnnouncementModal.svelte';
+	// ----- [2026-02-04] 팝업 공지사항 컴포넌트 import 종료 -----
 
 	const i18n = getContext('i18n');
 
 	let loaded = false;
 	let DB = null;
 	let localDBChats = [];
+
+	// ----- [2026-02-04] 팝업 공지사항 상태 변수 시작 -----
+	let popupAnnouncements: PopupAnnouncement[] = [];
+	let showPopupAnnouncement = false;
+	// ----- [2026-02-04] 팝업 공지사항 상태 변수 종료 -----
 
 	let version;
 
@@ -86,23 +104,20 @@
 		}
 	};
 
+	import { settingsService } from '$lib/services/settings.service';
+	import { logger } from '$lib/utils/logger';
+
 	const setUserSettings = async (cb: () => Promise<void>) => {
-		let userSettings = await getUserSettings(localStorage.token).catch((error) => {
-			console.error(error);
-			return null;
-		});
+		// 1. localStorage 마이그레이션 시도 (최초 1회)
+		await settingsService.migrateFromLocalStorage(localStorage.token);
 
-		if (!userSettings) {
-			try {
-				userSettings = JSON.parse(localStorage.getItem('settings') ?? '{}');
-			} catch (e: unknown) {
-				console.error('Failed to parse settings from localStorage', e);
-				userSettings = {};
-			}
-		}
+		// 2. DB에서 설정 로드
+		const userSettings = await settingsService.loadSettings(localStorage.token);
 
+		// 3. Store 업데이트
 		if (userSettings?.ui) {
 			settings.set(userSettings.ui);
+			logger.debug('UI', 'UI 설정 적용 완료', userSettings.ui);
 		}
 
 		if (cb) {
@@ -110,30 +125,184 @@
 		}
 	};
 
-	const setModels = async () => {
-		models.set(
-			await getModels(
+	// ----- [2025.01.05] 외부 LLM 연결 지연으로 인한 로그인 차단 방지 시작 -----
+	// 문제: 외부 LLM 서버가 응답하지 않으면 전체 페이지 로드가 차단됨
+	// 해결: timeout 추가 및 백그라운드 로드로 변경
+	const MODEL_LOAD_TIMEOUT = 5000; // 5초 타임아웃
+	const LLM_SERVER_URL = 'openai-api'; // LLM 서버 식별자
+
+	const setModels = async (background = false) => {
+		const startTime = Date.now();
+
+		// 연결 시도 중 상태로 업데이트
+		if (!background) {
+			updateServerStatus(LLM_SERVER_URL, 'connecting', { name: 'LLM Server', type: 'llm' });
+		}
+
+		try {
+			// timeout을 적용한 모델 로드
+			const modelPromise = getModels(
 				localStorage.token,
 				$config?.features?.enable_direct_connections ? ($settings?.directConnections ?? null) : null
-			)
-		);
+			);
+
+			// background 모드가 아닐 때만 timeout 적용
+			if (!background) {
+				const timeoutPromise = new Promise((_, reject) =>
+					setTimeout(() => reject(new Error('Model load timeout')), MODEL_LOAD_TIMEOUT)
+				);
+
+				const result = await Promise.race([modelPromise, timeoutPromise]);
+				models.set(result);
+
+				// 성공 시 연결 상태 업데이트
+				const responseTime = Date.now() - startTime;
+				updateServerStatus(LLM_SERVER_URL, 'connected', {
+					name: 'LLM Server',
+					type: 'llm',
+					responseTime
+				});
+			} else {
+				// 백그라운드 모드: timeout 없이 완료될 때까지 대기
+				const result = await modelPromise;
+				models.set(result);
+
+				// 백그라운드 성공 시에도 상태 업데이트
+				const responseTime = Date.now() - startTime;
+				updateServerStatus(LLM_SERVER_URL, 'connected', {
+					name: 'LLM Server',
+					type: 'llm',
+					responseTime
+				});
+			}
+		} catch (error) {
+			console.warn('[2025.01.05] 모델 로드 실패 또는 타임아웃:', error.message);
+
+			// 타임아웃/에러 상태 업데이트
+			const isTimeout = error.message.includes('timeout');
+			updateServerStatus(LLM_SERVER_URL, isTimeout ? 'timeout' : 'error', {
+				name: 'LLM Server',
+				type: 'llm',
+				errorMessage: error.message
+			});
+
+			// 실패해도 빈 배열로 초기화하여 UI는 정상 표시
+			if (!$models || $models.length === 0) {
+				models.set([]);
+			}
+			// 백그라운드에서 다시 시도 (타임아웃 없이)
+			if (!background) {
+				console.log('[2025.01.05] 백그라운드에서 모델 재로드 시도...');
+				setModels(true); // 비동기로 백그라운드 재시도 (await 없음)
+			}
+		}
+	};
+	// ----- [2025.01.05] 외부 LLM 연결 지연으로 인한 로그인 차단 방지 종료 -----
+
+	// ----- [2025.01.05] 도구 서버 연결 지연으로 인한 로그인 차단 방지 시작 -----
+	const TOOL_SERVER_TIMEOUT = 5000; // 5초 타임아웃
+
+	const setToolServers = async (background = false) => {
+		const toolServerUrls = $settings?.toolServers ?? [];
+
+		// 도구 서버가 없으면 스킵
+		if (toolServerUrls.length === 0) {
+			return;
+		}
+
+		try {
+			const toolServerPromise = getToolServersData(toolServerUrls);
+
+			let toolServersData;
+			if (!background) {
+				const timeoutPromise = new Promise((_, reject) =>
+					setTimeout(() => reject(new Error('Tool server load timeout')), TOOL_SERVER_TIMEOUT)
+				);
+				toolServersData = await Promise.race([toolServerPromise, timeoutPromise]);
+			} else {
+				toolServersData = await toolServerPromise;
+			}
+
+			toolServersData = toolServersData.filter((data) => {
+				if (!data || data.error) {
+					toast.error(
+						$i18n.t(`Failed to connect to {{URL}} OpenAPI tool server`, {
+							URL: data?.url
+						})
+					);
+					return false;
+				}
+				return true;
+			});
+			toolServers.set(toolServersData);
+		} catch (error) {
+			console.warn('[2025.01.05] 도구 서버 로드 실패 또는 타임아웃:', error.message);
+			// 실패해도 빈 배열로 초기화
+			if (!$toolServers || $toolServers.length === 0) {
+				toolServers.set([]);
+			}
+			// 백그라운드에서 재시도
+			if (!background) {
+				console.log('[2025.01.05] 백그라운드에서 도구 서버 재로드 시도...');
+				setToolServers(true);
+			}
+		}
+	};
+	// ----- [2025.01.05] 도구 서버 연결 지연으로 인한 로그인 차단 방지 종료 -----
+
+	// ----- [2025.01.05] 외부 서버 (파서, 청크, 임베더) 연결 상태 체크 시작 -----
+	const EXTERNAL_SERVER_TIMEOUT = 5000;
+
+	// 외부 서버 설정 (환경에 맞게 수정 가능)
+	const externalServers: { url: string; name: string; type: ExternalServerType }[] = [
+		{ url: 'http://192.168.122.177:8100', name: 'Parser Server', type: 'parser' },
+		{ url: 'http://192.168.122.177:8101', name: 'Chunker Server', type: 'chunker' },
+		{ url: 'http://192.168.122.177:8102', name: 'Embedder Server', type: 'embedder' }
+	];
+
+	const checkExternalServer = async (server: { url: string; name: string; type: ExternalServerType }) => {
+		const startTime = Date.now();
+		updateServerStatus(server.url, 'connecting', { name: server.name, type: server.type });
+
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), EXTERNAL_SERVER_TIMEOUT);
+
+		try {
+			const response = await fetch(`${server.url}/health`, {
+				method: 'GET',
+				signal: controller.signal
+			});
+			clearTimeout(timeoutId);
+
+			const responseTime = Date.now() - startTime;
+			if (response.ok) {
+				updateServerStatus(server.url, 'connected', {
+					name: server.name,
+					type: server.type,
+					responseTime
+				});
+			} else {
+				updateServerStatus(server.url, 'error', {
+					name: server.name,
+					type: server.type,
+					errorMessage: `HTTP ${response.status}`
+				});
+			}
+		} catch (error: any) {
+			clearTimeout(timeoutId);
+			const isTimeout = error.name === 'AbortError';
+			updateServerStatus(server.url, isTimeout ? 'timeout' : 'error', {
+				name: server.name,
+				type: server.type,
+				errorMessage: isTimeout ? 'Connection timeout' : error.message
+			});
+		}
 	};
 
-	const setToolServers = async () => {
-		let toolServersData = await getToolServersData($settings?.toolServers ?? []);
-		toolServersData = toolServersData.filter((data) => {
-			if (!data || data.error) {
-				toast.error(
-					$i18n.t(`Failed to connect to {{URL}} OpenAPI tool server`, {
-						URL: data?.url
-					})
-				);
-				return false;
-			}
-			return true;
-		});
-		toolServers.set(toolServersData);
+	const checkAllExternalServers = async () => {
+		await Promise.all(externalServers.map(server => checkExternalServer(server)));
 	};
+	// ----- [2025.01.05] 외부 서버 (파서, 청크, 임베더) 연결 상태 체크 종료 -----
 
 	const setBanners = async () => {
 		const bannersData = await getBanners(localStorage.token);
@@ -145,15 +314,110 @@
 		tools.set(toolsData);
 	};
 
+	// ----- [2026.01.19] 모델 색상 설정 로드 함수 시작 -----
+	const loadModelColors = async () => {
+		try {
+			const result = await getModelColors(localStorage.token);
+			if (result?.colors && Array.isArray(result.colors)) {
+				modelColors.set(result.colors);
+			}
+		} catch (e) {
+			console.error('[Layout] 모델 색상 설정 로드 실패:', e);
+		}
+	};
+	// ----- [2026.01.19] 모델 색상 설정 로드 함수 종료 -----
+
+	// ----- [2026-02-04] 팝업 공지사항 로드 함수 시작 -----
+	// 오늘 날짜 키 생성 (오늘 하루 보지 않기 체크용)
+	const getAnnouncementDismissKey = () => {
+		const today = new Date();
+		return `popup_announcement_dismissed_${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+	};
+
+	// ----- [2026-02-26] loadPopupAnnouncements 팝업 공지 로드 상세 설명 시작 -----
+	// ■ 기능: 로그인 시 활성 공지사항을 API에서 가져와 팝업으로 표시
+	//
+	// ■ 호출 시점: onMount() → 페이지 최초 로드 시 자동 실행
+	//
+	// ■ 데이터 흐름:
+	//   1. exportConfig(token) → GET /api/v1/configs/export
+	//      → config 테이블에서 MAX_POPUP_COUNT 값 조회 (기본값 3)
+	//   2. getActiveAnnouncements(token) → GET /api/v1/configs/announcements/active
+	//      → 백엔드에서 MAX_POPUP_COUNT 적용하여 활성 공지 N개 반환
+	//   3. 프론트엔드에서 start_date 내림차순 정렬 후 maxPopupCount개로 제한
+	//   4. PopupAnnouncementModal 컴포넌트에 전달하여 팝업 표시
+	//
+	// ■ MAX_POPUP_COUNT 설정 변경 시 반영 경로:
+	//   관리자 /admin/settings/notification에서 개수 변경
+	//   → savePopupCount() → updateConfigPartial() → POST /api/v1/configs/import
+	//   → config 테이블 data(JSONB) 저장
+	//   → 다음 로그인 시 이 함수에서 새 값 적용
+	// ----- [2026-02-26] loadPopupAnnouncements 팝업 공지 로드 상세 설명 종료 -----
+	const loadPopupAnnouncements = async () => {
+		try {
+			console.log('[Layout] ===== 팝업 공지사항 로드 시작 =====');
+
+			// ----- [2026-02-05] 팝업 표시 개수 설정 로드 시작 -----
+			// [2026-02-26] exportConfig로 MAX_POPUP_COUNT 조회 (config 테이블 → data JSONB)
+			let maxPopupCount = 3; // 기본값
+			try {
+				const config = await exportConfig(localStorage.token);
+				if (config && config.MAX_POPUP_COUNT !== undefined) {
+					maxPopupCount = config.MAX_POPUP_COUNT;
+				}
+			} catch (configError) {
+				console.log('[Layout] 팝업 개수 설정 로드 실패, 기본값 사용:', configError);
+			}
+			console.log('[Layout] 팝업 표시 개수 설정:', maxPopupCount);
+			// ----- [2026-02-05] 팝업 표시 개수 설정 로드 종료 -----
+
+			// [2026-02-26] 백엔드에서 MAX_POPUP_COUNT 적용된 활성 공지 반환
+			const announcements = await getActiveAnnouncements(localStorage.token);
+			console.log('[Layout] API 응답:', JSON.stringify(announcements));
+			console.log('[Layout] 팝업 공지사항 로드:', announcements?.length || 0, '개');
+
+			if (announcements && announcements.length > 0) {
+				// ----- [2026-02-05] 팝업 표시 개수 제한 적용 시작 -----
+				// [2026-02-26] 프론트엔드에서도 start_date 내림차순 정렬 후 maxPopupCount개로 이중 제한
+				const sortedAnnouncements = [...announcements].sort((a, b) => b.start_date - a.start_date);
+				popupAnnouncements = sortedAnnouncements.slice(0, maxPopupCount);
+				console.log('[Layout] 팝업 표시 개수 제한 적용:', popupAnnouncements.length, '/', announcements.length);
+				// ----- [2026-02-05] 팝업 표시 개수 제한 적용 종료 -----
+				showPopupAnnouncement = true;
+				console.log('[Layout] showPopupAnnouncement 설정됨:', showPopupAnnouncement);
+				console.log('[Layout] popupAnnouncements:', popupAnnouncements.length, '개');
+			// DOM 업데이트 강제
+				await tick();
+				console.log("[Layout] tick() 완료 - DOM 업데이트됨");
+				// DOM 요소 확인
+				setTimeout(() => {
+					const popupEl = document.querySelector(".z-\\[9999\\]");
+					console.log("[Layout] DOM에 팝업 요소:", popupEl ? "존재함" : "없음", popupEl);
+				}, 100);
+			} else {
+				console.log('[Layout] 활성 공지사항 없음');
+			}
+		} catch (e) {
+			console.error('[Layout] 팝업 공지사항 로드 실패:', e);
+		}
+	};
+	// ----- [2026-02-04] 팝업 공지사항 로드 함수 종료 -----
+
 	onMount(async () => {
+		console.log('[Layout] ===== onMount 시작 =====');
+		console.log('[Layout] $user:', $user);
+
 		if ($user === undefined || $user === null) {
+			console.log('[Layout] 사용자 없음, /auth로 이동');
 			await goto('/auth');
 			return;
 		}
 		if (!['user', 'admin'].includes($user?.role)) {
+			console.log('[Layout] 권한 없음, role:', $user?.role);
 			return;
 		}
 
+		console.log('[Layout] Promise.all 시작');
 		clearChatInputStorage();
 		await Promise.all([
 			checkLocalDBChats(),
@@ -161,7 +425,13 @@
 			setTools(),
 			setUserSettings(async () => {
 				await Promise.all([setModels(), setToolServers()]);
-			})
+			}),
+			// ----- [2025.01.05] 외부 서버 (파서, 청크, 임베더) 연결 상태 체크 -----
+			checkAllExternalServers(),
+			// ----- [2026.01.19] 모델 색상 설정 로드 -----
+			loadModelColors(),
+			// ----- [2026-02-04] 팝업 공지사항 로드 -----
+			loadPopupAnnouncements()
 		]);
 
 		const setupKeyboardShortcuts = () => {
@@ -265,9 +535,11 @@
 		};
 		setupKeyboardShortcuts();
 
-		if ($user?.role === 'admin' && ($settings?.showChangelog ?? true)) {
-			showChangelog.set($settings?.version !== $config.version);
-		}
+		// ----- [2026-02-04] 릴리스 노트 모달 비활성화 (팝업 공지와 충돌 방지) -----
+		// if ($user?.role === 'admin' && ($settings?.showChangelog ?? true)) {
+		// 	showChangelog.set($settings?.version !== $config.version);
+		// }
+		// ----- [2026-02-04] 릴리스 노트 모달 비활성화 종료 -----
 
 		if ($user?.role === 'admin' || ($user?.permissions?.chat?.temporary ?? true)) {
 			if ($page.url.searchParams.get('temporary-chat') === 'true') {
@@ -306,12 +578,29 @@
 			};
 		});
 	};
+
+	// ----- [2026-02-04] 팝업 공지 상태 변경 감지 -----
+	$: {
+		console.log('[Layout] 팝업 조건 체크 - showPopupAnnouncement:', showPopupAnnouncement, ', length:', popupAnnouncements?.length);
+		if (showPopupAnnouncement) {
+			console.log('[Layout] 팝업 조건 TRUE - 모달이 표시되어야 함!');
+		}
+	}
 </script>
 
 <SettingsModal bind:show={$showSettings} />
 <ChangelogModal bind:show={$showChangelog} />
 
-{#if version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
+<!-- ----- [2026-02-04] 팝업 공지사항 모달 (컴포넌트 사용) ----- -->
+<PopupAnnouncementModal
+	bind:show={showPopupAnnouncement}
+	announcements={popupAnnouncements}
+	on:close={() => { showPopupAnnouncement = false; }}
+/>
+<!-- ----- [2026-02-04] 팝업 공지사항 모달 종료 ----- -->
+
+<!-- ----- [2026-02-04] 새 버전 안내 비활성화 (팝업 공지와 충돌 방지) ----- -->
+{#if false && version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
 	<div class=" absolute bottom-8 right-8 z-50" in:fade={{ duration: 100 }}>
 		<UpdateInfoToast
 			{version}
@@ -322,6 +611,7 @@
 		/>
 	</div>
 {/if}
+<!-- ----- [2026-02-04] 새 버전 안내 비활성화 종료 ----- -->
 
 {#if $user}
 	<div class="app relative">
