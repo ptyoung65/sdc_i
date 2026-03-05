@@ -4,6 +4,7 @@
 
 	import { user, config, settings } from '$lib/stores';
 	import { updateUserProfile, createAPIKey, getAPIKey, getSessionUser } from '$lib/apis/auths';
+	import { getClientIP } from '$lib/apis/configs';
 	import { WEBUI_BASE_URL } from '$lib/constants';
 
 	import UpdatePassword from './Account/UpdatePassword.svelte';
@@ -41,6 +42,10 @@
 	let APIKey = '';
 	let APIKeyCopied = false;
 	let profileImageInputElement: HTMLInputElement;
+
+	// ----- [2026.01.19] 클라이언트 IP 정보 변수 시작 -----
+	let clientIP = '';
+	// ----- [2026.01.19] 클라이언트 IP 정보 변수 종료 -----
 
 	const submitHandler = async () => {
 		if (name !== $user?.name) {
@@ -114,6 +119,16 @@
 			return '';
 		});
 
+		// ----- [2026.01.19] 클라이언트 IP 정보 조회 시작 -----
+		const ipInfo = await getClientIP(localStorage.token).catch((error) => {
+			console.log('Failed to get client IP:', error);
+			return null;
+		});
+		if (ipInfo) {
+			clientIP = ipInfo.ip || 'Unknown';
+		}
+		// ----- [2026.01.19] 클라이언트 IP 정보 조회 종료 -----
+
 		loaded = true;
 	});
 </script>
@@ -126,6 +141,14 @@
 
 				<div class="text-xs text-gray-500 mt-0.5">
 					{$i18n.t('Manage your account information.')}
+				</div>
+
+				<!-- [2026.01.19] 현재 접속 IP 표시 -->
+				<div class="flex items-center gap-2 mt-2 text-xs text-gray-500 dark:text-gray-400">
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+						<path fill-rule="evenodd" d="M9.293 2.293a1 1 0 011.414 0l7 7A1 1 0 0117 11h-1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-3a1 1 0 00-1-1H9a1 1 0 00-1 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-6H3a1 1 0 01-.707-1.707l7-7z" clip-rule="evenodd" />
+					</svg>
+					<span>{$i18n.t('Current IP')}: <strong class="font-mono">{clientIP || '...'}</strong></span>
 				</div>
 			</div>
 

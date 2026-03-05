@@ -52,6 +52,8 @@
 		getPromptVariables,
 		processDetails,
 		removeAllDetails,
+		// ----- [2026-02-03] 단일 세션: 세션 만료 처리 함수 활성화 -----
+		handleSessionExpiredError,
 	} from "$lib/utils";
 
 	import {
@@ -140,6 +142,10 @@
 	// let sessionWarningMessage = ''; // 경고 메시지 (토스트로 대체)
 	let showSessionResetModal = false; // 세션 초기화 팝업
 	let sessionResetMessage = ''; // 초기화 메시지
+	// ----- [2026-03-05] 입력 허용 토큰초과 팝업 변수 시작 -----
+	let showInputTokenExceedModal = false;
+	let inputTokenExceedMessage = '';
+	// ----- [2026-03-05] 입력 허용 토큰초과 팝업 변수 종료 -----
 
 	// ============================================
 	// [2026-01-22] 세션 요약 기능 - 변수 선언 시작
@@ -1493,54 +1499,42 @@ ${conversationText}
 		console.log("[DEBUG-CHAT] About to load default models from DB");
 		if (localStorage.token) {
 			try {
-				// Use exportConfig to get the full config including default models
-				console.log(
-					"[DEBUG-CHAT] localStorage.token exists, importing exportConfig",
-				);
-				const { exportConfig } = await import("$lib/apis/configs");
-				console.log("[DEBUG-CHAT] Calling exportConfig()");
-				const fullConfig = await exportConfig(localStorage.token);
+				// ============================================================================================================
+				// ----- [2026-01-31] /configs/export 권한 변경 대응 - 사용자 역할별 분기 처리 시작 -----
+				// 보안 이슈 대응: exportConfig가 관리자 전용으로 변경됨
+				// 관리자: exportConfig() 사용 (전체 설정 접근)
+				// 일반 사용자: getDefaultModelsConfig() 사용 (모델 정보만 접근, 읽기 전용)
+				// ============================================================================================================
+				if ($user?.role === "admin") {
+					// Use exportConfig to get the full config including default models (관리자 전용)
+					console.log(
+						"[DEBUG-CHAT] Admin user, importing exportConfig",
+					);
+					const { exportConfig } = await import("$lib/apis/configs");
+					console.log("[DEBUG-CHAT] Calling exportConfig()");
+					const fullConfig = await exportConfig(localStorage.token);
 
-				console.log("[DEBUG-CHAT] Loaded full config:", fullConfig);
+					console.log("[DEBUG-CHAT] Loaded full config:", fullConfig);
 
-				if (fullConfig) {
-					defaultInternalModel =
-						fullConfig.default_internal_model || "";
-					defaultExternalModel =
-						fullConfig.default_external_model || "";
+					if (fullConfig) {
+						defaultInternalModel =
+							fullConfig.default_internal_model || "";
+						defaultExternalModel =
+							fullConfig.default_external_model || "";
 
-					// ============================================
-					// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 로드 시작
-					// 역할: 모델별 세션 제한 설정 로드 (onMount 시)
-					// ============================================
-					// 모델별 세션 제한 설정 로드 (getModelsConfig API 사용)
-					try {
-						const { getModelsConfig } = await import("$lib/apis/configs");
-						const modelsConfig = await getModelsConfig(localStorage.token);
-						if (modelsConfig?.MODEL_SESSION_LIMITS) {
-							modelSessionLimits = modelsConfig.MODEL_SESSION_LIMITS;
-							console.log("[onMount] 모델 세션 제한 설정 로드:", modelSessionLimits);
-						}
-					} catch (e) {
-						console.error("[onMount] 모델 세션 제한 설정 로드 실패:", e);
-					}
-					// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 로드 완료 ============================================
+						// Update config store with loaded values from database
+						config.set({
+							...$config,
+							default_internal_model: defaultInternalModel,
+							default_external_model: defaultExternalModel,
+						});
 
-					// Update config store with loaded values from database
-					config.set({
-						...$config,
-						default_internal_model: defaultInternalModel,
-						default_external_model: defaultExternalModel,
-					});
+						console.log("[onMount] Admin - Loaded default models:", {
+							internal: defaultInternalModel,
+							external: defaultExternalModel,
+						});
 
-					console.log("[onMount] Loaded default models:", {
-						internal: defaultInternalModel,
-						external: defaultExternalModel,
-						userRole: $user?.role,
-					});
-
-					// Show toast to admin if default models are not set in database
-					if ($user?.role === "admin") {
+						// Show toast to admin if default models are not set in database
 						if (!defaultInternalModel) {
 							toast.error(
 								"내부 기본 모델이 설정되지 않았습니다. 관리자 설정에서 지정해주세요.",
@@ -1552,7 +1546,66 @@ ${conversationText}
 							);
 						}
 					}
+				} else {
+					// [2026-01-31] 일반 사용자: getDefaultModelsConfig API 사용 (관리자 전용 exportConfig 대신)
+					// 이 API는 기본 모델 + MODEL_SESSION_LIMITS + MODEL_ORDER_LIST 모두 반환
+					console.log("[DEBUG-CHAT] Non-admin user, calling getDefaultModelsConfig API");
+					try {
+						const { getDefaultModelsConfig } = await import("$lib/apis/configs");
+						const userModelsConfig = await getDefaultModelsConfig(localStorage.token);
+
+						if (userModelsConfig) {
+							defaultInternalModel = userModelsConfig.default_internal_model || "";
+							defaultExternalModel = userModelsConfig.default_external_model || "";
+
+							// Update config store with loaded values
+							config.set({
+								...$config,
+								default_internal_model: defaultInternalModel,
+								default_external_model: defaultExternalModel,
+							});
+
+							// [2026-01-31] MODEL_SESSION_LIMITS도 함께 로드 (일반 사용자용 API에서 제공)
+							if (userModelsConfig.MODEL_SESSION_LIMITS) {
+								modelSessionLimits = userModelsConfig.MODEL_SESSION_LIMITS;
+								console.log("[onMount] User - 모델 세션 제한 설정 로드:", modelSessionLimits);
+							}
+
+							console.log("[onMount] User - Loaded models config from API:", {
+								internal: defaultInternalModel,
+								external: defaultExternalModel,
+								sessionLimits: userModelsConfig.MODEL_SESSION_LIMITS ? "loaded" : "none",
+							});
+						}
+					} catch (e) {
+						console.error("[onMount] 모델 설정 로드 실패 (일반 사용자):", e);
+						// 실패 시 config store 값 사용
+						defaultInternalModel = $config?.default_internal_model || "";
+						defaultExternalModel = $config?.default_external_model || "";
+					}
 				}
+
+				// ============================================
+				// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 로드 시작
+				// 역할: 모델별 세션 제한 설정 로드 (onMount 시)
+				// [2026-01-31] 관리자만 getModelsConfig 호출 (일반 사용자는 위에서 이미 로드)
+				// ============================================
+				if ($user?.role === "admin") {
+					try {
+						const { getModelsConfig } = await import("$lib/apis/configs");
+						const modelsConfig = await getModelsConfig(localStorage.token);
+						if (modelsConfig?.MODEL_SESSION_LIMITS) {
+							modelSessionLimits = modelsConfig.MODEL_SESSION_LIMITS;
+							console.log("[onMount] Admin - 모델 세션 제한 설정 로드:", modelSessionLimits);
+						}
+					} catch (e) {
+						console.error("[onMount] 모델 세션 제한 설정 로드 실패:", e);
+					}
+				}
+				// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 로드 완료 ============================================
+				// ----- [2026-01-31] /configs/export 권한 변경 대응 - 사용자 역할별 분기 처리 종료 -----
+				// ============================================================================================================
+
 			} catch (error) {
 				console.error("기본 모델 설정 로드 실패:", error);
 				// 관리자만 오류 토스트 표시
@@ -2567,7 +2620,33 @@ ${conversationText}
 			selected_model_id,
 			error,
 			usage,
+			// ----- [2026-02-05] LLM 응답 ID 트레이싱 추가 시작 -----
+			model: llmModel,
+			created: llmCreated,
+			// ----- [2026-02-05] LLM 응답 ID 트레이싱 추가 종료 -----
 		} = data;
+
+		// ----- [2026-02-05] LLM 응답 ID를 메시지 info에 저장 시작 -----
+		// LLM 응답 ID (예: chatcmpl-xxx)를 message.info에 저장하여 트레이싱 가능하게 함
+		if (id && !message?.info?.llmResponseId) {
+			if (!message.info) {
+				message.info = {};
+			}
+			message.info.llmResponseId = id;
+			if (llmModel) {
+				message.info.llmModel = llmModel;
+			}
+			if (llmCreated) {
+				message.info.llmCreated = llmCreated;
+			}
+			console.log('[Tracing] LLM 응답 ID 저장:', {
+				messageId: message.id,
+				llmResponseId: id,
+				llmModel: llmModel,
+				llmCreated: llmCreated
+			});
+		}
+		// ----- [2026-02-05] LLM 응답 ID를 메시지 info에 저장 종료 -----
 
 		if (error) {
 			await handleOpenAIError(error, message);
@@ -2798,6 +2877,32 @@ ${conversationText}
 		// 역할: 메시지 전송 전 Max Turns, Max Tokens, Max Input Tokens 제한 확인
 		// 제한 초과 시: 세션 초기화 팝업 또는 토스트 경고 표시
 		// ============================================
+		// ----- [2026-03-05] 최초 인풋 토큰 제한 우회 방지 - 시작 -----
+		// 원인: onMount 비동기 로딩 완료 전 메시지 전송 시 modelSessionLimits가 빈 객체({})
+		//       → modelLimits가 undefined → 전체 제한 체크가 스킵됨
+		// 수정: submitPrompt 시점에 modelSessionLimits가 비어있으면 즉시 API에서 로드
+		if (Object.keys(modelSessionLimits).length === 0) {
+			try {
+				if ($user?.role === 'admin') {
+					const { getModelsConfig } = await import('$lib/apis/configs');
+					const modelsConfig = await getModelsConfig(localStorage.token);
+					if (modelsConfig?.MODEL_SESSION_LIMITS) {
+						modelSessionLimits = modelsConfig.MODEL_SESSION_LIMITS;
+						console.log('[submitPrompt] 세션 제한 즉시 로드 (admin):', modelSessionLimits);
+					}
+				} else {
+					const { getDefaultModelsConfig } = await import('$lib/apis/configs');
+					const userModelsConfig = await getDefaultModelsConfig(localStorage.token);
+					if (userModelsConfig?.MODEL_SESSION_LIMITS) {
+						modelSessionLimits = userModelsConfig.MODEL_SESSION_LIMITS;
+						console.log('[submitPrompt] 세션 제한 즉시 로드 (user):', modelSessionLimits);
+					}
+				}
+			} catch (e) {
+				console.error('[submitPrompt] 세션 제한 로드 실패:', e);
+			}
+		}
+		// ----- [2026-03-05] 최초 인풋 토큰 제한 우회 방지 - 종료 -----
 		// 🔄 모델별 세션 제한 체크
 		const currentModelId = selectedModels[0];
 		const modelLimits = modelSessionLimits[currentModelId];
@@ -2814,11 +2919,10 @@ ${conversationText}
 				console.log(`🔄 [입력제한] 입력 토큰수: ${inputTokens}/${maxInputTokens}`);
 
 				if (inputTokens > maxInputTokens) {
-					toast.error(
-						$i18n.t('Max Input 토큰 초과') + `: ${inputTokens.toLocaleString()} / ${maxInputTokens.toLocaleString()} 토큰\n` +
-						$i18n.t('입력 내용을 줄여주세요.'),
-						{ duration: 5000 }
-					);
+					// ----- [2026-03-05] 토스트 → 팝업으로 변경 시작 -----
+					inputTokenExceedMessage = `입력 허용 토큰초과: ${inputTokens.toLocaleString()} / ${maxInputTokens.toLocaleString()} 토큰\n입력 내용을 줄여주세요.`;
+					showInputTokenExceedModal = true;
+					// ----- [2026-03-05] 토스트 → 팝업으로 변경 종료 -----
 					// 메시지 전송 중단, 입력 내용은 유지됨 (return만 하면 됨)
 					return;
 				}
@@ -3966,6 +4070,12 @@ ${conversationText}
 		).catch(async (error) => {
 			console.log("[Chat] catch error:", error);
 
+			// ----- [2026-02-03] 단일 세션: 세션 만료 에러 체크 활성화 -----
+			if (handleSessionExpiredError(error)) {
+				return; // 세션 만료 시 리다이렉트 처리됨
+			}
+			// ----- [2026-02-03] 단일 세션: 세션 만료 에러 체크 활성화 종료 -----
+
 			// 에러 메시지 추출 - 다양한 형식 지원
 			let errorMessage = "";
 			const errorStr = JSON.stringify(error || {}) + String(error?.detail || "") + String(error?.message || "");
@@ -4084,6 +4194,12 @@ ${conversationText}
 
 		// 에러 문자열로 변환하여 체크
 		const errorStr = JSON.stringify(innerError || {});
+
+		// ----- [2026-02-03] 단일 세션: 세션 만료 에러 체크 활성화 -----
+		if (handleSessionExpiredError(innerError)) {
+			return; // 세션 만료 시 리다이렉트 처리됨
+		}
+		// ----- [2026-02-03] 단일 세션: 세션 만료 에러 체크 활성화 종료 -----
 
 		// 404 에러는 무시하고 다음 메시지를 받을 수 있도록 처리
 		const is404Error = errorStr.includes("404") || errorStr.includes("Not Found");
@@ -4368,12 +4484,31 @@ ${conversationText}
 					$settings.splitLargeChunks,
 				);
 				for await (const update of textStream) {
-					const { value, done, sources, error, usage } = update;
+					// ----- [2026-02-05] LLM 응답 ID 추출 추가 시작 -----
+					const { value, done, sources, error, usage, llmResponseId, llmModel, llmCreated } = update;
+					// ----- [2026-02-05] LLM 응답 ID 추출 추가 종료 -----
 					if (error || done) {
 						generating = false;
 						generationController = null;
 						break;
 					}
+
+					// ----- [2026-02-05] LLM 응답 ID 저장 시작 -----
+					if (llmResponseId && !message?.info?.llmResponseId) {
+						if (!message.info) {
+							message.info = {};
+						}
+						message.info.llmResponseId = llmResponseId;
+						if (llmModel) message.info.llmModel = llmModel;
+						if (llmCreated) message.info.llmCreated = llmCreated;
+						console.log('[Tracing] MoA LLM 응답 ID 저장:', {
+							messageId: message.id,
+							llmResponseId,
+							llmModel,
+							llmCreated
+						});
+					}
+					// ----- [2026-02-05] LLM 응답 ID 저장 종료 -----
 
 					if (mergedResponse.content == "" && value == "\n") {
 						continue;
@@ -6021,6 +6156,34 @@ ${conversationText}
 <!-- 역할: Max Turns/Tokens 초과 시 세션 초기화 팝업 표시 -->
 <!-- ============================================ -->
 <!-- ----- 1227 세션 제한 경고 팝업 -> 토스트로 변경 (모달 제거) ----- -->
+
+<!-- ----- [2026-03-05] 입력 허용 토큰초과 팝업 시작 ----- -->
+{#if showInputTokenExceedModal}
+	<div
+		class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50"
+	>
+		<div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 max-w-md mx-4">
+			<div class="flex items-center gap-3 mb-4">
+				<div class="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900 flex items-center justify-center">
+					<svg class="w-6 h-6 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+					</svg>
+				</div>
+				<h3 class="text-lg font-semibold text-gray-900 dark:text-white">입력 허용 토큰초과</h3>
+			</div>
+			<p class="text-gray-600 dark:text-gray-300 mb-6 whitespace-pre-line">{inputTokenExceedMessage}</p>
+			<div class="flex justify-end">
+				<button
+					on:click={() => { showInputTokenExceedModal = false; }}
+					class="px-5 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
+				>
+					확인
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+<!-- ----- [2026-03-05] 입력 허용 토큰초과 팝업 종료 ----- -->
 
 <!-- 세션 초기화 팝업 -->
 <!-- [2026-01-22] 세션 요약 기능 추가 -->

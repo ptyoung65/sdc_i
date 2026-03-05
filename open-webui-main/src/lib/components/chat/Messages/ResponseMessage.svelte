@@ -15,7 +15,8 @@
 	import { getChatById } from '$lib/apis/chats';
 	import { generateTags } from '$lib/apis';
 
-	import { config, models, settings, temporaryChatEnabled, TTSWorker, user } from '$lib/stores';
+	// [2026.01.19] modelColors, getModelColorClass 추가 - 모델별 색상 설정
+	import { config, models, settings, temporaryChatEnabled, TTSWorker, user, modelColors, getModelColorClass } from '$lib/stores';
 	import { synthesizeOpenAISpeech } from '$lib/apis/audio';
 	import { imageGenerations } from '$lib/apis/images';
 	import {
@@ -117,6 +118,48 @@
 		}
 	}
 
+	// ============================================
+	// [2024.12.30] 화면 표시 - 토큰수/누적토큰수/누적턴수 계산 및 표시 시작
+	// 역할: 채팅 화면에서 (토큰수: 357, 누적토큰수: 357, 누적턴수: 1) 형태로 표시
+	// 데이터 소스: message.usage.total_tokens 또는 message.info.total_tokens
+	// ============================================
+
+	// 현재 메시지의 토큰수 (usage.total_tokens 또는 info.total_tokens)
+	$: currentTokens = message?.usage?.total_tokens || message?.info?.total_tokens || message?.info?.eval_count || 0;
+
+	// 누적 토큰수 및 누적 턴수 계산
+	$: tokenStats = (() => {
+		let accumulatedTokens = 0;
+		let turnCount = 0;
+
+		if (history?.messages) {
+			// 메시지를 timestamp 순으로 정렬하여 순회
+			const sortedMessages = Object.values(history.messages)
+				.filter((msg: any) => msg.timestamp)
+				.sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+			for (const msg of sortedMessages) {
+				const msgAny = msg as any;
+				// 토큰수 누적 (usage.total_tokens 또는 info.total_tokens)
+				const msgTokens = msgAny?.usage?.total_tokens || msgAny?.info?.total_tokens || msgAny?.info?.eval_count || 0;
+				accumulatedTokens += msgTokens;
+
+				// 사용자 메시지일 때 턴수 증가
+				if (msgAny.role === 'user') {
+					turnCount++;
+				}
+
+				// 현재 메시지에 도달하면 중단
+				if (msgAny.id === messageId) {
+					break;
+				}
+			}
+		}
+
+		return { accumulatedTokens, turnCount };
+	})();
+	// [2024.12.30] 화면 표시 완료 ============================================
+
 	// HTML 주석에서 EDM 파일 리스트 파싱
 	function parseEdmFiles(content: string): any[] {
 		try {
@@ -183,6 +226,8 @@
 
 	let model = null;
 	$: model = $models.find((m) => m.id === message.model);
+
+	// [2026.01.19] 모델별 색상 - 스토어에서 설정 로드하여 사용 (설정 가능)
 
 	let edit = false;
 	let editedContent = '';
@@ -845,8 +890,9 @@
 
 		<div class="flex-auto w-0 pl-1 relative">
 			<Name>
+				<!-- [2026.01.19] 모델별 색상 표시 적용 -->
 				<Tooltip content={model?.name ?? message.model} placement="top-start">
-					<span class="line-clamp-1 text-black dark:text-white">
+					<span class="line-clamp-1 font-semibold {getModelColorClass(model?.name ?? message.model, $modelColors)}">
 						{model?.name ?? message.model}
 					</span>
 				</Tooltip>
@@ -860,6 +906,22 @@
 						</Tooltip>
 					</div>
 				{/if}
+
+				<!-- ============================================ -->
+				<!-- [2024.12.30] 턴 및 토큰수 제약처리 - 표시 UI 시작 -->
+				<!-- 역할: 채팅 메시지에 토큰수/누적토큰수/누적턴수 표시 -->
+				<!-- ============================================ -->
+				<!-- 토큰수 및 턴수 정보 표시 -->
+				<div class="self-center text-xs text-gray-400 font-medium ml-2 translate-y-[1px] whitespace-nowrap">
+					<Tooltip content="토큰수: 현재 메시지 / 누적: 이전 메시지까지의 합계 / 턴수: 사용자 질문 횟수">
+						<span class="text-gray-500 dark:text-gray-400">
+							(토큰수: <span class="text-blue-500">{currentTokens.toLocaleString()}</span>,
+							누적토큰수: <span class="text-green-500">{tokenStats.accumulatedTokens.toLocaleString()}</span>,
+							누적턴수: <span class="text-orange-500">{tokenStats.turnCount}</span>)
+						</span>
+					</Tooltip>
+				</div>
+				<!-- [2024.12.30] 턴 및 토큰수 제약처리 - 표시 UI 완료 ============================================ -->
 			</Name>
 
 			<div>
@@ -1425,7 +1487,9 @@
 												? 'visible'
 												: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition whitespace-pre-wrap"
 											on:click={() => {
-												console.log(message);
+												// ========== [2026-01-27 시스템 프롬프트 노출 방지] 시작 ==========
+												// console.log(message); // 보안: 메시지 콘솔 노출 제거
+												// ========== [2026-01-27 시스템 프롬프트 노출 방지] 종료 ==========
 											}}
 											id="info-{message.id}"
 										>

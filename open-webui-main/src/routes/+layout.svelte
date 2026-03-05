@@ -46,6 +46,8 @@
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
 	import AppSidebar from '$lib/components/app/AppSidebar.svelte';
 	import { chatCompletion } from '$lib/apis/openai';
+	// ----- [2026-02-03] 단일 세션: 전역 401 인터셉터 import -----
+	import { setupGlobalFetchInterceptor } from '$lib/utils/fetchWithAuth';
 
 	import { beforeNavigate } from '$app/navigation';
 	import { updated } from '$app/state';
@@ -483,6 +485,10 @@
 	};
 
 	onMount(async () => {
+		// ----- [2026-02-03] 단일 세션: 전역 401 인터셉터 설정 -----
+		setupGlobalFetchInterceptor();
+		// ----- [2026-02-03] 단일 세션: 전역 401 인터셉터 설정 종료 -----
+
 		let touchstartY = 0;
 
 		function isNavOrDescendant(el) {
@@ -627,8 +633,11 @@
 
 				if (localStorage.token) {
 					// Get Session User Info
+					// ----- [2026-02-02] 단일 세션: 세션 종료 메시지 표시 시작 -----
+					let sessionError = null;
 					const sessionUser = await getSessionUser(localStorage.token).catch((error) => {
-						// 401 에러 메시지 표시 안함 (토큰 만료는 정상 동작)
+						console.log('[Session Check] Error:', error, typeof error);
+						sessionError = error;
 						return null;
 					});
 
@@ -638,8 +647,19 @@
 					} else {
 						// Redirect Invalid Session User to /auth Page
 						localStorage.removeItem('token');
+
+						// 세션 종료 메시지가 있으면 표시
+						const errorMsg = sessionError?.detail || sessionError?.message || (typeof sessionError === 'string' ? sessionError : null);
+						console.log('[Session Check] Error message:', errorMsg);
+						if (errorMsg && errorMsg.includes('세션')) {
+							toast.error(errorMsg, { duration: 5000 });
+							// 잠시 대기하여 토스트 메시지가 보이도록 함
+							await new Promise(resolve => setTimeout(resolve, 2000));
+						}
+
 						await goto(`/auth?redirect=${encodedUrl}`);
 					}
+					// ----- [2026-02-02] 단일 세션: 세션 종료 메시지 표시 종료 -----
 				} else {
 					// Don't redirect if we're already on the auth page
 					// Needed because we pass in tokens from OAuth logins via URL fragments

@@ -361,6 +361,7 @@
 	"Created by you": "",
 	"CSV Import": "CSV 가져오기",
 	"Ctrl+Enter to Send": "Ctrl+Enter로 보내기",
+	"Current IP": "현재 접속 IP",
 	"Current Model": "현재 모델",
 	"Current Password": "현재 비밀번호",
 	"Custom": "사용자 정의",
@@ -1238,7 +1239,7 @@
 	"Prefix ID is used to avoid conflicts with other connections by adding a prefix to the model IDs - leave empty to disable": "Prefix ID는 모델 ID에 접두사를 추가하여 다른 연결과의 충돌을 방지하는 데 사용됩니다. - 비활성화하려면 비워 둡니다.",
 	"Prevent file creation": "파일 생성 방지",
 	"Preview": "미리보기",
-	"Previous 30 days": "이전 30일",
+	"Previous 14 days": "이전 8~14일",
 	"Previous 7 days": "이전 7일",
 	"Previous message": "이전 메시지",
 	"Private": "비공개",
@@ -1767,5 +1768,7 @@
 	"Your entire contribution will go directly to the plugin developer; Open WebUI does not take any percentage. However, the chosen funding platform might have its own fees.": "당신의 모든 기여는 곧바로 플러그인 개발자에게 갑니다; Open WebUI는 수수료를 받지 않습니다. 다만, 선택한 후원 플랫폼은 수수료를 가져갈 수 있습니다.",
 	"YouTube": "유튜브",
 	"Youtube Language": "Youtube 언어",
-	"Youtube Proxy URL": "Youtube 프록시 URL"
+	"Youtube Proxy URL": "Youtube 프록시 URL",
+	"입력 허용 토큰초과": "입력 허용 토큰초과",
+	"입력 내용을 줄여주세요.": "입력 내용을 줄여주세요."
 }

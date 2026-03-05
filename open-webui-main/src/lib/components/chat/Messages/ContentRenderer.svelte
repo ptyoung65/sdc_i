@@ -213,7 +213,9 @@
 				: model?.id}
 		messages={createMessagesList(history, messageId)}
 		onAdd={({ modelId, parentId, messages }) => {
-			console.log(modelId, parentId, messages);
+			// ========== [2026-01-27 시스템 프롬프트 노출 방지] 시작 ==========
+			// console.log(modelId, parentId, messages); // 보안: 메시지 콘솔 노출 제거
+			// ========== [2026-01-27 시스템 프롬프트 노출 방지] 종료 ==========
 			onAddMessages({ modelId, parentId, messages });
 			closeFloatingButtons();
 		}}

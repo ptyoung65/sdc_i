@@ -525,7 +525,8 @@
 
 			<hr class="border-gray-50 dark:border-gray-800 my-1" />
 
-			<!-- 5. 이동 (Move to Folder) -->
+			<!-- [2026.01.19] 5. 이동 (Move to Folder) - 주석처리: 새폴더 기능 비활성화와 연계 -->
+			<!--
 			{#if chatId}
 				<DropdownMenu.Sub>
 					<DropdownMenu.SubTrigger
@@ -553,6 +554,7 @@
 					</DropdownMenu.SubContent>
 				</DropdownMenu.Sub>
 			{/if}
+			-->
 
 			<!-- 6. 보관 (Archive) -->
 			<DropdownMenu.Item

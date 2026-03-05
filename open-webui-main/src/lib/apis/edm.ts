@@ -10,32 +10,15 @@
  */
 
 import { WEBUI_API_BASE_URL } from '$lib/constants';
+import { env } from '$lib/config/environment';
+import { logger } from '$lib/utils/logger';
 
-// ==================== MOCK MODE CONFIGURATION ====================
-// TODO: 실제 배포 시 MOCK_MODE를 false로 변경하세요
-// Mock 모드에서는 실제 n8n, Elasticsearch 없이 테스트 가능합니다
-const MOCK_MODE = false; // true: Mock 데이터 사용, false: 실제 API 사용
-
-// TODO: Mock 데이터는 실제 API 연동 후 제거하세요
-// Mock 데이터 import (MOCK_MODE = true일 때만 사용)
+// Mock 데이터 import (Mock 모드일 때만 사용)
 import {
 	filterMockFilesByQuery,
 	getMockFilePathsByObjids,
 	mockDelay
 } from './mock/edm-mock-data';
-// ==================== END MOCK MODE CONFIGURATION ====================
-
-// ==================== CONFIGURATION ====================
-// TODO: 실제 n8n 서버 URL (현재: 11.93.33.10:9060)
-const N8N_BASE_URL = 'http://11.93.33.10:9060';
-
-// TODO: 실제 Elasticsearch API 엔드포인트로 교체 필요
-const ELASTICSEARCH_URL = '[API1_ENDPOINT]';
-
-// TODO: 실제 Elasticsearch API 토큰으로 교체 필요
-const API_TOKEN = '[ELASTICSEARCH_API_TOKEN]';
-// ==================== END CONFIGURATION ====================
-
 
 // ==================== TYPE DEFINITIONS ====================
 
@@ -119,7 +102,14 @@ export const getEdmFileList = async (
 	workspaceId?: string,
 	token: string = ''
 ): Promise<EdmFileListResponse> => {
-	console.log('[EDM] 실제 파일 리스트 조회 - query:', query);
+	logger.debug('EDM', '파일 리스트 조회 요청', { query });
+
+	// Mock 모드 체크
+	if (env.ENABLE_MOCK_MODE) {
+		logger.warn('EDM', 'Mock 모드로 파일 리스트 조회');
+		await mockDelay(500);
+		return filterMockFilesByQuery(query);
+	}
 
 	try {
 		// 백엔드 API 호출 - 실제 uploads 폴더 파일 목록 조회
@@ -139,11 +129,11 @@ export const getEdmFileList = async (
 		}
 
 		const data = await res.json();
-		console.log('[EDM] 파일 리스트 조회 성공:', data);
+		logger.info('EDM', '파일 리스트 조회 성공', { count: data.data?.items?.length || 0 });
 
 		return data;
 	} catch (error) {
-		console.error('[EDM] 파일 리스트 조회 실패:', error);
+		logger.error('EDM', '파일 리스트 조회 실패', error);
 		throw error;
 	}
 };
@@ -159,25 +149,27 @@ export const getEdmFilePaths = async (
 	objids: string[],
 	token: string = ''
 ): Promise<EdmFilePathResponse> => {
-	// ==================== MOCK MODE ====================
-	// TODO: MOCK_MODE를 false로 변경하면 실제 API 호출로 전환됩니다
-	if (MOCK_MODE) {
-		console.log('[MOCK] EDM 파일 경로 조회 - objids:', objids);
-		await mockDelay(300); // 네트워크 지연 시뮬레이션
+	if (env.ENABLE_MOCK_MODE) {
+		logger.warn('EDM', 'Mock 모드로 파일 경로 조회', { objids });
+		await mockDelay(300);
 		return getMockFilePathsByObjids(objids);
 	}
-	// ==================== END MOCK MODE ====================
 
 	try {
-		const res = await fetch(`${N8N_BASE_URL}/webhook/edm-file-path`, {
+		// 환경변수 검증
+		if (!env.ELASTICSEARCH_URL || !env.ELASTICSEARCH_API_TOKEN) {
+			logger.warn('EDM', 'Elasticsearch 설정이 누락되었습니다. 검색이 제한될 수 있습니다.');
+		}
+
+		const res = await fetch(`${env.N8N_BASE_URL}/webhook/edm-file-path`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
 				...(token && { Authorization: `Bearer ${token}` })
 			},
 			body: JSON.stringify({
-				elasticsearchUrl: ELASTICSEARCH_URL,
-				apiToken: API_TOKEN,
+				elasticsearchUrl: env.ELASTICSEARCH_URL,
+				apiToken: env.ELASTICSEARCH_API_TOKEN,
 				objids
 			})
 		});
@@ -187,9 +179,10 @@ export const getEdmFilePaths = async (
 		}
 
 		const data = await res.json();
+		logger.info('EDM', '파일 경로 조회 성공', { count: data.data?.items?.length || 0 });
 		return data;
 	} catch (error) {
-		console.error('[EDM API] 파일 경로 조회 실패:', error);
+		logger.error('EDM', '파일 경로 조회 실패', error);
 		throw error;
 	}
 };
@@ -208,13 +201,10 @@ export const embedEdmFiles = async (
 	request: EdmEmbedRequest,
 	token: string = ''
 ): Promise<EdmEmbedResponse> => {
-	// ==================== MOCK MODE ====================
-	// TODO: MOCK_MODE를 false로 변경하면 실제 API 호출로 전환됩니다
-	if (MOCK_MODE) {
-		console.log('[MOCK] EDM 파일 임베딩 요청 - files:', request.files.length);
-		await mockDelay(2000); // 임베딩 처리 시뮬레이션 (2초)
+	if (env.ENABLE_MOCK_MODE) {
+		logger.warn('EDM', 'Mock 모드로 임베딩 요청', { files: request.files.length });
+		await mockDelay(2000);
 
-		// Mock 임베딩 성공 응답
 		const mockResponse: EdmEmbedResponse = {
 			success: true,
 			message: `[MOCK] ${request.files.length}개 파일 임베딩 완료`,
@@ -227,10 +217,9 @@ export const embedEdmFiles = async (
 			failed_files: []
 		};
 
-		console.log('[MOCK] 임베딩 성공:', mockResponse);
+		logger.info('EDM', 'Mock 임베딩 성공', mockResponse);
 		return mockResponse;
 	}
-	// ==================== END MOCK MODE ====================
 
 	try {
 		// Open WebUI 백엔드 API 호출
@@ -248,9 +237,14 @@ export const embedEdmFiles = async (
 		}
 
 		const data = await res.json();
+		logger.info('EDM', '임베딩 요청 성공', {
+			success: data.success,
+			embedded: data.embedded_files?.length,
+			failed: data.failed_files?.length
+		});
 		return data;
 	} catch (error) {
-		console.error('[EDM API] 임베딩 요청 실패:', error);
+		logger.error('EDM', '임베딩 요청 실패', error);
 		throw error;
 	}
 };
@@ -275,6 +269,8 @@ export const edmWorkflow = async (
 	selectedObjids: string[],
 	token: string = ''
 ): Promise<EdmEmbedResponse> => {
+	logger.info('EDM', '워크플로우 시작', { query, selectedCount: selectedObjids.length });
+
 	try {
 		// Step 1: 파일 리스트 조회
 		const fileListResponse = await getEdmFileList(query, userId, undefined, token);
@@ -315,9 +311,10 @@ export const edmWorkflow = async (
 		// Step 5: 임베딩 실행
 		const embedResponse = await embedEdmFiles(embedRequest, token);
 
+		logger.info('EDM', '워크플로우 완료', { success: embedResponse.success });
 		return embedResponse;
 	} catch (error) {
-		console.error('[EDM Workflow] 실행 실패:', error);
+		logger.error('EDM', '워크플로우 실패', error);
 		throw error;
 	}
 };

@@ -1,6 +1,7 @@
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import type { ParsedEvent } from 'eventsource-parser';
 
+// ----- [2026-02-05] LLM 응답 ID 트레이싱 기능 시작 -----
 type TextStreamUpdate = {
 	done: boolean;
 	value: string;
@@ -10,7 +11,14 @@ type TextStreamUpdate = {
 	selectedModelId?: any;
 	error?: any;
 	usage?: ResponseUsage;
+	// LLM 응답 ID (예: chatcmpl-xxx) - 트레이싱용
+	llmResponseId?: string;
+	// LLM 모델명 (응답에서 반환된 실제 모델)
+	llmModel?: string;
+	// LLM 응답 생성 시간
+	llmCreated?: number;
 };
+// ----- [2026-02-05] LLM 응답 ID 트레이싱 기능 종료 -----
 
 type ResponseUsage = {
 	/** Including images and tools if any */
@@ -60,7 +68,9 @@ async function* openAIStreamToIterator(
 
 		try {
 			const parsedData = JSON.parse(data);
-			console.log(parsedData);
+			// ========== [2026-01-27 시스템 프롬프트 노출 방지] 시작 ==========
+			// console.log(parsedData); // 보안: 스트리밍 데이터 콘솔 노출 제거
+			// ========== [2026-01-27 시스템 프롬프트 노출 방지] 종료 ==========
 
 			if (parsedData.error) {
 				yield { done: true, value: '', error: parsedData.error };
@@ -82,9 +92,21 @@ async function* openAIStreamToIterator(
 				continue;
 			}
 
+			// ----- [2026-02-05] LLM 응답 ID 추출 시작 -----
+			// OpenAI 응답 형식: { id: "chatcmpl-xxx", model: "gpt-4", created: 1234567890, ... }
+			const llmResponseId = parsedData.id || undefined;
+			const llmModel = parsedData.model || undefined;
+			const llmCreated = parsedData.created || undefined;
+			// ----- [2026-02-05] LLM 응답 ID 추출 종료 -----
+
 			yield {
 				done: false,
-				value: parsedData.choices?.[0]?.delta?.content ?? ''
+				value: parsedData.choices?.[0]?.delta?.content ?? '',
+				// ----- [2026-02-05] LLM 트레이싱 정보 전달 시작 -----
+				...(llmResponseId && { llmResponseId }),
+				...(llmModel && { llmModel }),
+				...(llmCreated && { llmCreated })
+				// ----- [2026-02-05] LLM 트레이싱 정보 전달 종료 -----
 			};
 		} catch (e) {
 			console.error('Error extracting delta from SSE event:', e);
@@ -119,6 +141,12 @@ async function* streamLargeDeltasAsRandomChunks(
 			yield textStreamUpdate;
 			continue;
 		}
+		// ----- [2026-02-05] LLM 응답 ID 전달 시작 -----
+		if (textStreamUpdate.llmResponseId) {
+			yield textStreamUpdate;
+			continue;
+		}
+		// ----- [2026-02-05] LLM 응답 ID 전달 종료 -----
 
 		let content = textStreamUpdate.value;
 		if (content.length < 5) {

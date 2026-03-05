@@ -1,10 +1,11 @@
 #!/bin/bash
 
 ################################################################################
-# Dify 전체 관리 스크립트 (개선 버전)
+# Dify 전체 관리 스크립트 (MCP Server SSL 연동 버전)
 #
 # 기능:
 # - 원격 DB(PostgreSQL, Milvus) 연결 확인
+# - MCP 서버 SSL/HTTPS 연결 지원 (별도 서버)
 # - 로컬/원격 서버 IP 지정 가능
 # - 기존 컨테이너 자동 정리 및 포트 초기화
 # - PostgreSQL 초기 테이블 생성
@@ -23,6 +24,7 @@
 #   logs      - 로그 확인
 #   clean     - 전체 삭제
 #   init-db   - DB 초기화만 수행
+#   test-mcp  - MCP 서버 연결 테스트
 ################################################################################
 
 set -e
@@ -84,6 +86,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/.dify-config"
 
 # ============================================
+# 원격 Plugin Daemon 설정 (고정)
+# ============================================
+REMOTE_PLUGIN_DAEMON_IP="192.168.122.178"
+REMOTE_PLUGIN_DAEMON_PORT="5003"
+
+# ============================================
+# MCP 서버 설정 (기본값)
+# ============================================
+MCP_SERVER_ENABLED="no"
+MCP_SERVER_IP=""
+MCP_SERVER_PORT="8200"
+MCP_SERVER_PROTOCOL="https"
+MCP_SSL_VERIFY="true"
+MCP_SSL_CERT_PATH=""
+
+# ============================================
 # 설정 로드 함수
 # ============================================
 load_config() {
@@ -100,11 +118,45 @@ load_config() {
 save_config() {
     cat > "$CONFIG_FILE" << EOF
 # ============================================================
-# Dify Manager 설정 파일
+# Dify Manager 설정 파일 (MCP Server SSL 연동 버전)
 # ============================================================
 # 이 파일의 설정값들을 수정하여 Dify 환경을 구성할 수 있습니다.
 # 수정 후 ./dify-manager.sh 명령으로 적용하세요.
 # 자동 생성됨: $(date)
+
+# ------------------------------------------------------------
+# MCP 서버 설정 (Perplexity Search API)
+# ------------------------------------------------------------
+
+# MCP 서버 사용 여부 (yes/no)
+MCP_SERVER_ENABLED="${MCP_SERVER_ENABLED}"
+
+# MCP 서버 IP (별도 서버)
+MCP_SERVER_IP="${MCP_SERVER_IP}"
+
+# MCP 서버 포트
+MCP_SERVER_PORT="${MCP_SERVER_PORT}"
+
+# MCP 서버 프로토콜 (http/https)
+MCP_SERVER_PROTOCOL="${MCP_SERVER_PROTOCOL}"
+
+# MCP SSL 인증서 검증 여부 (true/false)
+# 자체 서명 인증서 사용 시 false로 설정
+MCP_SSL_VERIFY="${MCP_SSL_VERIFY}"
+
+# MCP SSL 인증서 경로 (CA 인증서)
+# 자체 서명 인증서 검증이 필요한 경우 CA 인증서 경로 지정
+MCP_SSL_CERT_PATH="${MCP_SSL_CERT_PATH}"
+
+# ------------------------------------------------------------
+# 원격 Plugin Daemon 설정 (11.93.32.30 서버)
+# ------------------------------------------------------------
+
+# 원격 Plugin Daemon 서버 IP (고정값)
+REMOTE_PLUGIN_DAEMON_IP="${REMOTE_PLUGIN_DAEMON_IP}"
+
+# 원격 Plugin Daemon 포트
+REMOTE_PLUGIN_DAEMON_PORT="${REMOTE_PLUGIN_DAEMON_PORT}"
 
 # ------------------------------------------------------------
 # 네트워크 설정
@@ -174,14 +226,6 @@ NETWORK_NAME="$NETWORK_NAME"
 # 예: dify-api, dify-worker, dify-web 등
 CONTAINER_PREFIX="$CONTAINER_PREFIX"
 
-# ------------------------------------------------------------
-# 추가 옵션
-# ------------------------------------------------------------
-
-# Nginx 사용 여부 (yes 또는 no)
-# no: 각 서비스를 개별 포트로 직접 접근
-# yes: Nginx를 통해 리버스 프록시 구성
-USE_NGINX="$USE_NGINX"
 EOF
     chmod 600 "$CONFIG_FILE"
 }
@@ -190,9 +234,62 @@ EOF
 # 대화형 설정 함수
 # ============================================
 interactive_config() {
-    log_header "Dify 설정"
+    log_header "Dify 설정 (MCP Server SSL 연동 버전)"
 
     echo -e "${BOLD}필수 정보를 입력해주세요:${NC}"
+    echo ""
+
+    # 원격 Plugin Daemon 정보 표시
+    echo -e "${BOLD}${GREEN}원격 Plugin Daemon 서버 정보:${NC}"
+    echo "  IP: ${REMOTE_PLUGIN_DAEMON_IP}"
+    echo "  Port: ${REMOTE_PLUGIN_DAEMON_PORT}"
+    echo "  URL: http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+    echo ""
+
+    # MCP 서버 설정
+    echo -e "${BOLD}${CYAN}MCP 서버 설정 (Perplexity Search API):${NC}"
+    echo "  MCP 서버는 웹 검색 기능을 제공하는 별도의 서버입니다."
+    echo ""
+
+    read -p "MCP 서버를 사용하시겠습니까? (yes/no) [기본값: no]: " MCP_SERVER_ENABLED
+    MCP_SERVER_ENABLED=${MCP_SERVER_ENABLED:-no}
+
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        MCP_SERVER_ENABLED="yes"
+        echo ""
+        read -p "MCP 서버 IP 주소: " MCP_SERVER_IP
+        while [ -z "$MCP_SERVER_IP" ]; do
+            log_error "MCP 서버 IP는 필수입니다."
+            read -p "MCP 서버 IP 주소: " MCP_SERVER_IP
+        done
+
+        read -p "MCP 서버 포트 [기본값: 8200]: " MCP_SERVER_PORT
+        MCP_SERVER_PORT=${MCP_SERVER_PORT:-8200}
+
+        read -p "MCP 서버 프로토콜 (http/https) [기본값: https]: " MCP_SERVER_PROTOCOL
+        MCP_SERVER_PROTOCOL=${MCP_SERVER_PROTOCOL:-https}
+
+        if [ "$MCP_SERVER_PROTOCOL" = "https" ]; then
+            echo ""
+            echo "  SSL 인증서 설정:"
+            echo "    - 공인 인증서: SSL 검증 활성화 권장"
+            echo "    - 자체 서명 인증서: SSL 검증 비활성화 또는 CA 인증서 지정"
+            echo ""
+            read -p "SSL 인증서 검증 활성화? (true/false) [기본값: true]: " MCP_SSL_VERIFY
+            MCP_SSL_VERIFY=${MCP_SSL_VERIFY:-true}
+
+            if [ "$MCP_SSL_VERIFY" = "true" ]; then
+                read -p "CA 인증서 경로 (없으면 Enter): " MCP_SSL_CERT_PATH
+            else
+                MCP_SSL_CERT_PATH=""
+            fi
+        fi
+
+        log_success "MCP 서버 설정 완료: ${MCP_SERVER_PROTOCOL}://${MCP_SERVER_IP}:${MCP_SERVER_PORT}"
+    else
+        MCP_SERVER_ENABLED="no"
+        log_info "MCP 서버를 사용하지 않습니다."
+    fi
     echo ""
 
     # 원격 DB 서버 IP 선택
@@ -301,20 +398,24 @@ interactive_config() {
     read -p "컨테이너 이름 prefix [기본값: dify]: " CONTAINER_PREFIX
     CONTAINER_PREFIX=${CONTAINER_PREFIX:-dify}
 
-    # Nginx 사용 여부
-    echo ""
-    echo -e "${BOLD}Nginx 리버스 프록시:${NC}"
-    echo "  - yes: Nginx 사용 (포트 80으로 통합 접속)"
-    echo "  - no:  Web(9008), API(5001) 직접 접속"
-    read -p "Nginx를 사용하시겠습니까? (yes/no) [기본값: no]: " USE_NGINX
-    USE_NGINX=${USE_NGINX:-no}
-
     # 설정 확인
     echo ""
     log_section "설정 확인"
     echo ""
-    echo "  ${BOLD}[웹 접근]${NC}          http://$WEB_ACCESS_IP:$WEB_PORT"
-    echo "  ${BOLD}[원격 DB 서버]${NC}    $REMOTE_DB_IP"
+
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        echo "  ${BOLD}[MCP 서버]${NC}            ${MCP_SERVER_PROTOCOL}://${MCP_SERVER_IP}:${MCP_SERVER_PORT}"
+        echo "                        SSL 검증: ${MCP_SSL_VERIFY}"
+        if [ -n "$MCP_SSL_CERT_PATH" ]; then
+            echo "                        CA 인증서: ${MCP_SSL_CERT_PATH}"
+        fi
+    else
+        echo "  ${BOLD}[MCP 서버]${NC}            사용 안함"
+    fi
+
+    echo "  ${BOLD}[원격 Plugin Daemon]${NC}  http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+    echo "  ${BOLD}[웹 접근]${NC}             http://$WEB_ACCESS_IP:$WEB_PORT"
+    echo "  ${BOLD}[원격 DB 서버]${NC}        $REMOTE_DB_IP"
     echo ""
     echo "  PostgreSQL:       $DB_USERNAME@$REMOTE_DB_IP:$DB_PORT/$DB_DATABASE (원격)"
     echo "  Milvus:           $REMOTE_DB_IP:$MILVUS_PORT (원격)"
@@ -322,7 +423,6 @@ interactive_config() {
     echo ""
     echo "  네트워크:         $NETWORK_NAME"
     echo "  컨테이너 prefix:  $CONTAINER_PREFIX"
-    echo "  Nginx 사용:       $USE_NGINX"
     echo ""
 
     read -p "이 설정으로 진행하시겠습니까? (yes/no): " -r
@@ -376,10 +476,16 @@ setup_environment() {
     PLUGIN_DAEMON_KEY="sk-plugin-daemon-$(openssl rand -hex 16)"
     INNER_API_KEY="sk-inner-api-key-$(openssl rand -hex 16)"
 
-    # 컨테이너 리스트 (Redis는 원격 서버 사용, Nginx 선택적)
+    # MCP 서버 URL 생성
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        MCP_SERVER_URL="${MCP_SERVER_PROTOCOL}://${MCP_SERVER_IP}:${MCP_SERVER_PORT}"
+    else
+        MCP_SERVER_URL=""
+    fi
+
+    # 컨테이너 리스트 (Plugin Daemon은 원격 서버 사용, Redis는 로컬 기존 컨테이너 사용)
     CONTAINERS_ORDER=(
         "${CONTAINER_PREFIX}-sandbox"
-        "${CONTAINER_PREFIX}-plugin-daemon"
         "${CONTAINER_PREFIX}-api"
         "${CONTAINER_PREFIX}-worker"
         "${CONTAINER_PREFIX}-web"
@@ -389,15 +495,8 @@ setup_environment() {
         "${CONTAINER_PREFIX}-web"
         "${CONTAINER_PREFIX}-worker"
         "${CONTAINER_PREFIX}-api"
-        "${CONTAINER_PREFIX}-plugin-daemon"
         "${CONTAINER_PREFIX}-sandbox"
     )
-
-    # Nginx 사용 시 목록에 추가
-    if [[ "$USE_NGINX" =~ ^[Yy][Ee][Ss]$ ]]; then
-        CONTAINERS_ORDER+=("${CONTAINER_PREFIX}-nginx")
-        CONTAINERS_STOP_ORDER=("${CONTAINER_PREFIX}-nginx" "${CONTAINERS_STOP_ORDER[@]}")
-    fi
 }
 
 # ============================================
@@ -405,7 +504,11 @@ setup_environment() {
 # ============================================
 show_usage() {
     cat << EOF
-${BOLD}Dify 전체 관리 스크립트${NC}
+${BOLD}Dify 전체 관리 스크립트 (MCP Server SSL 연동 버전)${NC}
+
+${BOLD}특징:${NC}
+  - MCP 서버 (Perplexity Search API) SSL/HTTPS 연결 지원
+  - 별도 서버에 위치한 MCP 서버 연결
 
 ${BOLD}사용법:${NC}
   $0 <COMMAND> [OPTIONS]
@@ -421,6 +524,7 @@ ${BOLD}명령어:${NC}
   ${GREEN}check${NC}      - 환경 체크 (DB 연결 + 이미지 확인)
   ${GREEN}init-db${NC}    - DB 초기화 (테이블 생성 + 사용자 생성)
   ${GREEN}config${NC}     - 설정 변경
+  ${GREEN}test-mcp${NC}   - MCP 서버 연결 테스트
 
 ${BOLD}예제:${NC}
   # 최초 설치
@@ -434,6 +538,9 @@ ${BOLD}예제:${NC}
 
   # API 로그 확인
   $0 logs dify-api
+
+  # MCP 서버 연결 테스트
+  $0 test-mcp
 
   # DB 초기화
   $0 init-db
@@ -450,7 +557,7 @@ EOF
 check_and_free_ports() {
     log_section "포트 사용 확인 및 정리"
 
-    local PORTS=(80 ${WEB_PORT} 5001 5003 8194)
+    local PORTS=(${WEB_PORT} 5001 8194)
 
     for port in "${PORTS[@]}"; do
         local PID=$(lsof -ti :$port 2>/dev/null || true)
@@ -462,7 +569,7 @@ check_and_free_ports() {
             if [ -n "$CONTAINER" ]; then
                 log_info "컨테이너 중지 및 삭제: $CONTAINER"
                 podman rm -f "$CONTAINER" 2>/dev/null || true
-                log_success "✓ 포트 $port 해제됨"
+                log_success "포트 $port 해제됨"
             else
                 log_warning "포트 $port는 Podman 외부 프로세스가 사용 중입니다."
                 log_info "수동으로 확인하세요: lsof -i :$port"
@@ -484,7 +591,7 @@ cleanup_existing_containers() {
             FOUND_ANY=true
             log_info "삭제 중: ${container}"
             podman rm -f "${container}" 2>/dev/null || true
-            log_success "✓ ${container} 삭제됨"
+            log_success "${container} 삭제됨"
         fi
     done
 
@@ -496,15 +603,121 @@ cleanup_existing_containers() {
 }
 
 # ============================================
+# 함수: MCP 서버 연결 테스트
+# ============================================
+test_mcp_connection() {
+    if [[ ! "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        log_info "MCP 서버가 비활성화되어 있습니다."
+        return 0
+    fi
+
+    log_section "MCP 서버 연결 테스트"
+
+    local MCP_URL="${MCP_SERVER_PROTOCOL}://${MCP_SERVER_IP}:${MCP_SERVER_PORT}"
+    log_info "MCP 서버 URL: ${MCP_URL}"
+
+    # SSL 옵션 설정
+    local CURL_OPTS=""
+    if [ "$MCP_SERVER_PROTOCOL" = "https" ]; then
+        if [ "$MCP_SSL_VERIFY" = "false" ]; then
+            CURL_OPTS="-k"
+            log_info "SSL 인증서 검증 비활성화"
+        elif [ -n "$MCP_SSL_CERT_PATH" ] && [ -f "$MCP_SSL_CERT_PATH" ]; then
+            CURL_OPTS="--cacert ${MCP_SSL_CERT_PATH}"
+            log_info "CA 인증서 사용: ${MCP_SSL_CERT_PATH}"
+        fi
+    fi
+
+    # 헬스 체크
+    log_info "헬스 체크 중..."
+    local HEALTH_RESPONSE=$(curl -s $CURL_OPTS --connect-timeout 10 "${MCP_URL}/health" 2>&1)
+
+    if [ $? -eq 0 ] && echo "$HEALTH_RESPONSE" | grep -q "healthy"; then
+        log_success "MCP 서버 연결 성공!"
+        echo ""
+        echo "  응답: $HEALTH_RESPONSE"
+        echo ""
+        return 0
+    else
+        log_error "MCP 서버 연결 실패"
+        echo "  URL: ${MCP_URL}"
+        echo "  응답: $HEALTH_RESPONSE"
+        return 1
+    fi
+}
+
+# ============================================
+# 함수: MCP 검색 테스트
+# ============================================
+test_mcp_search() {
+    if [[ ! "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        log_info "MCP 서버가 비활성화되어 있습니다."
+        return 0
+    fi
+
+    log_section "MCP 검색 테스트"
+
+    local MCP_URL="${MCP_SERVER_PROTOCOL}://${MCP_SERVER_IP}:${MCP_SERVER_PORT}"
+
+    # SSL 옵션 설정
+    local CURL_OPTS=""
+    if [ "$MCP_SERVER_PROTOCOL" = "https" ]; then
+        if [ "$MCP_SSL_VERIFY" = "false" ]; then
+            CURL_OPTS="-k"
+        elif [ -n "$MCP_SSL_CERT_PATH" ] && [ -f "$MCP_SSL_CERT_PATH" ]; then
+            CURL_OPTS="--cacert ${MCP_SSL_CERT_PATH}"
+        fi
+    fi
+
+    # 검색 테스트
+    local TEST_QUERY="테스트 검색"
+    log_info "검색 쿼리: ${TEST_QUERY}"
+
+    local SEARCH_RESPONSE=$(curl -s $CURL_OPTS --connect-timeout 10 \
+        -H "Content-Type: application/json" \
+        -d "{\"query\": \"${TEST_QUERY}\"}" \
+        "${MCP_URL}/search" 2>&1)
+
+    if [ $? -eq 0 ] && echo "$SEARCH_RESPONSE" | grep -q "results"; then
+        log_success "MCP 검색 테스트 성공!"
+        echo ""
+        echo "  응답 (처음 500자):"
+        echo "  ${SEARCH_RESPONSE:0:500}..."
+        echo ""
+        return 0
+    else
+        log_warning "MCP 검색 테스트 실패 (서버는 연결됨)"
+        echo "  응답: $SEARCH_RESPONSE"
+        return 1
+    fi
+}
+
+# ============================================
 # 함수: 원격 DB 연결 테스트
 # ============================================
 test_remote_connection() {
-    log_section "DB 서버 연결 테스트"
+    log_section "원격 서버 연결 테스트"
+
+    # Plugin Daemon 연결 테스트 (로컬/원격)
+    log_info "Plugin Daemon 연결 테스트: ${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+    if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${REMOTE_PLUGIN_DAEMON_IP}/${REMOTE_PLUGIN_DAEMON_PORT}" 2>/dev/null; then
+        log_success "Plugin Daemon 연결 성공 ✓"
+    else
+        log_warning "Plugin Daemon 연결 실패: ${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+        log_warning "Plugin Daemon이 아직 시작되지 않았을 수 있습니다. 계속 진행합니다."
+    fi
+
+    # MCP 서버 연결 테스트 (활성화된 경우)
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        if ! test_mcp_connection; then
+            log_warning "MCP 서버 연결 실패. Dify는 MCP 없이도 동작합니다."
+        fi
+    fi
 
     # PostgreSQL 연결 테스트 (원격)
     log_info "PostgreSQL 연결 테스트 (원격): ${DB_HOST}:${DB_PORT}"
     if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; then
-        log_success "PostgreSQL 연결 성공 ✓"
+        log_success "PostgreSQL 연결 성공"
     else
         log_error "PostgreSQL 연결 실패: ${DB_HOST}:${DB_PORT}"
         log_warning "원격 서버의 PostgreSQL이 실행 중인지 확인하세요."
@@ -514,7 +727,7 @@ test_remote_connection() {
     # Milvus 연결 테스트 (원격)
     log_info "Milvus 연결 테스트 (원격): ${MILVUS_HOST}:${MILVUS_PORT}"
     if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${MILVUS_HOST}/${MILVUS_PORT}" 2>/dev/null; then
-        log_success "Milvus 연결 성공 ✓"
+        log_success "Milvus 연결 성공"
     else
         log_error "Milvus 연결 실패: ${MILVUS_HOST}:${MILVUS_PORT}"
         log_warning "원격 서버의 Milvus가 실행 중인지 확인하세요."
@@ -525,7 +738,7 @@ test_remote_connection() {
     # [2026-01-23] REDIS_CONTAINER_NAME을 사용하여 컨테이너 확인
     log_info "Redis 컨테이너 확인 (로컬): ${REDIS_CONTAINER_NAME}"
     if podman ps --filter "name=${REDIS_CONTAINER_NAME}" --format "{{.Names}}" | grep -q "${REDIS_CONTAINER_NAME}"; then
-        log_success "Redis 컨테이너 실행 중 ✓ (${REDIS_CONTAINER_NAME})"
+        log_success "Redis 컨테이너 실행 중 (${REDIS_CONTAINER_NAME})"
         log_info "Redis 연결 정보: ${REDIS_HOST}:${REDIS_PORT}"
     else
         log_error "Redis 컨테이너를 찾을 수 없습니다: ${REDIS_CONTAINER_NAME}"
@@ -561,7 +774,7 @@ init_database() {
 
         # postgres 데이터베이스에 연결하여 dify 데이터베이스 생성
         if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" -d postgres -c "CREATE DATABASE ${DB_DATABASE};" &>/dev/null; then
-            log_success "데이터베이스 '${DB_DATABASE}' 생성 완료 ✓"
+            log_success "데이터베이스 '${DB_DATABASE}' 생성 완료"
         else
             # 이미 존재하는 경우의 에러 무시
             if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" -d "$DB_DATABASE" -c "SELECT 1;" &>/dev/null; then
@@ -637,17 +850,15 @@ check_images() {
         "docker.io/langgenius/dify-api:latest"
         "docker.io/langgenius/dify-web:latest"
         "docker.io/langgenius/dify-sandbox:0.2.12"
-        "docker.io/langgenius/dify-plugin-daemon:latest"
-        "docker.io/library/nginx:latest"
     )
 
     local ALL_PRESENT=true
 
     for image in "${REQUIRED_IMAGES[@]}"; do
         if podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${image}$"; then
-            log_success "✓ ${image}"
+            log_success "${image}"
         else
-            log_error "✗ ${image} - 누락됨"
+            log_error "${image} - 누락됨"
             ALL_PRESENT=false
         fi
     done
@@ -677,8 +888,6 @@ load_images() {
         "dify-api-latest.tar"
         "dify-web-latest.tar"
         "dify-sandbox-latest.tar"
-        "dify-plugin-daemon-latest.tar"
-        "nginx-docker.io-library-nginx-latest.tar"
     )
 
     for image_file in "${IMAGE_FILES[@]}"; do
@@ -687,9 +896,9 @@ load_images() {
         if [ -f "${image_path}" ]; then
             log_info "로드 중: ${image_file}"
             if podman load -i "${image_path}"; then
-                log_success "✓ ${image_file} 로드 완료"
+                log_success "${image_file} 로드 완료"
             else
-                log_error "✗ ${image_file} 로드 실패"
+                log_error "${image_file} 로드 실패"
                 return 1
             fi
         else
@@ -715,7 +924,7 @@ create_network() {
     else
         log_info "네트워크 '${NETWORK_NAME}' 생성 중..."
         podman network create "${NETWORK_NAME}"
-        log_success "네트워크 생성 완료 ✓"
+        log_success "네트워크 생성 완료"
     fi
 
     # Redis 컨테이너 확인
@@ -727,13 +936,13 @@ create_network() {
 
     while [ $REDIS_WAIT -lt $MAX_WAIT ]; do
         if podman ps --format "{{.Names}}" | grep -q "^${REDIS_CONTAINER_NAME}$"; then
-            log_success "Redis 컨테이너가 실행 중입니다. ✓"
+            log_success "Redis 컨테이너가 실행 중입니다."
             break
         fi
 
         if [ $REDIS_WAIT -eq 0 ]; then
             log_warning "Redis 컨테이너가 실행되지 않았습니다. 대기 중..."
-            log_info "※ 다른 터미널에서 podman-start-remote.sh를 먼저 실행하세요."
+            log_info "다른 터미널에서 podman-start-remote.sh를 먼저 실행하세요."
         fi
 
         sleep 2
@@ -758,13 +967,13 @@ create_network() {
         log_success "Redis 컨테이너가 이미 ${NETWORK_NAME} 네트워크에 연결되어 있습니다."
     else
         podman network connect "${NETWORK_NAME}" "${REDIS_CONTAINER_NAME}" 2>/dev/null || true
-        log_success "Redis 컨테이너를 ${NETWORK_NAME} 네트워크에 연결했습니다. ✓"
+        log_success "Redis 컨테이너를 ${NETWORK_NAME} 네트워크에 연결했습니다."
     fi
 
     # Redis 연결 테스트 (컨테이너 내부에서)
     log_info "Redis 연결 테스트 중..."
     if podman exec ${REDIS_CONTAINER_NAME} redis-cli ping 2>/dev/null | grep -q "PONG"; then
-        log_success "Redis 응답 확인: PONG ✓"
+        log_success "Redis 응답 확인: PONG"
     else
         log_warning "Redis 응답 확인 실패 (컨테이너가 아직 시작 중일 수 있습니다)"
     fi
@@ -791,67 +1000,40 @@ start_sandbox() {
         --cap-add SYS_ADMIN \
         docker.io/langgenius/dify-sandbox:latest
 
-    log_success "✓ Sandbox 시작 완료 (포트: 8194)"
+    log_success "Sandbox 시작 완료 (포트: 8194)"
 }
 
 # ============================================
-# 함수: Plugin Daemon 시작
-# ============================================
-start_plugin_daemon() {
-    local CONTAINER_NAME="${CONTAINER_PREFIX}-plugin-daemon"
-
-    log_info "Plugin Daemon 시작 중..."
-
-    mkdir -p "${VOLUMES_DIR}/plugin-daemon-data"
-
-    podman run -d \
-        --name "${CONTAINER_NAME}" \
-        --network "${NETWORK_NAME}" \
-        -p 5003:5003 \
-        --restart unless-stopped \
-        -v "${VOLUMES_DIR}/plugin-daemon-data:/app/storage:z" \
-        -e LOG_LEVEL=INFO \
-        -e SERVER_KEY="${SECRET_KEY}" \
-        -e SECRET_KEY="${SECRET_KEY}" \
-        -e GIN_MODE=release \
-        -e SERVER_PORT=5003 \
-        -e DIFY_INNER_API_URL="http://${CONTAINER_PREFIX}-api:5001" \
-        -e DIFY_INNER_API_KEY="${SECRET_KEY}" \
-        -e PLUGIN_REMOTE_INSTALLING_HOST="https://marketplace.dify.ai" \
-        -e PLUGIN_REMOTE_INSTALLING_PORT="443" \
-        -e PLUGIN_REMOTE_INSTALLING_ENABLED="false" \
-        -e PLUGIN_WORKING_PATH="/app/storage/plugins" \
-        -e PLUGIN_INSTALLED_PATH="/app/storage/plugins" \
-        -e PLUGIN_STORAGE_PATH="/app/storage" \
-        -e PLUGIN_ENDPOINT_ENABLED="true" \
-        -e PERSISTENCE_STORAGE_PATH="/app/storage/persistence" \
-        -e STORAGE_TYPE="local" \
-        -e STORAGE_LOCAL_PATH="/app/storage" \
-        -e DEBUG_MODE="true" \
-        -e REDIS_HOST="${LOCAL_HOST_IP}" \
-        -e REDIS_PORT="6380" \
-        -e REDIS_PASSWORD="${REDIS_PASSWORD}" \
-        -e REDIS_DB=0 \
-        -e DB_USERNAME="${DB_USERNAME}" \
-        -e DB_PASSWORD="${DB_PASSWORD}" \
-        -e DB_HOST="${DB_HOST}" \
-        -e DB_PORT="${DB_PORT}" \
-        -e DB_DATABASE="${DB_DATABASE}" \
-        docker.io/langgenius/dify-plugin-daemon:latest
-
-    log_success "✓ Plugin Daemon 시작 완료 (포트: 5003)"
-}
-
-# ============================================
-# 함수: API 시작
+# 함수: API 시작 (원격 Plugin Daemon + MCP 서버 연동)
 # ============================================
 start_api() {
     local CONTAINER_NAME="${CONTAINER_PREFIX}-api"
 
-    log_info "API 시작 중..."
+    log_info "API 시작 중... (원격 Plugin Daemon: ${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT})"
+
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        log_info "MCP 서버 연동: ${MCP_SERVER_URL}"
+    fi
 
     mkdir -p "${VOLUMES_DIR}/api-storage"
     mkdir -p "${VOLUMES_DIR}/api-logs"
+
+    # MCP SSL 인증서 설정 (공인인증서 vs 자체서명)
+    # - 공인인증서: 컨테이너 내장 시스템 CA 사용 (추가 설정 불필요)
+    # - 자체서명 인증서: CA 인증서 마운트 필요
+    local MCP_VOLUME_OPTS=""
+    local MCP_CERT_ENV_OPTS=""
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        if [ -n "$MCP_SSL_CERT_PATH" ] && [ -f "$MCP_SSL_CERT_PATH" ]; then
+            # 자체서명 인증서: CA 인증서 마운트
+            MCP_VOLUME_OPTS="-v ${MCP_SSL_CERT_PATH}:/app/mcp-ca-cert.pem:z,ro"
+            MCP_CERT_ENV_OPTS="-e MCP_SSL_CERT_PATH=/app/mcp-ca-cert.pem"
+            log_info "MCP SSL: 자체서명 인증서 사용 (${MCP_SSL_CERT_PATH})"
+        else
+            # 공인인증서: 시스템 CA 사용 (마운트 불필요)
+            log_info "MCP SSL: 공인인증서 사용 (시스템 CA로 검증)"
+        fi
+    fi
 
     podman run -d \
         --name "${CONTAINER_NAME}" \
@@ -860,6 +1042,7 @@ start_api() {
         --restart unless-stopped \
         -v "${VOLUMES_DIR}/api-storage:/app/api/storage:z" \
         -v "${VOLUMES_DIR}/api-logs:/app/api/logs:z" \
+        ${MCP_VOLUME_OPTS} \
         -e MODE=api \
         -e LOG_LEVEL=INFO \
         -e SECRET_KEY="${SECRET_KEY}" \
@@ -891,21 +1074,35 @@ start_api() {
         -e STORAGE_LOCAL_PATH=storage \
         -e MIGRATION_ENABLED=true \
         -e INNER_API_KEY="${SECRET_KEY}" \
-        -e PLUGIN_DAEMON_URL="http://${CONTAINER_PREFIX}-plugin-daemon:5003" \
+        -e PLUGIN_DAEMON_URL="http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}" \
         -e PLUGIN_DAEMON_KEY="${SECRET_KEY}" \
         -e INNER_API_KEY_FOR_PLUGIN="${SECRET_KEY}" \
+        -e MCP_SERVER_ENABLED="${MCP_SERVER_ENABLED}" \
+        -e MCP_SERVER_URL="${MCP_SERVER_URL}" \
+        -e MCP_SSL_VERIFY="${MCP_SSL_VERIFY}" \
+        ${MCP_CERT_ENV_OPTS} \
         docker.io/langgenius/dify-api:latest
 
-    log_success "✓ API 시작 완료 (포트: 5001)"
+    log_success "✓ API 시작 완료 (포트: 5001, 원격 Plugin Daemon 연동)"
 }
 
 # ============================================
-# 함수: Worker 시작
+# 함수: Worker 시작 (원격 Plugin Daemon + MCP 서버 연동)
 # ============================================
 start_worker() {
     local CONTAINER_NAME="${CONTAINER_PREFIX}-worker"
 
-    log_info "Worker 시작 중..."
+    log_info "Worker 시작 중... (원격 Plugin Daemon: ${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT})"
+
+    # MCP SSL 인증서 설정 (API와 동일)
+    local MCP_VOLUME_OPTS=""
+    local MCP_CERT_ENV_OPTS=""
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        if [ -n "$MCP_SSL_CERT_PATH" ] && [ -f "$MCP_SSL_CERT_PATH" ]; then
+            MCP_VOLUME_OPTS="-v ${MCP_SSL_CERT_PATH}:/app/mcp-ca-cert.pem:z,ro"
+            MCP_CERT_ENV_OPTS="-e MCP_SSL_CERT_PATH=/app/mcp-ca-cert.pem"
+        fi
+    fi
 
     podman run -d \
         --name "${CONTAINER_NAME}" \
@@ -913,6 +1110,7 @@ start_worker() {
         --restart unless-stopped \
         -v "${VOLUMES_DIR}/api-storage:/app/api/storage:z" \
         -v "${VOLUMES_DIR}/api-logs:/app/api/logs:z" \
+        ${MCP_VOLUME_OPTS} \
         -e MODE=worker \
         -e LOG_LEVEL=INFO \
         -e SECRET_KEY="${SECRET_KEY}" \
@@ -932,12 +1130,16 @@ start_worker() {
         -e MILVUS_PORT="${MILVUS_PORT}" \
         -e STORAGE_TYPE=local \
         -e STORAGE_LOCAL_PATH=storage \
-        -e PLUGIN_DAEMON_URL="http://${CONTAINER_PREFIX}-plugin-daemon:5003" \
+        -e PLUGIN_DAEMON_URL="http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}" \
         -e PLUGIN_DAEMON_KEY="${SECRET_KEY}" \
         -e INNER_API_KEY_FOR_PLUGIN="${SECRET_KEY}" \
+        -e MCP_SERVER_ENABLED="${MCP_SERVER_ENABLED}" \
+        -e MCP_SERVER_URL="${MCP_SERVER_URL}" \
+        -e MCP_SSL_VERIFY="${MCP_SSL_VERIFY}" \
+        ${MCP_CERT_ENV_OPTS} \
         docker.io/langgenius/dify-api:latest
 
-    log_success "✓ Worker 시작 완료"
+    log_success "✓ Worker 시작 완료 (원격 Plugin Daemon 연동)"
 }
 
 # ============================================
@@ -957,109 +1159,7 @@ start_web() {
         -e APP_API_URL="http://${WEB_ACCESS_IP}:5001" \
         docker.io/langgenius/dify-web:latest
 
-    log_success "✓ Web 시작 완료 (포트: ${WEB_PORT})"
-}
-
-# ============================================
-# 함수: Nginx 시작
-# ============================================
-start_nginx() {
-    local CONTAINER_NAME="${CONTAINER_PREFIX}-nginx"
-
-    log_info "Nginx 시작 중..."
-
-    mkdir -p "${CONFIG_DIR}/nginx"
-    cat > "${CONFIG_DIR}/nginx/nginx.conf" << 'NGINX_EOF'
-user nginx;
-worker_processes auto;
-error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
-
-events {
-    worker_connections 1024;
-}
-
-http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                    '$status $body_size "$http_referer" '
-                    '"$http_user_agent" "$http_x_forwarded_for"';
-
-    access_log /var/log/nginx/access.log main;
-
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    client_max_body_size 15M;
-
-    upstream dify-api {
-        server dify-api:5001;
-    }
-
-    upstream dify-web {
-        server dify-web:3000;
-    }
-
-    server {
-        listen 80;
-        server_name _;
-
-        location /console/api {
-            proxy_pass http://dify-api;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        location /api {
-            proxy_pass http://dify-api;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        location /v1 {
-            proxy_pass http://dify-api;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        location /files {
-            proxy_pass http://dify-api;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        location / {
-            proxy_pass http://dify-web;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-    }
-}
-NGINX_EOF
-
-    podman run -d \
-        --name "${CONTAINER_NAME}" \
-        --network "${NETWORK_NAME}" \
-        -p 80:80 \
-        --restart unless-stopped \
-        -v "${CONFIG_DIR}/nginx/nginx.conf:/etc/nginx/nginx.conf:z,ro" \
-        nginx:latest
-
-    log_success "✓ Nginx 시작 완료 (포트: 80)"
+    log_success "Web 시작 완료 (포트: ${WEB_PORT})"
 }
 
 # ============================================
@@ -1094,13 +1194,15 @@ check_environment() {
 start_all_containers() {
     log_section "Dify 컨테이너 순차 시작"
 
-    log_info "※ Redis는 로컬 서버의 기존 ${REDIS_HOST} 컨테이너를 사용합니다"
+    log_info "Plugin Daemon은 원격 서버 사용: http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+    log_info "Redis는 로컬 서버의 기존 ${REDIS_CONTAINER_NAME} 컨테이너를 사용합니다"
+
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        log_info "MCP 서버: ${MCP_SERVER_URL}"
+    fi
     echo ""
 
     start_sandbox
-    sleep 3
-
-    start_plugin_daemon
     sleep 3
 
     start_api
@@ -1112,14 +1214,6 @@ start_all_containers() {
     start_web
     sleep 3
 
-    # Nginx 선택적 시작
-    if [[ "$USE_NGINX" =~ ^[Yy][Ee][Ss]$ ]]; then
-        start_nginx
-        sleep 2
-    else
-        log_info "Nginx는 사용하지 않습니다 (설정: USE_NGINX=$USE_NGINX)"
-    fi
-
     echo ""
     log_success "모든 컨테이너 시작 완료!"
 }
@@ -1128,7 +1222,7 @@ start_all_containers() {
 # 함수: 전체 설치
 # ============================================
 install_all() {
-    log_header "Dify 전체 설치 시작"
+    log_header "Dify 전체 설치 시작 (MCP Server SSL 연동 버전)"
 
     local TOTAL_STEPS=7
     local CURRENT_STEP=0
@@ -1196,7 +1290,7 @@ install_all() {
 # 함수: Dify 시작
 # ============================================
 start_dify() {
-    log_header "Dify 시작"
+    log_header "Dify 시작 (MCP Server SSL 연동 버전)"
 
     # 환경 체크
     if ! check_environment; then
@@ -1234,7 +1328,7 @@ stop_all() {
         if podman ps -a --filter "name=${container}" --format "{{.Names}}" | grep -q "${container}"; then
             log_info "중지 중: ${container}"
             podman stop "${container}" 2>/dev/null || true
-            log_success "✓ ${container} 중지됨"
+            log_success "${container} 중지됨"
         fi
     done
 
@@ -1257,12 +1351,33 @@ restart_all() {
 # 함수: 상태 확인
 # ============================================
 status_all() {
-    log_header "Dify 컨테이너 상태"
+    log_header "Dify 컨테이너 상태 (MCP Server SSL 연동 버전)"
 
     echo ""
     log_section "서버 정보"
     echo "  로컬 서버:   ${LOCAL_HOST_IP} (자동 감지)"
     echo "  원격 DB 서버: ${REMOTE_DB_IP}"
+
+    # MCP 서버 상태
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
+        echo ""
+        log_section "MCP 서버 연결 상태"
+
+        local CURL_OPTS=""
+        if [ "$MCP_SERVER_PROTOCOL" = "https" ] && [ "$MCP_SSL_VERIFY" = "false" ]; then
+            CURL_OPTS="-k"
+        elif [ -n "$MCP_SSL_CERT_PATH" ] && [ -f "$MCP_SSL_CERT_PATH" ]; then
+            CURL_OPTS="--cacert ${MCP_SSL_CERT_PATH}"
+        fi
+
+        local MCP_HEALTH=$(curl -s $CURL_OPTS --connect-timeout 3 "${MCP_SERVER_URL}/health" 2>&1)
+        if echo "$MCP_HEALTH" | grep -q "healthy"; then
+            echo -e "  ${GREEN}OK${NC} ${MCP_SERVER_URL} - 연결됨"
+            echo "  SSL 검증: ${MCP_SSL_VERIFY}"
+        else
+            echo -e "  ${RED}FAIL${NC} ${MCP_SERVER_URL} - 연결 실패"
+        fi
+    fi
 
     echo ""
     log_section "컨테이너 상태"
@@ -1283,7 +1398,7 @@ status_all() {
     local RUNNING_COUNT=$(podman ps --filter "name=${CONTAINER_PREFIX}-" --format "{{.Names}}" | wc -l)
     local TOTAL_COUNT=${#CONTAINERS_ORDER[@]}
     echo "  실행 중: ${RUNNING_COUNT}/${TOTAL_COUNT}"
-    echo "  ※ Redis는 기존 컨테이너 사용 (카운트 제외)"
+    echo "  Redis는 기존 컨테이너 사용 (카운트 제외)"
 
     echo ""
 }
@@ -1326,7 +1441,7 @@ clean_all() {
         if podman ps -a --filter "name=${container}" --format "{{.Names}}" | grep -q "${container}"; then
             log_info "삭제 중: ${container}"
             podman rm -f "${container}" 2>/dev/null || true
-            log_success "✓ ${container} 삭제됨"
+            log_success "${container} 삭제됨"
         fi
     done
 
@@ -1334,7 +1449,7 @@ clean_all() {
     if podman network exists "${NETWORK_NAME}" 2>/dev/null; then
         log_info "네트워크 삭제 중: ${NETWORK_NAME}"
         podman network rm "${NETWORK_NAME}" 2>/dev/null || true
-        log_success "✓ 네트워크 삭제됨"
+        log_success "네트워크 삭제됨"
     fi
 
     echo ""
@@ -1352,17 +1467,29 @@ show_access_info() {
     echo ""
     echo "  ${BOLD}로컬 서버:${NC} $LOCAL_HOST_IP (자동 감지)"
     echo ""
+    echo "  ${BOLD}Web UI:${NC}      http://${LOCAL_HOST_IP}:${WEB_PORT}"
+    echo "  ${BOLD}API:${NC}         http://${LOCAL_HOST_IP}:5001"
 
-    if [[ "$USE_NGINX" =~ ^[Yy][Ee][Ss]$ ]]; then
-        echo "  ${BOLD}Web UI (Nginx):${NC}  http://${LOCAL_HOST_IP}"
-        echo "  ${BOLD}Console:${NC}         http://${LOCAL_HOST_IP}:9008"
-        echo "  ${BOLD}API:${NC}             http://${LOCAL_HOST_IP}:5001"
-    else
-        echo "  ${BOLD}Web UI:${NC}      http://${LOCAL_HOST_IP}:9008"
-        echo "  ${BOLD}API:${NC}         http://${LOCAL_HOST_IP}:5001"
+    echo ""
+    log_section "원격 Plugin Daemon"
+    echo ""
+    echo "  ${BOLD}서버 IP:${NC}     ${REMOTE_PLUGIN_DAEMON_IP}"
+    echo "  ${BOLD}포트:${NC}        ${REMOTE_PLUGIN_DAEMON_PORT}"
+    echo "  ${BOLD}URL:${NC}         http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+
+    # MCP 서버 정보
+    if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
         echo ""
-        echo "  ${YELLOW}※ Nginx를 사용하지 않습니다${NC}"
-        echo "  ${YELLOW}※ Web과 API에 직접 접속하세요${NC}"
+        log_section "MCP 서버 (Perplexity Search API)"
+        echo ""
+        echo "  ${BOLD}서버 IP:${NC}      ${MCP_SERVER_IP}"
+        echo "  ${BOLD}포트:${NC}         ${MCP_SERVER_PORT}"
+        echo "  ${BOLD}프로토콜:${NC}     ${MCP_SERVER_PROTOCOL}"
+        echo "  ${BOLD}URL:${NC}          ${MCP_SERVER_URL}"
+        echo "  ${BOLD}SSL 검증:${NC}     ${MCP_SSL_VERIFY}"
+        if [ -n "$MCP_SSL_CERT_PATH" ]; then
+            echo "  ${BOLD}CA 인증서:${NC}    ${MCP_SSL_CERT_PATH}"
+        fi
     fi
 
     echo ""
@@ -1378,10 +1505,11 @@ show_access_info() {
     echo ""
     log_section "관리 명령어"
     echo ""
-    echo "  상태 확인:  $0 status"
-    echo "  로그 확인:  $0 logs [컨테이너명]"
-    echo "  중지:       $0 stop"
-    echo "  재시작:     $0 restart"
+    echo "  상태 확인:      $0 status"
+    echo "  로그 확인:      $0 logs [컨테이너명]"
+    echo "  MCP 테스트:     $0 test-mcp"
+    echo "  중지:           $0 stop"
+    echo "  재시작:         $0 restart"
     echo ""
 }
 
@@ -1433,6 +1561,10 @@ case "${COMMAND}" in
         ;;
     clean)
         clean_all
+        ;;
+    test-mcp)
+        test_mcp_connection
+        test_mcp_search
         ;;
     *)
         log_error "알 수 없는 명령어: ${COMMAND}"

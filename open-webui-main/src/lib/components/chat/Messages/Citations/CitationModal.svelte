@@ -65,26 +65,45 @@
 				{#if citation?.source?.name}
 					{@const document = mergedDocuments?.[0]}
 					{#if document?.metadata?.file_id || document.source?.url?.includes('http')}
-						<Tooltip
-							className="w-fit"
-							content={document.source?.url?.includes('http')
-								? $i18n.t('Open link')
-								: $i18n.t('Open file')}
-							placement="top-start"
-							tippyOptions={{ duration: [500, 0] }}
-						>
-							<a
-								class="hover:text-gray-500 dark:hover:text-gray-100 underline grow line-clamp-1"
-								href={document?.metadata?.file_id
-									? `${WEBUI_API_BASE_URL}/files/${document?.metadata?.file_id}/content${document?.metadata?.page !== undefined ? `#page=${document.metadata.page + 1}` : ''}`
-									: document.source?.url?.includes('http')
-										? document.source.url
-										: `#`}
-								target="_blank"
+						<div class="flex items-center gap-2">
+							<Tooltip
+								className="w-fit"
+								content={document.source?.url?.includes('http')
+									? $i18n.t('Open link')
+									: $i18n.t('Open file')}
+								placement="top-start"
+								tippyOptions={{ duration: [500, 0] }}
 							>
-								{decodeString(citation?.source?.name)}
-							</a>
-						</Tooltip>
+								<a
+									class="hover:text-gray-500 dark:hover:text-gray-100 underline grow line-clamp-1"
+									href={document?.metadata?.file_id
+										? `${WEBUI_API_BASE_URL}/files/${document?.metadata?.file_id}/content${document?.metadata?.page !== undefined ? `#page=${document.metadata.page + 1}` : ''}`
+										: document.source?.url?.includes('http')
+											? document.source.url
+											: `#`}
+									target="_blank"
+								>
+									{decodeString(citation?.source?.name)}
+								</a>
+							</Tooltip>
+							<!-- [2026-02-02] 보안 다운로드 버튼 추가 -->
+							{#if document?.metadata?.file_id}
+								<Tooltip
+									content={$i18n.t('Secure Download')}
+									placement="top"
+								>
+									<a
+										class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+										href={`${WEBUI_API_BASE_URL}/configs/secure-download/${document.metadata.file_id}`}
+										download
+									>
+										<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+											<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+										</svg>
+									</a>
+								</Tooltip>
+							{/if}
+						</div>
 					{:else}
 						{decodeString(citation?.source?.name)}
 					{/if}

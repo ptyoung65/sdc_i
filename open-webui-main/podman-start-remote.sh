@@ -637,6 +637,11 @@ echo ""
 # [2026.01.19] --network=host로 변경하여 실제 클라이언트 IP 획득 가능
 # [2026.01.19] PORT=${OPENWEBUI_PORT} 추가하여 기존 포트 유지 (기본값 3000)
 # [2026.01.19] PIPELINES_URLS: host.docker.internal → localhost 변경
+# ----- [2026-02-02] 보안 수정: X-Forwarded-For 변조 방지 -----
+# 문제: 원본 이미지의 /app/backend/start.sh에 --forwarded-allow-ips '*' 하드코딩
+# 해결: 보안 강화된 start_secure.sh를 /app/backend/start.sh에 마운트하여 덮어쓰기
+# 효과: FORWARDED_ALLOW_IPS 환경변수 값에 따라 조건부로 프록시 헤더 처리
+# ----- [2026-02-02] 보안 수정 시작 -----
 podman run -d \
     --name ${OPENWEBUI_CONTAINER} \
     --network=host \
@@ -685,8 +690,22 @@ podman run -d \
     -v $(pwd)/tailwind.config.js:/app/tailwind.config.js:Z \
     -v $(pwd)/postcss.config.js:/app/postcss.config.js:Z \
     -v $(pwd)/backend/open_webui/routers/configs.py:/app/backend/open_webui/routers/configs.py:Z \
+    -v $(pwd)/backend/open_webui/routers/auths.py:/app/backend/open_webui/routers/auths.py:Z \
+    -v $(pwd)/backend/open_webui/routers/podman.py:/app/backend/open_webui/routers/podman.py:Z \
+    -v $(pwd)/backend/open_webui/main.py:/app/backend/open_webui/main.py:Z \
+    -v $(pwd)/backend/open_webui/models/users.py:/app/backend/open_webui/models/users.py:Z \
+    -v $(pwd)/backend/open_webui/models/user_sessions.py:/app/backend/open_webui/models/user_sessions.py:Z \
+    -v $(pwd)/backend/open_webui/models/announcements.py:/app/backend/open_webui/models/announcements.py:Z \
+    -v $(pwd)/backend/open_webui/utils/auth.py:/app/backend/open_webui/utils/auth.py:Z \
+    -v $(pwd)/backend/start_secure.sh:/app/backend/start.sh:Z \
+    -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock \
+    --security-opt label=disable \
+    -e PODMAN_SOCKET=/run/podman/podman.sock \
+    -v /home/chatpro/open-webui-main:/scripts:ro \
     --restart unless-stopped \
-    ${OPENWEBUI_IMAGE}
+    ${OPENWEBUI_IMAGE} \
+    bash start.sh
+# ----- [2026-02-02] 보안 수정 완료 -----
 
 echo -e "${GREEN}✅ Open WebUI 컨테이너 시작됨 (포트: 3000)${NC}"
 echo "   컨테이너명: ${OPENWEBUI_CONTAINER}"
@@ -726,6 +745,66 @@ echo ""
 echo "컨테이너 상태 확인:"
 podman ps --filter "name=sdc"
 echo ""
+
+##############################################################################
+# 컨테이너 상태 점검 및 자동 재시작
+# ----- [2026-02-07] exited 상태 컨테이너 자동 재시작 추가 -----
+##############################################################################
+echo ""
+echo -e "${YELLOW}🔍 컨테이너 상태 점검 중... (10초 대기)${NC}"
+sleep 10
+
+RESTART_TARGETS="sdc-open-webui sdc-redis-dev sdc-pipelines sdc-guardrails sdc-monitoring"
+MAX_RETRY=3        # 최대 재시도 횟수
+RETRY_WAIT=5       # 재시도 간 대기 시간(초)
+
+for retry in $(seq 1 $MAX_RETRY); do
+    exited_containers=""
+
+    for container in $RESTART_TARGETS; do
+        state=$(podman inspect --format '{{.State.Status}}' "$container" 2>/dev/null)
+        if [ "$state" = "exited" ] || [ "$state" = "dead" ]; then
+            exited_containers="$exited_containers $container"
+        fi
+    done
+
+    # 중지된 컨테이너가 없으면 점검 완료
+    if [ -z "$exited_containers" ]; then
+        echo -e "${GREEN}✅ 모든 컨테이너 정상 실행 중${NC}"
+        break
+    fi
+
+    # 중지된 컨테이너 재시작
+    echo -e "${YELLOW}⚠️  [${retry}/${MAX_RETRY}] 중지된 컨테이너 감지 → 자동 재시작${NC}"
+    for container in $exited_containers; do
+        printf "  🔄 %-20s → " "$container"
+        if podman start "$container" >/dev/null 2>&1; then
+            printf "${GREEN}재시작 완료${NC}\n"
+        else
+            printf "${RED}재시작 실패${NC}\n"
+        fi
+    done
+
+    # 마지막 시도가 아니면 대기 후 재확인
+    if [ $retry -lt $MAX_RETRY ]; then
+        echo -e "${BLUE}   ${RETRY_WAIT}초 후 재확인...${NC}"
+        sleep $RETRY_WAIT
+    fi
+done
+
+# 최종 상태 출력
+echo ""
+echo -e "${BLUE}📋 최종 컨테이너 상태:${NC}"
+for container in $RESTART_TARGETS; do
+    state=$(podman inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
+    if [ "$state" = "running" ]; then
+        printf "  ✅ %-20s %s\n" "$container" "$state"
+    else
+        printf "  ❌ %-20s %s\n" "$container" "$state"
+    fi
+done
+echo ""
+# ----- [2026-02-07] exited 상태 컨테이너 자동 재시작 종료 -----
 
 ##############################################################################
 # Dify 컨테이너 시작 옵션

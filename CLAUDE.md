@@ -500,6 +500,15 @@ ps aux | grep -E "(node|python|uvicorn)" | grep -E "(3000|3001|3002|3003|3004|80
 lsof -ti:포트번호 | xargs -r kill -9
 ```
 
+### 🚀 Open WebUI 서비스 시작 (필수)
+```bash
+# Open WebUI 컨테이너 시작 (원격 DB 모드)
+cd /home/chatpro/open-webui-main
+./podman-start-remote.sh 192.168.122.85
+
+# 접속 주소: http://192.168.122.178:3000
+```
+
 ### 🚀 전체 서비스 시작 스크립트
 ```bash
 # 1. 백엔드 서비스 시작

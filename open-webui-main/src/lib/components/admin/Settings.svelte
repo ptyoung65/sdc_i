@@ -7,6 +7,7 @@
 	import { config } from '$lib/stores';
 	import { getBackendConfig } from '$lib/apis';
 	import Database from './Settings/Database.svelte';
+	import Notification from './Settings/Notification.svelte';
 
 	import General from './Settings/General.svelte';
 	import Pipelines from './Settings/Pipelines.svelte';
@@ -45,7 +46,8 @@
 			'audio',
 			'images',
 			'pipelines',
-			'db'
+			'db',
+			'notification'
 		].includes(tabFromPath)
 			? tabFromPath
 			: 'general';
@@ -431,6 +433,29 @@
 			</div>
 			<div class=" self-center">{$i18n.t('Database')}</div>
 		</button>
+
+		<button
+			id="notification"
+			class="px-0.5 py-1 min-w-fit rounded-lg flex-1 md:flex-none flex text-left transition {selectedTab ===
+			'notification'
+				? ''
+				: ' text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'}"
+			on:click={() => {
+				goto('/admin/settings/notification');
+			}}
+		>
+			<div class=" self-center mr-2">
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					viewBox="0 0 24 24"
+					fill="currentColor"
+					class="w-4 h-4"
+				>
+					<path d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
+				</svg>
+			</div>
+			<div class=" self-center">팝업공지관리</div>
+		</button>
 	</div>
 
 	<div
@@ -514,6 +539,8 @@
 					toast.success($i18n.t('Settings saved successfully!'));
 				}}
 			/>
+		{:else if selectedTab === 'notification'}
+			<Notification />
 		{/if}
 	</div>
 </div>

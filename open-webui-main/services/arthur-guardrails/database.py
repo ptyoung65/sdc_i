@@ -349,12 +349,13 @@ class DatabaseManager:
             # 2. 대시보드용 guardrail_check_logs 테이블에도 저장
             check_result = "block" if action == "block" else ("warn" if action == "warn" else "pass")
 
+            # [2026-01-23 수정] user_email 컬럼 추가
             check_log_query = text("""
                 INSERT INTO guardrail_check_logs
-                (request_id, user_id, check_type, original_text, text_length,
+                (request_id, user_id, user_email, check_type, original_text, text_length,
                  check_result, detection_score, detected_categories, detected_keywords,
                  action_taken, processing_time_ms, created_at)
-                VALUES (:request_id, :user_id, :check_type, :original_text, :text_length,
+                VALUES (:request_id, :user_id, :user_email, :check_type, :original_text, :text_length,
                         :check_result, :detection_score, :detected_categories, :detected_keywords,
                         :action_taken, :processing_time_ms, NOW())
             """)
@@ -364,6 +365,7 @@ class DatabaseManager:
                 {
                     "request_id": str(uuid.uuid4())[:8],
                     "user_id": log_data.get("user_id", "anonymous"),
+                    "user_email": log_data.get("user_email", ""),  # [2026-01-23 추가]
                     "check_type": log_data.get("filter_type", "input"),
                     "original_text": log_data["test_text"][:500],
                     "text_length": len(log_data["test_text"]),

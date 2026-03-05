@@ -208,8 +208,17 @@ export const updateOpenAIKeys = async (token: string = '', keys: string[]) => {
 	return res.OPENAI_API_KEYS;
 };
 
+// ----- [2025.01.05] 외부 LLM 직접 연결 시 timeout 추가 시작 -----
+// 문제: 외부 LLM 서버가 응답하지 않으면 무한 대기
+// 해결: AbortController를 사용하여 timeout 구현
+const OPENAI_DIRECT_TIMEOUT = 5000; // 5초 타임아웃
+
 export const getOpenAIModelsDirect = async (url: string, key: string) => {
 	let error = null;
+
+	// AbortController를 사용하여 fetch에 timeout 적용
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), OPENAI_DIRECT_TIMEOUT);
 
 	const res = await fetch(`${url}/models`, {
 		method: 'GET',
@@ -217,14 +226,22 @@ export const getOpenAIModelsDirect = async (url: string, key: string) => {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
 			...(key && { authorization: `Bearer ${key}` })
-		}
+		},
+		signal: controller.signal  // AbortSignal 연결
 	})
 		.then(async (res) => {
+			clearTimeout(timeoutId);  // 성공 시 타이머 취소
 			if (!res.ok) throw await res.json();
 			return res.json();
 		})
 		.catch((err) => {
-			error = `OpenAI: ${err?.error?.message ?? 'Network Problem'}`;
+			clearTimeout(timeoutId);  // 에러 시에도 타이머 취소
+			if (err.name === 'AbortError') {
+				error = `OpenAI: Connection timeout (${OPENAI_DIRECT_TIMEOUT/1000}s) - ${url}`;
+				console.warn(`[2025.01.05] 외부 LLM 연결 타임아웃: ${url}`);
+			} else {
+				error = `OpenAI: ${err?.error?.message ?? 'Network Problem'}`;
+			}
 			return [];
 		});
 
@@ -234,6 +251,7 @@ export const getOpenAIModelsDirect = async (url: string, key: string) => {
 
 	return res;
 };
+// ----- [2025.01.05] 외부 LLM 직접 연결 시 timeout 추가 종료 -----
 
 export const getOpenAIModels = async (token: string, urlIdx?: number) => {
 	let error = null;
@@ -265,6 +283,9 @@ export const getOpenAIModels = async (token: string, urlIdx?: number) => {
 	return res;
 };
 
+// ----- [2025.01.05] 연결 검증 시 timeout 추가 시작 -----
+const VERIFY_CONNECTION_TIMEOUT = 10000; // 검증은 10초 (사용자가 명시적으로 요청하므로 더 길게)
+
 export const verifyOpenAIConnection = async (
 	token: string = '',
 	connection: dict = {},
@@ -279,20 +300,31 @@ export const verifyOpenAIConnection = async (
 	let res = null;
 
 	if (direct) {
+		// AbortController를 사용하여 timeout 적용
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), VERIFY_CONNECTION_TIMEOUT);
+
 		res = await fetch(`${url}/models`, {
 			method: 'GET',
 			headers: {
 				Accept: 'application/json',
 				Authorization: `Bearer ${key}`,
 				'Content-Type': 'application/json'
-			}
+			},
+			signal: controller.signal
 		})
 			.then(async (res) => {
+				clearTimeout(timeoutId);
 				if (!res.ok) throw await res.json();
 				return res.json();
 			})
 			.catch((err) => {
-				error = `OpenAI: ${err?.error?.message ?? 'Network Problem'}`;
+				clearTimeout(timeoutId);
+				if (err.name === 'AbortError') {
+					error = `OpenAI: Connection verification timeout (${VERIFY_CONNECTION_TIMEOUT/1000}s)`;
+				} else {
+					error = `OpenAI: ${err?.error?.message ?? 'Network Problem'}`;
+				}
 				return [];
 			});
 
@@ -300,6 +332,7 @@ export const verifyOpenAIConnection = async (
 			throw error;
 		}
 	} else {
+// ----- [2025.01.05] 연결 검증 시 timeout 추가 종료 -----
 		res = await fetch(`${OPENAI_API_BASE_URL}/verify`, {
 			method: 'POST',
 			headers: {

@@ -28,6 +28,35 @@ import hljs from 'highlight.js';
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// ----- [2026-02-03] 단일 세션: 세션 만료 처리 함수 활성화 -----
+/**
+ * 세션 만료 에러인지 확인하고 처리
+ * @param error 에러 객체 또는 문자열
+ * @returns 세션 만료 에러인 경우 true
+ */
+export const handleSessionExpiredError = (error: any): boolean => {
+	const errorStr = typeof error === 'string' ? error : JSON.stringify(error || {});
+	const sessionExpiredMessages = [
+		'다른 곳에서 로그인되어 세션이 종료되었습니다',
+		'세션이 종료',
+		'Not authenticated',
+		'Invalid token'
+	];
+
+	const isSessionExpired = sessionExpiredMessages.some(msg => errorStr.includes(msg));
+
+	if (isSessionExpired && typeof window !== 'undefined') {
+		// 토큰 제거
+		localStorage.removeItem('token');
+		// 로그인 페이지로 리다이렉트
+		const currentUrl = encodeURIComponent(window.location.pathname + window.location.search);
+		window.location.href = `/auth?redirect=${currentUrl}&reason=session_expired`;
+		return true;
+	}
+	return false;
+};
+// ----- [2026-02-03] 단일 세션: 세션 만료 처리 함수 활성화 종료 -----
+
 function escapeRegExp(string: string): string {
 	return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -1093,8 +1122,9 @@ export const getTimeRange = (timestamp) => {
 		return 'Yesterday';
 	} else if (diffDays <= 7) {
 		return 'Previous 7 days';
-	} else if (diffDays <= 30) {
-		return 'Previous 30 days';
+	// [2026.01.19] 30일 → 14일로 변경
+	} else if (diffDays <= 14) {
+		return 'Previous 14 days';
 	} else if (nowYear === dateYear) {
 		return date.toLocaleString('default', { month: 'long' });
 	} else {

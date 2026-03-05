@@ -34,8 +34,10 @@
 		updateKnowledgeById
 	} from '$lib/apis/knowledge';
 	import { blobToFile } from '$lib/utils';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Files from './KnowledgeBase/Files.svelte';
 	import AddFilesPlaceholder from '$lib/components/AddFilesPlaceholder.svelte';
 
@@ -754,7 +756,7 @@
 									</div>
 								{/if}
 
-								<div class=" flex-1 text-xl font-medium">
+								<div class=" flex-1 text-xl font-medium flex items-center gap-2">
 									<a
 										class="hover:text-gray-500 dark:hover:text-gray-100 hover:underline grow line-clamp-1"
 										href={selectedFile.id ? `/api/v1/files/${selectedFile.id}/content` : '#'}
@@ -762,6 +764,21 @@
 									>
 										{decodeString(selectedFile?.meta?.name)}
 									</a>
+									<!-- [2026-02-02] 보안 다운로드 버튼 추가 -->
+									{#if selectedFile.id}
+										<Tooltip content={$i18n.t('Secure Download')} placement="top">
+											<a
+												class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+												href={`${WEBUI_API_BASE_URL}/configs/secure-download/${selectedFile.id}`}
+												download
+												title={$i18n.t('Secure Download')}
+											>
+												<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+													<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+												</svg>
+											</a>
+										</Tooltip>
+									{/if}
 								</div>
 
 								<div>

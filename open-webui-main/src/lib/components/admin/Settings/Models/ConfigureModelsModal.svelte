@@ -29,6 +29,14 @@
 	let defaultModelIds = [];
 	let modelIds = [];
 
+	// ============================================
+	// [2024.12.30] 턴 및 토큰수 제약처리 - 모달 변수 시작
+	// 역할: 모델 설정 모달에서 세션 제한 관리
+	// ============================================
+	let limitsArray = []; // [{id, name, maxTurns, maxTokens}, ...]
+	let showLimitsSection = false;
+	// [2024.12.30] 턴 및 토큰수 제약처리 - 모달 변수 완료 ============================================
+
 	let sortKey = '';
 	let sortOrder = '';
 
@@ -65,29 +73,65 @@
 		} else {
 			defaultModelIds = [];
 		}
+
 		const modelOrderList = config.MODEL_ORDER_LIST || [];
 		const allModelIds = $models.map((model) => model.id);
-
-		// Create a Set for quick lookup of ordered IDs
 		const orderedSet = new Set(modelOrderList);
 
 		modelIds = [
-			// Add all IDs from MODEL_ORDER_LIST that exist in allModelIds
 			...modelOrderList.filter((id) => orderedSet.has(id) && allModelIds.includes(id)),
-			// Add remaining IDs not in MODEL_ORDER_LIST, sorted alphabetically
 			...allModelIds.filter((id) => !orderedSet.has(id)).sort((a, b) => a.localeCompare(b))
 		];
+
+		// ============================================
+		// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 로드 시작
+		// ============================================
+		const loadedLimits = config?.MODEL_SESSION_LIMITS || config?.model_session_limits || {};
+		limitsArray = modelIds.map(id => ({
+			id,
+			name: $models.find(m => m.id === id)?.name || id,
+			maxTurns: loadedLimits[id]?.maxTurns || 0,
+			maxTokens: loadedLimits[id]?.maxTokens || 0,
+			// ----- [2026-03-05] maxInputTokens, warningTurns 로드 누락 수정 시작 -----
+			maxInputTokens: loadedLimits[id]?.maxInputTokens || 0,
+			warningTurns: loadedLimits[id]?.warningTurns || 0
+			// ----- [2026-03-05] maxInputTokens, warningTurns 로드 누락 수정 종료 -----
+		}));
+		// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 로드 완료 ============================================
 
 		sortKey = '';
 		sortOrder = '';
 	};
+
 	const submitHandler = async () => {
 		loading = true;
 
+		// ============================================
+		// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 저장 시작
+		// ============================================
+		const limitsToSave = {};
+		for (const item of limitsArray) {
+			// ----- [2026-03-05] maxInputTokens, warningTurns 저장 누락 수정 시작 -----
+			if (item.maxTurns > 0 || item.maxTokens > 0 || item.maxInputTokens > 0 || item.warningTurns > 0) {
+				limitsToSave[item.id] = {
+					maxTurns: item.maxTurns,
+					maxTokens: item.maxTokens,
+					maxInputTokens: item.maxInputTokens,
+					warningTurns: item.warningTurns
+				};
+			}
+			// ----- [2026-03-05] maxInputTokens, warningTurns 저장 누락 수정 종료 -----
+		}
+		// [2024.12.30] 턴 및 토큰수 제약처리 - 설정 저장 완료 ============================================
+
+		// ----- [2026-03-05] 기존 config 보존하여 저장 (다른 설정 덮어쓰기 방지) 시작 -----
 		const res = await setModelsConfig(localStorage.token, {
+			...config,
 			DEFAULT_MODELS: defaultModelIds.join(','),
-			MODEL_ORDER_LIST: modelIds
+			MODEL_ORDER_LIST: modelIds,
+			MODEL_SESSION_LIMITS: limitsToSave
 		});
+		// ----- [2026-03-05] 기존 config 보존하여 저장 종료 -----
 
 		if (res) {
 			toast.success($i18n.t('Models configuration saved successfully'));
@@ -244,6 +288,69 @@
 								{/if}
 							</div>
 						</div>
+
+						<hr class=" border-gray-100 dark:border-gray-700/10 my-2.5 w-full" />
+
+						<!-- ============================================ -->
+						<!-- [2024.12.30] 턴 및 토큰수 제약처리 - 모달 UI 시작 -->
+						<!-- 역할: 모델 설정 모달에서 세션 제한 입력 UI -->
+						<!-- ============================================ -->
+						<!-- 세션 제한 설정 섹션 -->
+						<div>
+							<div class="flex flex-col w-full">
+								<button
+									class="mb-2 flex gap-2 items-center"
+									type="button"
+									on:click={() => {
+										showLimitsSection = !showLimitsSection;
+									}}
+								>
+									<div class="text-xs text-gray-500">{$i18n.t('Session Limits')}</div>
+									<span class="font-normal self-center">
+										{#if showLimitsSection}
+											<ChevronUp className="size-3" />
+										{:else}
+											<ChevronDown className="size-3" />
+										{/if}
+									</span>
+								</button>
+
+								{#if showLimitsSection && limitsArray.length > 0}
+									<div class="max-h-48 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg p-2">
+										<table class="w-full text-xs">
+											<thead>
+												<tr class="text-gray-500">
+													<th class="text-left py-1">모델</th>
+													<th class="text-center py-1 w-20">Max Turns</th>
+													<th class="text-center py-1 w-24">Max Tokens</th>
+												</tr>
+											</thead>
+											<tbody>
+												{#each limitsArray as item, i (item.id)}
+													<tr class="border-t border-gray-100 dark:border-gray-700">
+														<td class="py-1 truncate" title={item.name}>{item.name}</td>
+														<td class="py-1 text-center">
+															<input type="number" min="0" max="100"
+																class="w-14 px-1 py-0.5 text-center border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
+																bind:value={limitsArray[i].maxTurns}
+															/>
+														</td>
+														<td class="py-1 text-center">
+															<input type="number" min="0" step="100"
+																class="w-20 px-1 py-0.5 text-center border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
+																bind:value={limitsArray[i].maxTokens}
+															/>
+														</td>
+													</tr>
+												{/each}
+											</tbody>
+										</table>
+									</div>
+									<div class="text-xs text-gray-400 mt-1">* 0 = 무제한</div>
+								{/if}
+							</div>
+						</div>
+						<!-- [2024.12.30] 턴 및 토큰수 제약처리 - 모달 UI 완료 ============================================ -->
 
 						<div class="flex justify-between pt-3 text-sm font-medium gap-1.5">
 							<Tooltip content={$i18n.t('This will delete all models including custom models')}>

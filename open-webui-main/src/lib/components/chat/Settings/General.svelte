@@ -183,10 +183,21 @@
 		console.log(_theme);
 	};
 
-	const themeChangeHandler = (_theme: string) => {
+	import { settingsService } from '$lib/services/settings.service';
+
+	const themeChangeHandler = async (_theme: string) => {
 		theme.set(_theme);
-		localStorage.setItem('theme', _theme);
+		localStorage.setItem('theme', _theme); // 하위 호환성을 위해 유지
 		applyTheme(_theme);
+		
+		// DB에 저장
+		await settingsService.updateSetting(localStorage.token, 'ui.theme', _theme);
+	};
+
+	const languageChangeHandler = async (_lang: string) => {
+		await changeLanguage(_lang);
+		// DB에 저장
+		await settingsService.updateSetting(localStorage.token, 'ui.language', _lang);
 	};
 </script>
 
@@ -227,7 +238,7 @@
 						bind:value={lang}
 						placeholder={$i18n.t('Select a language')}
 						on:change={(e) => {
-							changeLanguage(lang);
+							languageChangeHandler(lang);
 						}}
 					>
 						{#each languages as language}

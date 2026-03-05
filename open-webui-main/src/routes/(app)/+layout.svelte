@@ -357,6 +357,11 @@
 		try {
 			console.log('[Layout] ===== 팝업 공지사항 로드 시작 =====');
 
+			// ----- [2026-03-02] MAX_POPUP_COUNT 팝업 개수 적용 확인 시작 -----
+			// ■ 확인: exportConfig(token) → GET /configs/export → get_verified_user
+			//   관리자/일반사용자 모두 동일한 MAX_POPUP_COUNT 값 조회됨 (API 테스트 완료)
+			// ■ 흐름: exportConfig → MAX_POPUP_COUNT 읽기 → getActiveAnnouncements → 팝업 표시
+			// ----- [2026-03-02] MAX_POPUP_COUNT 팝업 개수 적용 확인 종료 -----
 			// ----- [2026-02-05] 팝업 표시 개수 설정 로드 시작 -----
 			// [2026-02-26] exportConfig로 MAX_POPUP_COUNT 조회 (config 테이블 → data JSONB)
 			let maxPopupCount = 3; // 기본값
@@ -377,6 +382,9 @@
 			console.log('[Layout] 팝업 공지사항 로드:', announcements?.length || 0, '개');
 
 			if (announcements && announcements.length > 0) {
+				// ----- [2026-03-02] 프론트엔드 팝업 개수 제한 확인 시작 -----
+				// ■ 확인: 백엔드(limit) + 프론트엔드(slice) 이중 제한 → 관리자/사용자 동일 적용
+				// ----- [2026-03-02] 프론트엔드 팝업 개수 제한 확인 종료 -----
 				// ----- [2026-02-05] 팝업 표시 개수 제한 적용 시작 -----
 				// [2026-02-26] 프론트엔드에서도 start_date 내림차순 정렬 후 maxPopupCount개로 이중 제한
 				const sortedAnnouncements = [...announcements].sort((a, b) => b.start_date - a.start_date);

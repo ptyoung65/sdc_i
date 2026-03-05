@@ -146,6 +146,7 @@
 				showCitations = !showCitations;
 			}}
 		>
+			<!-- [2026.01.19] 소스 번호 대신 실제 문서 이름 리스트 표시 -->
 			{#if urlCitations.length > 0}
 				<div class="flex -space-x-1 items-center">
 					{#each urlCitations.slice(0, 3) as citation, idx}
@@ -157,13 +158,14 @@
 					{/each}
 				</div>
 			{/if}
-			<div>
-				{#if citations.length === 1}
-					{$i18n.t('1 Source')}
-				{:else}
-					{$i18n.t('{{COUNT}} Sources', {
-						COUNT: citations.length
-					})}
+			<div class="flex items-center gap-1 flex-wrap max-w-md">
+				{#each citations.slice(0, 3) as citation, idx}
+					<span class="truncate max-w-[150px]" title={decodeString(citation.source.name)}>
+						{decodeString(citation.source.name)}{idx < Math.min(citations.length, 3) - 1 ? ',' : ''}
+					</span>
+				{/each}
+				{#if citations.length > 3}
+					<span class="text-gray-400">+{citations.length - 3}</span>
 				{/if}
 			</div>
 		</button>

@@ -31,11 +31,25 @@ export const importConfig = async (token: string, config) => {
 	return res;
 };
 
+// ----- [2026-03-02] updateConfigPartial MAX_POPUP_COUNT 저장 확인 시작 -----
+// ■ 확인: exportConfig(token)로 현재 설정 조회 → partialConfig 병합 → importConfig로 저장
+// ■ importConfig → POST /configs/import → get_admin_user (관리자만 저장 가능)
+// ■ Notification.svelte savePopupCount()에서 { MAX_POPUP_COUNT: N } 전달
+// ----- [2026-03-02] updateConfigPartial MAX_POPUP_COUNT 저장 확인 종료 -----
 export const updateConfigPartial = async (token: string, partialConfig: object) => {
 	let error = null;
 
 	// First get current config
 	const currentConfig = await exportConfig(token);
+
+	// ----- [2026-02-02] 설정 초기화 방지: exportConfig 실패 시 저장 중단 -----
+	// exportConfig가 실패하면 (401 에러 등) currentConfig가 null이 되어
+	// 기존 설정이 모두 초기화되는 문제 방지
+	if (!currentConfig) {
+		console.error('[updateConfigPartial] Failed to get current config, aborting save to prevent data loss');
+		throw 'Failed to get current config. Please refresh the page and try again.';
+	}
+	// ----- [2026-02-02] 설정 초기화 방지 종료 -----
 
 	// Merge with partial config
 	const newConfig = {
@@ -57,6 +71,11 @@ export const updateConfigPartial = async (token: string, partialConfig: object) 
 	return res;
 };
 
+// ----- [2026-03-02] exportConfig 팝업 개수 조회 확인 시작 -----
+// ■ 확인: GET /configs/export → 백엔드 get_verified_user → 관리자/일반사용자 모두 접근 가능
+// ■ 반환값에 MAX_POPUP_COUNT 포함 → +layout.svelte loadPopupAnnouncements()에서 사용
+// ■ API 테스트: 관리자(200), 일반사용자(200) 동일 결과 확인 완료
+// ----- [2026-03-02] exportConfig 팝업 개수 조회 확인 종료 -----
 export const exportConfig = async (token: string) => {
 	let error = null;
 

@@ -95,23 +95,33 @@ def execute_query(query: str, params: tuple = None) -> List[Dict[str, Any]]:
         if conn:
             conn.rollback()
 
-        # ----- [2026-02-26] 유니코드 서로게이트(Surrogate) JSON 파싱 오류 자동 복구 시작 -----
-        # 원인: 채팅 메시지에 이모지/특수문자가 깨진 유니코드 서로게이트(\uD800-\uDFFF)로
-        #       저장된 경우, PostgreSQL이 chat::jsonb 캐스팅 시 JSON 파싱 오류 발생
+        # ----- [2026-03-05] 유니코드 서로게이트(Surrogate) JSON 파싱 오류 자동 복구 시작 -----
+        # 원인: chat, meta 등 JSON 컬럼에 깨진 유니코드 서로게이트(\uD800-\uDFFF)가
+        #       포함된 경우, PostgreSQL이 JSONB 캐스팅 시 파싱 오류 발생
         #       에러: "Unicode low surrogate must follow a high surrogate"
         # 처리: 1) 에러 메시지에 'surrogate' 포함 여부 확인
-        #       2) chat::jsonb를 regexp_replace(chat::text, 서로게이트패턴, '')::jsonb로 교체
-        #       3) 서로게이트 문자 제거 후 JSONB 재파싱으로 자동 복구
-        #       4) 정상 쿼리 시에는 기존 로직 그대로 실행 (성능 영향 없음)
+        #       2) 모든 JSONB 캐스팅 패턴을 regexp_replace로 서로게이트 제거 후 재파싱
+        #          - c.chat::jsonb, chat::jsonb (:: 캐스팅 방식)
+        #          - CAST(c.chat AS jsonb), CAST(c.meta AS jsonb) (CAST 방식)
+        #          - c.meta::jsonb, meta::jsonb (meta 컬럼)
+        #       3) 정상 쿼리 시에는 기존 로직 그대로 실행 (성능 영향 없음)
         error_msg = str(e).lower()
-        if 'surrogate' in error_msg and ('chat::jsonb' in query or 'chat::json' in query):
-            safe_query = query.replace(
-                'c.chat::jsonb',
-                "regexp_replace(c.chat::text, '\\\\u[Dd][89A-Fa-f][0-9A-Fa-f]{2}', '', 'g')::jsonb"
+        if 'surrogate' in error_msg:
+            import re
+            safe_query = query
+            surr_pattern = "'\\\\\\\\u[Dd][89A-Fa-f][0-9A-Fa-f]{2}'"
+            # (1) CAST(expr AS jsonb) 패턴 → regexp_replace(expr::text, ...)::jsonb
+            safe_query = re.sub(
+                r'CAST\((\w+(?:\.\w+)?)\s+AS\s+jsonb\)',
+                lambda m: f"regexp_replace({m.group(1)}::text, {surr_pattern}, '', 'g')::jsonb",
+                safe_query,
+                flags=re.IGNORECASE
             )
-            safe_query = safe_query.replace(
-                'chat::jsonb',
-                "regexp_replace(chat::text, '\\\\u[Dd][89A-Fa-f][0-9A-Fa-f]{2}', '', 'g')::jsonb"
+            # (2) expr::jsonb 패턴 (테이블별칭.컬럼::jsonb, 컬럼::jsonb)
+            safe_query = re.sub(
+                r'(\w+(?:\.\w+)?)::jsonb\b',
+                lambda m: f"regexp_replace({m.group(1)}::text, {surr_pattern}, '', 'g')::jsonb",
+                safe_query
             )
             if safe_query != query:
                 try:
@@ -131,7 +141,7 @@ def execute_query(query: str, params: tuple = None) -> List[Dict[str, Any]]:
                     if conn:
                         conn.rollback()
                     logger.error(f"❌ 안전 쿼리도 실패: {retry_e}")
-        # ----- [2026-02-26] 유니코드 서로게이트(Surrogate) JSON 파싱 오류 자동 복구 종료 -----
+        # ----- [2026-03-05] 유니코드 서로게이트(Surrogate) JSON 파싱 오류 자동 복구 종료 -----
 
         logger.error(f"❌ 쿼리 실행 오류: {e}")
         logger.error(f"쿼리: {query}")

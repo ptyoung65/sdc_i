@@ -16,13 +16,17 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import io
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+# ----- [2026.01.29] JWT 토큰 검증을 위한 import 추가 시작 -----
+import jwt
+# ----- [2026.01.29] JWT 토큰 검증을 위한 import 추가 종료 -----
 
 # Database integration
 from database import db_manager, DatabaseManager
@@ -84,6 +88,59 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ----- [2026.01.29] JWT 토큰 기반 인증으로 보안 강화 시작 -----
+# Open WebUI와 동일한 JWT Secret Key 사용
+WEBUI_SECRET_KEY = os.getenv("WEBUI_SECRET_KEY", "change-this-to-a-random-secret-key-for-production")
+JWT_ALGORITHM = "HS256"
+
+def verify_jwt_token(authorization: Optional[str]) -> Optional[dict]:
+    """
+    JWT 토큰 검증
+    Open WebUI에서 발급한 JWT 토큰을 검증하고 사용자 정보 반환
+    """
+    if not authorization:
+        return None
+
+    try:
+        # Bearer 토큰 추출
+        if authorization.startswith("Bearer "):
+            token = authorization[7:]
+        else:
+            token = authorization
+
+        # JWT 디코딩 및 검증
+        decoded = jwt.decode(token, WEBUI_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        logger.info(f"✅ JWT 토큰 검증 성공: user_id={decoded.get('id')}")
+        return decoded
+    except jwt.ExpiredSignatureError:
+        logger.warning("⚠️ JWT 토큰 만료됨")
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"⚠️ JWT 토큰 검증 실패: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ JWT 검증 중 오류: {e}")
+        return None
+
+async def verify_auth(authorization: Optional[str] = Header(None)):
+    """
+    인증 검증 의존성
+    JWT 토큰이 제공된 경우 반드시 유효해야 함
+    """
+    if authorization:
+        jwt_user = verify_jwt_token(authorization)
+        if not jwt_user:
+            raise HTTPException(
+                status_code=401,
+                detail="유효하지 않은 인증 토큰입니다. 다시 로그인해주세요."
+            )
+        return jwt_user
+
+    # 토큰이 없는 경우 - 하위 호환성을 위해 허용 (추후 제거 가능)
+    logger.warning("⚠️ JWT 토큰 없이 접근 시도")
+    return None
+# ----- [2026.01.29] JWT 토큰 기반 인증으로 보안 강화 종료 -----
 
 # === Data Models ===
 
@@ -296,6 +353,10 @@ class FilterCheckRequest(BaseModel):
     text: str
     filter_type: str  # input_filter, output_filter, pii_detection, toxicity, custom
     user_id: Optional[str] = None
+    user_email: Optional[str] = None  # [2026-01-23 추가] 사용자 이메일
+    model_id: Optional[str] = None  # [2026-01-21 추가] 모델 ID (예: qwen2-1.5b-instruct)
+    model_name: Optional[str] = None  # [2026-01-21 추가] 모델명 (예: Qwen 2 1.5B)
+    model: Optional[str] = None  # 하위 호환용 (deprecated)
     check_input: bool = True
     check_output: bool = False
 
@@ -588,6 +649,10 @@ async def check_with_filter_type(request: FilterCheckRequest, background_tasks: 
     text = request.text
     filter_type = request.filter_type
     user_id = request.user_id or 'anonymous'
+    user_email = request.user_email or ''  # [2026-01-23 추가] 사용자 이메일
+    # [2026-01-21 수정] 모델 ID와 모델명 둘 다 추출
+    model_id = request.model_id or request.model or 'unknown'
+    model_name = request.model_name or model_id  # 모델명이 없으면 ID 사용
 
     # 결과 초기화
     is_safe = True
@@ -684,6 +749,10 @@ async def check_with_filter_type(request: FilterCheckRequest, background_tasks: 
         logger.info(f"[Dynamic Check] 검사 대상 카테고리: {all_categories}")
 
         for category in all_categories:
+            # whitelist 카테고리는 허용 목록이므로 검사에서 제외
+            if category == 'whitelist':
+                continue
+
             # 카테고리 설정 가져오기 (없으면 기본값 사용)
             config = category_config.get(category, default_config)
 
@@ -727,6 +796,7 @@ async def check_with_filter_type(request: FilterCheckRequest, background_tasks: 
             "test_text": text[:500],
             "filter_type": filter_type,
             "user_id": user_id,
+            "user_email": user_email,  # [2026-01-23 추가] 사용자 이메일
             "is_safe": is_safe,
             "action": action,
             "blocked_keywords": blocked_keywords,
@@ -735,7 +805,8 @@ async def check_with_filter_type(request: FilterCheckRequest, background_tasks: 
         }
         background_tasks.add_task(db_manager.log_test_result, log_data)
 
-    logger.info(f"🛡️ 필터 검사: type={filter_type}, action={action}, keywords={len(blocked_keywords)}, pii={len(pii_detected)}")
+    # [2026-01-21 수정] 로그에 모델 ID와 모델명 추가
+    logger.info(f"🛡️ 필터 검사: model_id={model_id}, model_name={model_name}, filter_type={filter_type}, action={action}, keywords={len(blocked_keywords)}, pii={len(pii_detected)}")
 
     return FilterCheckResponse(
         is_safe=is_safe,
@@ -861,7 +932,7 @@ async def get_pii_patterns():
 
 
 @app.get("/keywords")
-async def get_keywords():
+async def get_keywords(user: Optional[dict] = Depends(verify_auth)):  # [2026.01.29] JWT 인증 추가
     """키워드 목록 조회"""
     all_keywords = await db_manager.get_all_keywords()
 
@@ -881,7 +952,7 @@ async def get_keywords():
     }
 
 @app.post("/keywords")
-async def add_keyword(keyword: GuardrailKeywordModel):
+async def add_keyword(keyword: GuardrailKeywordModel, user: Optional[dict] = Depends(verify_auth)):  # [2026.01.29] JWT 인증 추가
     """새 키워드 추가"""
 
     # ID가 없으면 자동 생성
@@ -904,7 +975,7 @@ async def add_keyword(keyword: GuardrailKeywordModel):
         raise HTTPException(status_code=500, detail=f"Failed to add keyword: {str(e)}")
 
 @app.put("/keywords/{keyword_id}")
-async def update_keyword(keyword_id: str, keyword: GuardrailKeywordModel):
+async def update_keyword(keyword_id: str, keyword: GuardrailKeywordModel, user: Optional[dict] = Depends(verify_auth)):  # [2026.01.29] JWT 인증 추가
     """키워드 업데이트"""
 
     keyword_data = {
@@ -922,7 +993,7 @@ async def update_keyword(keyword_id: str, keyword: GuardrailKeywordModel):
     return result
 
 @app.delete("/keywords/{keyword_id}")
-async def delete_keyword(keyword_id: str):
+async def delete_keyword(keyword_id: str, user: Optional[dict] = Depends(verify_auth)):  # [2026.01.29] JWT 인증 추가
     """키워드 삭제"""
 
     success = await db_manager.delete_keyword(keyword_id)
@@ -934,7 +1005,7 @@ async def delete_keyword(keyword_id: str):
     return {"message": "Keyword deleted successfully"}
 
 @app.get("/settings")
-async def get_settings():
+async def get_settings(user: Optional[dict] = Depends(verify_auth)):  # [2026.01.29] JWT 인증 추가
     """설정 조회"""
     settings = await db_manager.get_settings()
     return {
@@ -943,7 +1014,7 @@ async def get_settings():
     }
 
 @app.put("/settings/{key}")
-async def update_setting(key: str, value: str):
+async def update_setting(key: str, value: str, user: Optional[dict] = Depends(verify_auth)):  # [2026.01.29] JWT 인증 추가
     """설정 업데이트"""
     success = await db_manager.update_setting(key, value)
 
@@ -958,7 +1029,8 @@ async def get_guardrail_logs(
     limit: int = 50,
     offset: int = 0,
     filter_safe: Optional[bool] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    user: Optional[dict] = Depends(verify_auth)  # [2026.01.29] JWT 인증 추가
 ):
     """가드레일 로그 조회"""
     try:
@@ -1423,6 +1495,9 @@ async def get_guardrails_policies(
 
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
+        # [2026-01-23 수정] 카테고리 매핑으로 통계 계산
+        # 로그의 detected_categories (corporate, personal, basic 등)와
+        # 정책의 category (company, privacy, content 등) 매핑
         query = f"""
             SELECT
                 p.id,
@@ -1437,9 +1512,18 @@ async def get_guardrails_policies(
                 p.created_at,
                 p.updated_at,
                 COUNT(l.id) as total_checks,
-                COUNT(l.id) FILTER (WHERE l.check_result = 'block') as blocked_count
+                COUNT(l.id) FILTER (WHERE l.check_result = 'block') as blocked_count,
+                COUNT(l.id) FILTER (WHERE l.check_result = 'warn') as warned_count
             FROM guardrail_policies p
-            LEFT JOIN guardrail_check_logs l ON p.id = l.policy_id
+            LEFT JOIN guardrail_check_logs l ON (
+                -- 직접 policy_id 매칭
+                p.id = l.policy_id
+                -- 또는 카테고리 매핑으로 매칭
+                OR (p.category = 'company' AND l.detected_categories::text LIKE '%corporate%')
+                OR (p.category = 'privacy' AND (l.detected_categories::text LIKE '%personal%' OR l.detected_categories::text LIKE '%privacy%'))
+                OR (p.category = 'content' AND (l.detected_categories::text LIKE '%basic%' OR l.detected_categories::text LIKE '%toxicity%'))
+                OR (p.category = 'compliance' AND l.detected_categories::text LIKE '%security%')
+            )
             {where_clause}
             GROUP BY p.id
             ORDER BY p.created_at DESC
@@ -1482,7 +1566,8 @@ async def get_guardrails_policies(
                 "createdAt": p.get('created_at').isoformat() if p.get('created_at') else '',
                 "updatedAt": p.get('updated_at').isoformat() if p.get('updated_at') else '',
                 "totalChecks": p.get('total_checks', 0) or 0,
-                "blockedCount": p.get('blocked_count', 0) or 0
+                "blockedCount": p.get('blocked_count', 0) or 0,
+                "warnedCount": p.get('warned_count', 0) or 0  # [2026-01-23 추가]
             })
 
         return {"data": policies, "total": len(policies)}
@@ -1668,9 +1753,10 @@ async def update_guardrails_policy(policy_id: str, policy: PolicyCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# [2026-01-21] 정책 삭제 API - 프론트엔드 일괄삭제 기능에서 사용
 @app.delete("/api/guardrails/policies/{policy_id}")
 async def delete_guardrails_policy(policy_id: str):
-    """가드레일 정책 삭제"""
+    """가드레일 정책 삭제 (일괄삭제 시 개별 호출)"""
     try:
         from database import execute_raw_query
 
@@ -1690,6 +1776,7 @@ async def delete_guardrails_policy(policy_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# [2026-01-21] 정책 토글 API - 개별 정책 활성화/비활성화 토글
 @app.put("/api/guardrails/policies/{policy_id}/toggle")
 async def toggle_guardrails_policy(policy_id: str):
     """가드레일 정책 활성화/비활성화 토글"""
@@ -1718,6 +1805,39 @@ async def toggle_guardrails_policy(policy_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# [2026-01-21 추가] 정책 활성화/비활성화 설정 요청 모델
+class PolicySetActiveRequest(BaseModel):
+    isActive: bool = Field(..., description="활성화 여부")
+
+
+@app.put("/api/guardrails/policies/{policy_id}/set-active")
+async def set_policy_active(policy_id: str, request: PolicySetActiveRequest):
+    """가드레일 정책 활성화/비활성화 설정 (특정 값으로 설정)"""
+    try:
+        from database import execute_raw_query
+
+        query = """
+            UPDATE guardrail_policies
+            SET enabled = %s, updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, enabled
+        """
+        result = await execute_raw_query(query, (request.isActive, policy_id))
+
+        if result:
+            new_status = result[0].get('enabled', False)
+            logger.info(f"🔄 정책 활성화 설정: {policy_id} -> {'활성' if new_status else '비활성'}")
+            return {"id": policy_id, "enabled": new_status, "isActive": new_status, "message": f"정책이 {'활성화' if new_status else '비활성화'}되었습니다"}
+        else:
+            raise HTTPException(status_code=404, detail="정책을 찾을 수 없습니다")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 정책 활성화 설정 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================
 # 기준 데이터 관리 API
 # ============================================
@@ -1729,7 +1849,7 @@ async def get_policy_types():
         from database import execute_raw_query
 
         query = """
-            SELECT code, name, description, is_active, created_at
+            SELECT code, id, name, description, is_active, created_at
             FROM guardrail_policy_types
             ORDER BY created_at
         """
@@ -1738,6 +1858,7 @@ async def get_policy_types():
         return {
             "data": [{
                 "code": r.get('code'),
+                "id": r.get('id'),
                 "name": r.get('name'),
                 "description": r.get('description'),
                 "isActive": r.get('is_active', True),
@@ -1751,7 +1872,7 @@ async def get_policy_types():
 
 
 class PolicyTypeRequest(BaseModel):
-    code: str
+    code: Optional[str] = None  # code가 없으면 자동 생성
     name: str
     description: Optional[str] = ''
 
@@ -1762,16 +1883,32 @@ async def create_policy_type(policy_type: PolicyTypeRequest):
     try:
         from database import execute_raw_query
 
+        # code가 없으면 자동 생성 (PT + 3자리)
+        code = policy_type.code
+        if not code:
+            # 기존 PT 코드 중 최대값 조회
+            max_query = "SELECT code FROM guardrail_policy_types WHERE code LIKE 'PT%' ORDER BY code DESC LIMIT 1"
+            max_result = await execute_raw_query(max_query)
+            if max_result and max_result[0].get('code'):
+                max_code = max_result[0]['code']
+                try:
+                    max_num = int(max_code[2:])
+                    code = f"PT{max_num + 1:03d}"
+                except:
+                    code = "PT001"
+            else:
+                code = "PT001"
+
         query = """
             INSERT INTO guardrail_policy_types (code, name, description, created_at)
             VALUES (%s, %s, %s, NOW())
             ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description
             RETURNING code
         """
-        result = await execute_raw_query(query, (policy_type.code, policy_type.name, policy_type.description))
+        result = await execute_raw_query(query, (code, policy_type.name, policy_type.description))
 
         if result:
-            return {"code": policy_type.code, "message": "정책 유형이 추가되었습니다"}
+            return {"code": code, "message": "정책 유형이 추가되었습니다"}
         else:
             raise HTTPException(status_code=500, detail="정책 유형 추가 실패")
 
@@ -1799,6 +1936,54 @@ async def delete_policy_type(code: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class PolicyTypeUpdateRequest(BaseModel):
+    name: str
+    description: Optional[str] = ''
+
+
+@app.put("/api/guardrails/master/policy-types/{code}")
+async def update_policy_type(code: str, policy_type: PolicyTypeUpdateRequest):
+    """정책 유형 수정"""
+    try:
+        from database import execute_raw_query
+
+        query = """
+            UPDATE guardrail_policy_types
+            SET name = %s, description = %s
+            WHERE code = %s
+            RETURNING code
+        """
+        result = await execute_raw_query(query, (policy_type.name, policy_type.description, code))
+
+        if result:
+            return {"code": code, "message": "정책 유형이 수정되었습니다"}
+        else:
+            raise HTTPException(status_code=404, detail="정책 유형을 찾을 수 없습니다")
+
+    except Exception as e:
+        logger.error(f"❌ 정책 유형 수정 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/guardrails/master/policy-types/{code}/permanent")
+async def permanent_delete_policy_type(code: str):
+    """정책 유형 완전 삭제"""
+    try:
+        from database import execute_raw_query
+
+        query = "DELETE FROM guardrail_policy_types WHERE code = %s RETURNING code"
+        result = await execute_raw_query(query, (code,))
+
+        if result:
+            return {"message": "정책 유형이 완전히 삭제되었습니다"}
+        else:
+            raise HTTPException(status_code=404, detail="정책 유형을 찾을 수 없습니다")
+
+    except Exception as e:
+        logger.error(f"❌ 정책 유형 완전 삭제 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/guardrails/master/filter-types")
 async def get_filter_types():
     """필터 유형 목록 조회"""
@@ -1806,7 +1991,7 @@ async def get_filter_types():
         from database import execute_raw_query
 
         query = """
-            SELECT code, name, description, is_active, created_at
+            SELECT code, id, name, description, is_active, created_at
             FROM guardrail_filter_types
             ORDER BY created_at
         """
@@ -1815,6 +2000,7 @@ async def get_filter_types():
         return {
             "data": [{
                 "code": r.get('code'),
+                "id": r.get('id'),
                 "name": r.get('name'),
                 "description": r.get('description'),
                 "isActive": r.get('is_active', True),
@@ -1827,6 +2013,119 @@ async def get_filter_types():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class FilterTypeRequest(BaseModel):
+    code: Optional[str] = None  # code가 없으면 자동 생성
+    name: str
+    description: Optional[str] = ''
+
+
+@app.post("/api/guardrails/master/filter-types")
+async def create_filter_type(filter_type: FilterTypeRequest):
+    """필터 유형 추가"""
+    try:
+        from database import execute_raw_query
+
+        # code가 없으면 자동 생성 (FT + 3자리)
+        code = filter_type.code
+        if not code:
+            # 기존 FT 코드 중 최대값 조회
+            max_query = "SELECT code FROM guardrail_filter_types WHERE code LIKE 'FT%' ORDER BY code DESC LIMIT 1"
+            max_result = await execute_raw_query(max_query)
+            if max_result and max_result[0].get('code'):
+                max_code = max_result[0]['code']
+                try:
+                    max_num = int(max_code[2:])
+                    code = f"FT{max_num + 1:03d}"
+                except:
+                    code = "FT001"
+            else:
+                code = "FT001"
+
+        query = """
+            INSERT INTO guardrail_filter_types (code, name, description, created_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description
+            RETURNING code
+        """
+        result = await execute_raw_query(query, (code, filter_type.name, filter_type.description))
+
+        if result:
+            return {"code": code, "message": "필터 유형이 추가되었습니다"}
+        else:
+            raise HTTPException(status_code=500, detail="필터 유형 추가 실패")
+
+    except Exception as e:
+        logger.error(f"❌ 필터 유형 추가 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/guardrails/master/filter-types/{code}")
+async def delete_filter_type(code: str):
+    """필터 유형 삭제 (비활성화)"""
+    try:
+        from database import execute_raw_query
+
+        query = "UPDATE guardrail_filter_types SET is_active = false WHERE code = %s RETURNING code"
+        result = await execute_raw_query(query, (code,))
+
+        if result:
+            return {"message": "필터 유형이 비활성화되었습니다"}
+        else:
+            raise HTTPException(status_code=404, detail="필터 유형을 찾을 수 없습니다")
+
+    except Exception as e:
+        logger.error(f"❌ 필터 유형 삭제 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class FilterTypeUpdateRequest(BaseModel):
+    name: str
+    description: Optional[str] = ''
+
+
+@app.put("/api/guardrails/master/filter-types/{code}")
+async def update_filter_type(code: str, filter_type: FilterTypeUpdateRequest):
+    """필터 유형 수정"""
+    try:
+        from database import execute_raw_query
+
+        query = """
+            UPDATE guardrail_filter_types
+            SET name = %s, description = %s
+            WHERE code = %s
+            RETURNING code
+        """
+        result = await execute_raw_query(query, (filter_type.name, filter_type.description, code))
+
+        if result:
+            return {"code": code, "message": "필터 유형이 수정되었습니다"}
+        else:
+            raise HTTPException(status_code=404, detail="필터 유형을 찾을 수 없습니다")
+
+    except Exception as e:
+        logger.error(f"❌ 필터 유형 수정 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/guardrails/master/filter-types/{code}/permanent")
+async def permanent_delete_filter_type(code: str):
+    """필터 유형 완전 삭제"""
+    try:
+        from database import execute_raw_query
+
+        query = "DELETE FROM guardrail_filter_types WHERE code = %s RETURNING code"
+        result = await execute_raw_query(query, (code,))
+
+        if result:
+            return {"message": "필터 유형이 완전히 삭제되었습니다"}
+        else:
+            raise HTTPException(status_code=404, detail="필터 유형을 찾을 수 없습니다")
+
+    except Exception as e:
+        logger.error(f"❌ 필터 유형 완전 삭제 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/guardrails/master/severity-levels")
 async def get_severity_levels():
     """심각도 목록 조회"""
@@ -1834,7 +2133,7 @@ async def get_severity_levels():
         from database import execute_raw_query
 
         query = """
-            SELECT code, name, description, color, priority, is_active
+            SELECT code, id, name, description, color, priority, is_active
             FROM guardrail_severity_levels
             ORDER BY priority
         """
@@ -1843,6 +2142,7 @@ async def get_severity_levels():
         return {
             "data": [{
                 "code": r.get('code'),
+                "id": r.get('id'),
                 "name": r.get('name'),
                 "description": r.get('description'),
                 "color": r.get('color'),
@@ -1863,7 +2163,7 @@ async def get_action_types():
         from database import execute_raw_query
 
         query = """
-            SELECT code, name, description, is_active
+            SELECT code, id, name, description, is_active
             FROM guardrail_action_types
             ORDER BY created_at
         """
@@ -1872,6 +2172,7 @@ async def get_action_types():
         return {
             "data": [{
                 "code": r.get('code'),
+                "id": r.get('id'),
                 "name": r.get('name'),
                 "description": r.get('description'),
                 "isActive": r.get('is_active', True)
@@ -1968,11 +2269,13 @@ async def get_guardrails_logs(
 
         where_clause = " AND ".join(conditions)
 
+        # [2026-01-23 수정] user_email 컬럼 추가
         query = f"""
             SELECT
                 l.id,
                 l.request_id,
                 l.user_id,
+                l.user_email,
                 l.policy_id,
                 l.check_result,
                 l.original_text,
@@ -2014,6 +2317,7 @@ async def get_guardrails_logs(
                 "id": l.get('id'),
                 "request_id": l.get('request_id', ''),
                 "user_id": l.get('user_id', ''),
+                "user_email": l.get('user_email', ''),  # [2026-01-23 추가]
                 "policy_id": l.get('policy_id', ''),
                 "policy_name": l.get('policy_name', ''),
                 "check_result": l.get('check_result', ''),

@@ -232,29 +232,14 @@
 					{/each}
 				</div>
 
-				<!-- Mock 문서 보기 링크 -->
-				<div class="mt-4 pt-3 border-t dark:border-gray-700 text-center">
-					<a
-						href="/api/edm/mock-documents"
-						target="_blank"
-						class="text-sm text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
-					>
-						<svg
-							class="w-4 h-4"
-							fill="none"
-							stroke="currentColor"
-							viewBox="0 0 24 24"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-							/>
-						</svg>
-						Mock 문서 전체 보기
-					</a>
-				</div>
+				<!-- Mock 모드 경고 -->
+				{#if import.meta.env.VITE_ENABLE_MOCK_MODE === 'true'}
+					<div class="mt-4 pt-3 border-t dark:border-gray-700 text-center">
+						<div class="text-xs text-amber-600 dark:text-amber-400 font-medium bg-amber-50 dark:bg-amber-900/20 py-2 px-3 rounded-lg inline-block">
+							⚠️ 현재 Mock 모드로 실행 중입니다. 실제 데이터가 아닙니다.
+						</div>
+					</div>
+				{/if}
 			{:else}
 				<div class="text-center py-8 text-gray-500 dark:text-gray-400 text-sm">
 					검색 결과가 없습니다.

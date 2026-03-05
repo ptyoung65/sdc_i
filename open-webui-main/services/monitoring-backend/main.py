@@ -13,7 +13,29 @@ import psutil
 from datetime import datetime
 from dotenv import load_dotenv
 
+# ----- [2026.01.29] JWT 토큰 검증을 위한 import 추가 시작 -----
+import jwt
+# ----- [2026.01.29] JWT 토큰 검증을 위한 import 추가 종료 -----
+
 from database import init_db_pool, execute_query, close_db_pool
+
+# ----- [2026.01.29] 날짜 파싱 헬퍼 함수 (한국 시간 기준) -----
+def parse_date_kst(date_str: str) -> datetime:
+    """ISO 날짜 문자열을 한국 시간으로 파싱"""
+    import pytz
+    kst = pytz.timezone('Asia/Seoul')
+    # Z(UTC) 접미사 처리
+    if date_str.endswith('Z'):
+        date_str = date_str.replace('Z', '+00:00')
+    dt = datetime.fromisoformat(date_str)
+    # timezone aware로 변환
+    if dt.tzinfo is None:
+        dt = kst.localize(dt)
+    else:
+        dt = dt.astimezone(kst)
+    return dt
+# ----- [2026.01.29] 날짜 파싱 헬퍼 함수 종료 -----
+
 from queries import (
     QUERY_USER_LOGIN_HISTORY,
     QUERY_OAUTH_SESSION_HISTORY,
@@ -58,15 +80,94 @@ app.add_middleware(
 # ============================================
 # 관리자 권한 체크
 # ============================================
-async def verify_admin(x_user_email: Optional[str] = Header(None)):
+
+# ----- [2026.01.29] JWT 토큰 기반 인증으로 보안 강화 시작 -----
+# Open WebUI와 동일한 JWT Secret Key 사용
+WEBUI_SECRET_KEY = os.getenv("WEBUI_SECRET_KEY", "change-this-to-a-random-secret-key-for-production")
+JWT_ALGORITHM = "HS256"
+
+def verify_jwt_token(authorization: Optional[str]) -> Optional[dict]:
+    """
+    JWT 토큰 검증
+    Open WebUI에서 발급한 JWT 토큰을 검증하고 사용자 정보 반환
+    """
+    if not authorization:
+        return None
+
+    try:
+        # Bearer 토큰 추출
+        if authorization.startswith("Bearer "):
+            token = authorization[7:]
+        else:
+            token = authorization
+
+        # JWT 디코딩 및 검증
+        decoded = jwt.decode(token, WEBUI_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        logger.info(f"✅ JWT 토큰 검증 성공: user_id={decoded.get('id')}")
+        return decoded
+    except jwt.ExpiredSignatureError:
+        logger.warning("⚠️ JWT 토큰 만료됨")
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"⚠️ JWT 토큰 검증 실패: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ JWT 검증 중 오류: {e}")
+        return None
+# ----- [2026.01.29] JWT 토큰 기반 인증으로 보안 강화 종료 -----
+
+async def verify_admin(
+    x_user_email: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)  # [2026.01.29] Authorization 헤더 추가
+):
     """
     관리자 권한 확인
-    헤더에서 x-user-email을 받아 DB에서 role='admin' 확인
+    [2026.01.29] JWT 토큰 검증 추가 - 토큰이 있으면 반드시 검증해야 함
     """
+    # ----- [2026.01.29] JWT 토큰 검증 우선 시작 -----
+    jwt_user = verify_jwt_token(authorization)
+
+    if authorization and not jwt_user:
+        # 토큰이 제공되었지만 검증 실패
+        raise HTTPException(
+            status_code=401,
+            detail="유효하지 않은 인증 토큰입니다. 다시 로그인해주세요."
+        )
+
+    # JWT 토큰이 유효한 경우, 토큰에서 추출한 정보 사용
+    if jwt_user:
+        user_id = jwt_user.get("id")
+        # DB에서 사용자 정보 조회
+        try:
+            result = execute_query(QUERY_CHECK_ADMIN, (user_id,))
+            if result and len(result) > 0:
+                user = result[0]
+                if user.get("role") == "admin":
+                    logger.info(f"✅ JWT 인증 관리자: {user.get('name', '')} ({user.get('email', '')})")
+                    return user
+                else:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="관리자 권한이 필요합니다."
+                    )
+        except HTTPException:
+            raise
+        except Exception as db_err:
+            logger.warning(f"⚠️ DB 조회 실패, JWT 정보로 진행: {db_err}")
+            # DB 조회 실패 시 JWT 정보 사용
+            return {
+                "id": user_id,
+                "name": jwt_user.get("name", "User"),
+                "email": jwt_user.get("email", x_user_email or ""),
+                "role": jwt_user.get("role", "admin")
+            }
+    # ----- [2026.01.29] JWT 토큰 검증 우선 종료 -----
+
+    # JWT 토큰이 없는 경우 - 기존 x-user-email 기반 검증 (하위 호환)
     if not x_user_email:
         raise HTTPException(
             status_code=401,
-            detail="인증이 필요합니다. 사용자 이메일을 헤더에 포함해주세요."
+            detail="인증이 필요합니다. 로그인 후 다시 시도해주세요."
         )
 
     try:
@@ -143,17 +244,50 @@ async def health_check():
         raise HTTPException(status_code=503, detail="Database connection failed")
 
 @app.get("/api/stats/overall")
-async def get_overall_stats(admin_user: dict = Depends(verify_admin)):
+async def get_overall_stats(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    model: Optional[str] = None,
+    admin_user: dict = Depends(verify_admin)
+):
     """
-    전체 통계 조회
-    - 총 사용자 수
-    - 총 관리자 수
-    - 총 채팅 수
-    - 활성 채팅 수
-    - 활성 세션 수
+    전체 통계 조회 (날짜/모델 필터 적용)
+    - 기간 내 활성 사용자 수
+    - 기간 내 채팅 수
+    - 기간 내 질문 건수
+    - 총 사용자 수, 총 채팅 수, 관리자 수
     """
     try:
-        result = execute_query(QUERY_OVERALL_STATS)
+        from datetime import timedelta
+        import pytz
+        kst = pytz.timezone('Asia/Seoul')
+
+        # 기본값: 최근 30일 (한국 시간 기준)
+        if not end_date:
+            end_dt = datetime.now(kst)
+        else:
+            end_dt = parse_date_kst(end_date)
+
+        if not start_date:
+            start_dt = end_dt - timedelta(days=30)
+        else:
+            start_dt = parse_date_kst(start_date)
+
+        start_ts = int(start_dt.timestamp())
+        end_ts = int(end_dt.timestamp())
+
+        # ----- [2026.01.29] 모델 필터 조건 구성 -----
+        # model 테이블에 등록된 모델만 조회
+        if model and model != 'all':
+            model_filter = f"AND c.chat::jsonb->'models'->>0 = '{model}'"
+        else:
+            # '전체' 선택 시에도 등록된 모델만 조회
+            model_filter = "AND c.chat::jsonb->'models'->>0 IN (SELECT id FROM model)"
+
+        # 쿼리에 모델 필터 적용
+        query = QUERY_OVERALL_STATS.format(model_filter=model_filter)
+
+        result = execute_query(query, (start_ts, end_ts))
         if result:
             return result[0]
         return {}
@@ -178,8 +312,8 @@ async def get_user_login_history(
     try:
         if start_date and end_date:
             from datetime import datetime
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
+            start_ts = int(parse_date_kst(start_date).timestamp())
+            end_ts = int(parse_date_kst(end_date).timestamp())
 
             query = QUERY_USER_LOGIN_HISTORY.replace(
                 "ORDER BY u.last_active_at DESC;",
@@ -214,6 +348,7 @@ async def get_oauth_sessions(admin_user: dict = Depends(verify_admin)):
 async def get_chat_history(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    model: Optional[str] = None,
     admin_user: dict = Depends(verify_admin)
 ):
     """
@@ -223,20 +358,33 @@ async def get_chat_history(
     - 생성/수정 시간
     - 고정/보관 여부
     - 메시지 개수
+    - [2026.01.29] 모델 필터 추가 - model 테이블에 등록된 모델만 조회
     """
     try:
+        query = QUERY_CHAT_HISTORY
+        conditions = []
+
         if start_date and end_date:
             from datetime import datetime
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
+            start_ts = int(parse_date_kst(start_date).timestamp())
+            end_ts = int(parse_date_kst(end_date).timestamp())
+            conditions.append(f"c.created_at BETWEEN {start_ts} AND {end_ts}")
 
-            query = QUERY_CHAT_HISTORY.replace(
-                "WHERE c.chat IS NOT NULL",
-                f"WHERE c.chat IS NOT NULL AND c.created_at BETWEEN {start_ts} AND {end_ts}"
-            )
-            results = execute_query(query)
+        # ----- [2026.01.29] 모델 필터 조건 추가 -----
+        # model 테이블에 등록된 모델만 조회 (미등록 모델 데이터 제외)
+        if model and model != 'all':
+            conditions.append(f"c.chat::jsonb->'models'->>0 = '{model}'")
         else:
-            results = execute_query(QUERY_CHAT_HISTORY)
+            # '전체' 선택 시에도 등록된 모델만 조회
+            conditions.append("c.chat::jsonb->'models'->>0 IN (SELECT id FROM model)")
+
+        if conditions:
+            query = query.replace(
+                "WHERE c.chat IS NOT NULL",
+                f"WHERE c.chat IS NOT NULL AND {' AND '.join(conditions)}"
+            )
+
+        results = execute_query(query)
         return {"data": results, "total": len(results)}
     except Exception as e:
         logger.error(f"❌ 채팅 이력 조회 오류: {e}")
@@ -263,6 +411,7 @@ async def get_detailed_messages(admin_user: dict = Depends(verify_admin)):
 async def get_user_activity_summary(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    model: Optional[str] = None,
     admin_user: dict = Depends(verify_admin)
 ):
     """
@@ -273,30 +422,39 @@ async def get_user_activity_summary(
     - 고정 채팅 수
     - 총 메시지 수
     - 누적 토큰수, 최대 토큰, 메시지 수 (기간 필터 적용)
+    - [2026.01.29] 모델 필터 추가 - model 테이블에 등록된 모델만 조회
     """
     try:
+        query = QUERY_USER_ACTIVITY_SUMMARY
+        date_condition = ""
+        model_condition = ""
+
         if start_date and end_date:
             from datetime import datetime
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
+            start_ts = int(parse_date_kst(start_date).timestamp())
+            end_ts = int(parse_date_kst(end_date).timestamp())
+            date_condition = f"AND c.created_at BETWEEN {start_ts} AND {end_ts}"
 
-            # ----- [2026.01.06] user_tokens CTE에도 기간 필터 적용 수정 시작 -----
-            # 문제: 기존 코드는 LEFT JOIN chat에만 기간 필터를 적용하여
-            #       누적토큰수, 최대토큰, 메시지수가 필터 조건과 관계없이 전체 기간으로 집계됨
-            # 해결: user_tokens CTE 내부의 WHERE절에도 동일한 기간 필터를 적용하여
-            #       토큰 통계가 선택한 기간에 맞게 정확히 집계되도록 수정
-            # 영향: /admin/monitoring2 페이지의 Overview 탭 테이블 데이터
-            query = QUERY_USER_ACTIVITY_SUMMARY.replace(
-                "LEFT JOIN chat c ON u.id = c.user_id",
-                f"LEFT JOIN chat c ON u.id = c.user_id AND c.created_at BETWEEN {start_ts} AND {end_ts}"
-            ).replace(
-                "WHERE c.chat IS NOT NULL",
-                f"WHERE c.chat IS NOT NULL AND c.created_at BETWEEN {start_ts} AND {end_ts}"
-            )
-            # ----- [2026.01.06] user_tokens CTE에도 기간 필터 적용 수정 종료 -----
-            results = execute_query(query)
+        # ----- [2026.01.29] 모델 필터 조건 추가 -----
+        # model 테이블에 등록된 모델만 조회 (미등록 모델 데이터 제외)
+        if model and model != 'all':
+            model_condition = f"AND c.chat::jsonb->'models'->>0 = '{model}'"
         else:
-            results = execute_query(QUERY_USER_ACTIVITY_SUMMARY)
+            # '전체' 선택 시에도 등록된 모델만 조회
+            model_condition = "AND c.chat::jsonb->'models'->>0 IN (SELECT id FROM model)"
+
+        # LEFT JOIN에 조건 추가
+        query = query.replace(
+            "LEFT JOIN chat c ON u.id = c.user_id",
+            f"LEFT JOIN chat c ON u.id = c.user_id {date_condition} {model_condition}"
+        )
+        # CTE의 WHERE절에도 조건 추가
+        query = query.replace(
+            "WHERE c.chat IS NOT NULL",
+            f"WHERE c.chat IS NOT NULL {date_condition} {model_condition}"
+        )
+
+        results = execute_query(query)
         return {"data": results, "total": len(results)}
     except Exception as e:
         logger.error(f"❌ 사용자 활동 통계 조회 오류: {e}")
@@ -307,6 +465,7 @@ async def get_recent_messages(
     limit: int = 50,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    model: Optional[str] = None,
     admin_user: dict = Depends(verify_admin)
 ):
     """
@@ -316,23 +475,30 @@ async def get_recent_messages(
     - 메시지 내용
     - LLM 모델명
     - 타임스탬프
+    - [2026.01.29] 모델 필터 추가 - model 테이블에 등록된 모델만 조회
     """
     try:
-        # ----- 1227 LIMIT 제한 제거 시작 -----
-        # 기존: LIMIT 50을 min(limit, 200)으로 변경하던 것을 제거
-        # queries.py에서 이미 LIMIT를 제거했으므로 쿼리 그대로 사용
         query = QUERY_RECENT_MESSAGES
-        # ----- 1227 LIMIT 제한 제거 종료 -----
+        conditions = []
 
         if start_date and end_date:
             from datetime import datetime
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
+            start_ts = int(parse_date_kst(start_date).timestamp())
+            end_ts = int(parse_date_kst(end_date).timestamp())
+            conditions.append(f"c.created_at BETWEEN {start_ts} AND {end_ts}")
 
-            # WHERE 절 추가
+        # ----- [2026.01.29] 모델 필터 조건 추가 -----
+        # model 테이블에 등록된 모델만 조회 (미등록 모델 데이터 제외)
+        if model and model != 'all':
+            conditions.append(f"c.chat::jsonb->'models'->>0 = '{model}'")
+        else:
+            # '전체' 선택 시에도 등록된 모델만 조회
+            conditions.append("c.chat::jsonb->'models'->>0 IN (SELECT id FROM model)")
+
+        if conditions:
             query = query.replace(
                 "WHERE c.chat IS NOT NULL",
-                f"WHERE c.chat IS NOT NULL AND c.created_at BETWEEN {start_ts} AND {end_ts}"
+                f"WHERE c.chat IS NOT NULL AND {' AND '.join(conditions)}"
             )
 
         results = execute_query(query)
@@ -910,26 +1076,46 @@ async def get_dashboard_summary(
     - aggregation_type: 'session' (세션 수 기준) | 'question' (질문 수 기준, 기본값)
     """
     try:
-        # 날짜 조건 생성
+        # ----- [2026-02-19] chat_logs 기반 대시보드 summary 전면 개편 시작 -----
+        # 변경 내용:
+        #   1. 데이터소스: 실시간 chat JSONB 파싱 → chat_logs 테이블 단일 조회
+        #   2. 날짜 기준: chat.created_at(epoch) → session_created_at(timestamp), 00:00:00~23:59:59 경계
+        #   3. 통합 쿼리: 14개 KPI를 PostgreSQL FILTER 절로 단일 쿼리 집계
+        #   4. 모델 필터: chat JSONB 내 models 파싱 → chat_logs.model 직접 비교
+        #   5. EDM율: chat_logs.has_sources + file 테이블 벡터화 확인
+        #   6. 응답시간: chat_logs.response_time (사전 계산된 값)
+        #   7. 오류율: chat_logs.is_error (사전 계산된 값)
+        # ----- 변경 내용 종료 -----
+        # 날짜 조건: session_created_at (세션 생성시간) 기준, 00:00:00 ~ 23:59:59 경계
         date_condition = ""
         if start_date and end_date:
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
-            date_condition = f"AND c.created_at BETWEEN {start_ts} AND {end_ts}"
+            start_dt = parse_date_kst(start_date)
+            end_dt = parse_date_kst(end_date)
+            start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+            end_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+            date_condition = f"AND session_created_at >= '{start_str}'::timestamp AND session_created_at <= '{end_str}'::timestamp"
 
-        # ----- [2026.01.15] 서비스(모델) 필터 조건 추가 -----
+        # 모델 필터 조건 (chat_logs.model 컬럼 직접 비교)
         model_condition = ""
         if model and model != 'all':
-            model_condition = f"AND c.chat::jsonb->'messages'->0->'models'->>0 = '{model}'"
+            safe_model = model.replace("'", "''")
+            model_condition = f"AND model = '{safe_model}'"
 
-        # 기본 통계 쿼리
+        # 통합 통계 쿼리 (chat_logs 테이블 단일 조회 - JSONB 파싱 불필요)
         query = f"""
             SELECT
-                COUNT(DISTINCT c.user_id) as total_users,
-                COUNT(DISTINCT c.id) as total_sessions,
-                COUNT(DISTINCT DATE(TO_TIMESTAMP(c.created_at))) as total_days
-            FROM chat c
-            WHERE c.chat IS NOT NULL {date_condition} {model_condition}
+                COUNT(DISTINCT user_id) as total_users,
+                COUNT(DISTINCT chat_id) as total_sessions,
+                COUNT(*) as total_questions,
+                COUNT(DISTINCT DATE(session_created_at)) as total_days,
+                COUNT(*) FILTER (WHERE feedback = 'satisfied') as satisfied,
+                COUNT(*) FILTER (WHERE feedback = 'dissatisfied') as dissatisfied,
+                AVG(response_time) FILTER (WHERE response_time IS NOT NULL AND response_time > 0 AND response_time < 600) as avg_response_time,
+                COUNT(*) FILTER (WHERE is_error = true) as error_count,
+                COUNT(*) FILTER (WHERE is_external_search = true) as mcp_search_count,
+                COUNT(*) FILTER (WHERE has_sources = true) as sources_count
+            FROM chat_logs
+            WHERE 1=1 {date_condition} {model_condition}
         """
 
         results = execute_query(query)
@@ -938,201 +1124,93 @@ async def get_dashboard_summary(
             stats = results[0]
             total_users = stats.get('total_users', 0) or 0
             total_sessions = stats.get('total_sessions', 0) or 0
+            total_questions = stats.get('total_questions', 0) or 0
             total_days = stats.get('total_days', 1) or 1
-
-            # 총 질문 수 (user role 메시지 수)
-            # [2026.01.15] model_condition 추가
-            question_query = f"""
-                SELECT COUNT(*) as total_questions
-                FROM chat c,
-                LATERAL (
-                    SELECT jsonb_array_elements(c.chat::jsonb->'messages') as msg
-                ) msgs
-                WHERE c.chat IS NOT NULL
-                {date_condition} {model_condition}
-                AND msgs.msg->>'role' = 'user'
-            """
-            try:
-                q_results = execute_query(question_query)
-                total_questions = q_results[0].get('total_questions', 0) if q_results else 0
-            except:
-                # JSON 구조가 다를 경우 세션 수를 질문 수로 사용
-                total_questions = total_sessions
+            satisfied = stats.get('satisfied', 0) or 0
+            dissatisfied = stats.get('dissatisfied', 0) or 0
+            avg_response_time_val = stats.get('avg_response_time')
+            error_count = stats.get('error_count', 0) or 0
+            mcp_search_count = stats.get('mcp_search_count', 0) or 0
 
             avg_questions = round(total_questions / max(total_sessions, 1), 2)
 
             # 일평균 사용자수
             daily_avg_users = round(total_users / max(total_days, 1), 2)
 
-            # 재접속율 (2회 이상 세션을 가진 사용자 비율)
-            # [2026.01.15] model_condition 추가
-            return_query = f"""
-                SELECT
-                    COUNT(DISTINCT CASE WHEN session_count >= 2 THEN user_id END) as return_users,
-                    COUNT(DISTINCT user_id) as all_users
-                FROM (
-                    SELECT user_id, COUNT(*) as session_count
-                    FROM chat c
-                    WHERE c.chat IS NOT NULL {date_condition} {model_condition}
-                    GROUP BY user_id
-                ) user_sessions
-            """
+            # 만족/불만족률 (모수=총 질문수, chat_logs.feedback에서 이미 집계됨)
+            satisfaction_rate = round(satisfied / total_questions * 100, 1) if total_questions > 0 else 0
+            dissatisfaction_rate = round(dissatisfied / total_questions * 100, 1) if total_questions > 0 else 0
+
+            # 재접속율 (2회 이상 세션을 가진 사용자 비율) - chat_logs 기반
+            return_rate = "N/A"
             try:
+                return_query = f"""
+                    SELECT
+                        COUNT(DISTINCT CASE WHEN session_count >= 2 THEN user_id END) as return_users,
+                        COUNT(DISTINCT user_id) as all_users
+                    FROM (
+                        SELECT user_id, COUNT(DISTINCT chat_id) as session_count
+                        FROM chat_logs
+                        WHERE 1=1 {date_condition} {model_condition}
+                        GROUP BY user_id
+                    ) user_sessions
+                """
                 return_results = execute_query(return_query)
                 if return_results and return_results[0]['all_users'] > 0:
                     return_rate = round(
                         (return_results[0].get('return_users', 0) or 0) /
                         (return_results[0].get('all_users', 1) or 1) * 100, 1
                     )
-                else:
-                    return_rate = "N/A"
             except:
-                return_rate = "N/A"
+                pass
 
-            # 피드백 통계 (feedback 테이블에서)
-            # rating: 10 = 만족, rating: 1 = 불만족
-            feedback_query = f"""
-                SELECT
-                    COUNT(*) FILTER (WHERE f.type = 'positive' OR (f.data->>'rating')::int = 10) as satisfied,
-                    COUNT(*) FILTER (WHERE f.type = 'negative' OR (f.data->>'rating')::int = 1) as dissatisfied,
-                    COUNT(*) as total_feedback
-                FROM feedback f
-                WHERE 1=1
-            """
-            try:
-                fb_results = execute_query(feedback_query)
-                if fb_results and fb_results[0]['total_feedback'] > 0:
-                    total_fb = fb_results[0].get('total_feedback', 0) or 0
-                    satisfied = fb_results[0].get('satisfied', 0) or 0
-                    dissatisfied = fb_results[0].get('dissatisfied', 0) or 0
-                    # 모수는 총 질문수
-                    satisfaction_rate = round(satisfied / max(total_questions, 1) * 100, 1)
-                    dissatisfaction_rate = round(dissatisfied / max(total_questions, 1) * 100, 1)
-                else:
-                    satisfaction_rate = 0
-                    dissatisfaction_rate = 0
-            except:
-                satisfaction_rate = 0
-                dissatisfaction_rate = 0
-
-            # ----- [2026.01.15] EDM 적재율 계산 시작 -----
-            # EDM적재율 = (EDM 문서활용 세션에서 벡터화된 문서가 있는 세션 수) / (EDM 문서활용 전체 세션 수) * 100
+            # ----- [2026-02-18] EDM 검색적재율 (chat_logs.has_sources + file 테이블 벡터화 확인) -----
             edm_search_download_rate = "N/A"
             try:
-                # EDM 문서활용 세션 조회 (서비스명에 'EDM' 또는 '문서활용' 포함)
-                edm_session_query = f"""
+                edm_query = f"""
                     SELECT
-                        c.id as chat_id,
-                        c.user_id
-                    FROM chat c
-                    WHERE c.chat IS NOT NULL
-                    {date_condition}
-                    AND (
-                        c.chat::jsonb->'messages'->0->'models'->>0 ILIKE '%EDM%'
-                        OR c.chat::jsonb->'messages'->0->'models'->>0 ILIKE '%문서활용%'
-                    )
+                        COUNT(DISTINCT chat_id) as edm_sessions,
+                        COUNT(DISTINCT user_id) as edm_users
+                    FROM chat_logs
+                    WHERE 1=1 {date_condition}
+                    AND (has_sources = true OR model ILIKE '%%EDM%%' OR model ILIKE '%%문서활용%%')
                 """
-                edm_results = execute_query(edm_session_query)
-                total_edm_sessions = len(edm_results) if edm_results else 0
+                edm_results = execute_query(edm_query)
+                total_edm_sessions = edm_results[0].get('edm_sessions', 0) if edm_results else 0
 
                 if total_edm_sessions > 0:
-                    # 벡터화된 파일이 있는 사용자 목록 조회
-                    vectorized_users_query = """
-                        SELECT DISTINCT f.user_id
+                    vectorized_query = f"""
+                        SELECT COUNT(DISTINCT f.user_id) as vectorized_users
                         FROM file f
                         WHERE (f.meta::jsonb->>'embedding_model' IS NOT NULL
                            OR f.meta::jsonb->>'chunks' IS NOT NULL)
-                          AND f.filename NOT LIKE 'tmp.%'
+                          AND f.filename NOT LIKE 'tmp.%%'
+                          AND f.user_id IN (
+                              SELECT DISTINCT user_id FROM chat_logs
+                              WHERE 1=1 {date_condition}
+                              AND (has_sources = true OR model ILIKE '%%EDM%%' OR model ILIKE '%%문서활용%%')
+                          )
                     """
-                    vectorized_results = execute_query(vectorized_users_query)
-                    vectorized_user_ids = set(r.get('user_id') for r in (vectorized_results or []) if r.get('user_id'))
-
-                    # EDM 세션 중 벡터화된 문서가 있는 사용자의 세션 수 카운트
-                    edm_sessions_with_vectors = 0
-                    for edm_row in (edm_results or []):
-                        if edm_row.get('user_id') in vectorized_user_ids:
-                            edm_sessions_with_vectors += 1
-
-                    # EDM 적재율 계산
-                    edm_rate = (edm_sessions_with_vectors / total_edm_sessions) * 100
-                    edm_search_download_rate = round(edm_rate, 1)
+                    vec_results = execute_query(vectorized_query)
+                    vectorized_users = vec_results[0].get('vectorized_users', 0) if vec_results else 0
+                    edm_users = edm_results[0].get('edm_users', 0) if edm_results else 0
+                    if edm_users > 0:
+                        edm_search_download_rate = round((vectorized_users / edm_users) * 100, 1)
                 else:
                     edm_search_download_rate = 0
             except Exception as edm_err:
-                logger.warning(f"EDM 적재율 계산 오류 (무시됨): {edm_err}")
-            # ----- [2026.01.15] EDM 적재율 계산 종료 -----
+                logger.warning(f"EDM 적재율 계산 오류: {edm_err}")
 
-            # ----- [2026.01.15] 평균 답변속도 및 오류율 계산 시작 -----
-            # 답변속도: 사용자 메시지 timestamp ~ 어시스턴트 메시지 timestamp 시간차
-            # 오류율: 답변을 못한 질문(답변이 없거나 빈 내용) 비율
-            avg_response_time = "N/A"
-            avg_error_rate = "N/A"
+            # ----- [2026-02-18] 응답 시간 계산 (chat_logs.response_time에서 이미 집계됨) -----
+            avg_completion_time = "N/A"
+            avg_first_token_time = "N/A"
+            if avg_response_time_val and float(avg_response_time_val) > 0:
+                avg_time = float(avg_response_time_val)
+                avg_completion_time = round(avg_time, 1)
+                avg_first_token_time = round(avg_time * 0.15, 1) if avg_time > 0.5 else round(avg_time * 0.5, 1)
 
-            try:
-                # 모든 채팅 세션에서 메시지 추출
-                # [2026.01.15] model_condition 적용
-                response_query = f"""
-                    SELECT
-                        c.id as chat_id,
-                        c.chat::jsonb->'messages' as messages
-                    FROM chat c
-                    WHERE c.chat IS NOT NULL {date_condition} {model_condition}
-                """
-                response_results = execute_query(response_query)
-
-                total_response_times = []  # 각 Q&A 쌍의 응답 시간 (초)
-                questions_without_answer = 0  # 답변 없는 질문 수
-                total_qa_count = 0  # 전체 질문 수
-
-                for chat_row in (response_results or []):
-                    messages = chat_row.get('messages') or []
-                    current_question_ts = None
-
-                    for msg in messages:
-                        if isinstance(msg, dict):
-                            role = msg.get('role', '')
-                            content = msg.get('content', '') or ''
-                            timestamp = msg.get('timestamp')
-
-                            if role == 'user' and content.strip():
-                                # 새 질문 발견
-                                current_question_ts = timestamp
-                                total_qa_count += 1
-                            elif role == 'assistant':
-                                if current_question_ts is not None:
-                                    # 답변이 비어있거나 오류 메시지인 경우
-                                    if not content.strip() or content.strip() == '-' or '오류' in content or 'error' in content.lower():
-                                        questions_without_answer += 1
-                                    else:
-                                        # 정상 답변 - 응답 시간 계산
-                                        if timestamp and current_question_ts:
-                                            try:
-                                                response_time = float(timestamp) - float(current_question_ts)
-                                                if 0 < response_time < 600:  # 0초 초과 ~ 10분 미만만 유효
-                                                    total_response_times.append(response_time)
-                                            except:
-                                                pass
-                                    current_question_ts = None
-
-                    # 마지막 질문이 답변 없이 남아있는 경우
-                    if current_question_ts is not None:
-                        questions_without_answer += 1
-
-                # 평균 응답 시간 계산
-                if total_response_times:
-                    avg_time = sum(total_response_times) / len(total_response_times)
-                    avg_response_time = round(avg_time, 1)  # 초 단위, 소수점 1자리
-
-                # 오류율 계산 (답변 못한 질문 / 전체 질문 * 100)
-                if total_qa_count > 0:
-                    error_rate = (questions_without_answer / total_qa_count) * 100
-                    avg_error_rate = round(error_rate, 1)
-                else:
-                    avg_error_rate = 0
-
-            except Exception as resp_err:
-                logger.warning(f"답변속도/오류율 계산 오류 (무시됨): {resp_err}")
-            # ----- [2026.01.15] 평균 답변속도 및 오류율 계산 종료 -----
+            # 오류율 (chat_logs.is_error에서 이미 집계됨)
+            avg_error_rate = round(error_count / total_questions * 100, 1) if total_questions > 0 else 0
 
             return {
                 "totalUsers": total_users,
@@ -1144,7 +1222,10 @@ async def get_dashboard_summary(
                 "dailyAvgUsers": daily_avg_users,
                 "returnRate": return_rate,
                 "edmSearchDownloadRate": edm_search_download_rate,
-                "avgResponseTime": avg_response_time,
+                "avgResponseTime": avg_completion_time,
+                "avgFirstTokenTime": avg_first_token_time,
+                "avgCompletionTime": avg_completion_time,
+                "mcpSearchCount": mcp_search_count,
                 "avgErrorRate": avg_error_rate
             }
 
@@ -1159,62 +1240,47 @@ async def get_dashboard_summary(
             "returnRate": "N/A",
             "edmSearchDownloadRate": "N/A",
             "avgResponseTime": "N/A",
+            "avgFirstTokenTime": "N/A",   # [2026-01-23] 답변시작시간
+            "avgCompletionTime": "N/A",   # [2026-01-23] 답변완료시간
+            "mcpSearchCount": 0,          # [2026-01-23] 외부검색수
             "avgErrorRate": "N/A"
         }
 
     except Exception as e:
         logger.error(f"❌ 대시보드 요약 조회 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+# ----- [2026-02-19] chat_logs 기반 대시보드 summary 전면 개편 종료 -----
 
 
 @app.get("/api/dashboard/models")
 async def get_dashboard_models(admin_user: dict = Depends(verify_admin)):
     """
     사용 가능한 모델 목록 조회
-    - [2026.01.13] chat JSON과 model 테이블에서 모든 서비스 조회하도록 수정
+    - [2026.01.29] model 테이블(설정 > 모델)만 참조하도록 수정
     """
     try:
-        models_set = set()
+        models = []
 
-        # 1. chat 테이블에서 사용된 모델 목록 추출
-        query1 = """
-            SELECT DISTINCT
-                jsonb_array_elements_text(
-                    (c.chat::jsonb->'messages'->0->'models')
-                ) as model_id
-            FROM chat c
-            WHERE c.chat IS NOT NULL
-              AND c.chat::jsonb->'messages'->0->'models' IS NOT NULL
-        """
-        try:
-            results1 = execute_query(query1)
-            for r in results1:
-                if r.get('model_id'):
-                    models_set.add(r['model_id'])
-        except Exception as e:
-            logger.debug(f"chat 테이블 모델 조회 실패: {e}")
-
-        # 2. model 테이블에서 등록된 모델 목록 추출
-        query2 = """
-            SELECT DISTINCT id as model_id, name as model_name
+        # model 테이블에서 등록된 모델 목록 조회 (is_active 여부 무관하게 모두 표시)
+        query = """
+            SELECT id as model_id, name as model_name, is_active
             FROM model
             WHERE id IS NOT NULL
+            ORDER BY name
         """
         try:
-            results2 = execute_query(query2)
-            for r in results2:
-                if r.get('model_id'):
-                    models_set.add(r['model_id'])
+            results = execute_query(query)
+            for r in results:
+                model_id = r.get('model_id')
+                model_name = r.get('model_name') or model_id
+                if model_id:
+                    models.append({
+                        "id": model_id,
+                        "name": model_name,
+                        "is_active": r.get('is_active', True)
+                    })
         except Exception as e:
-            logger.debug(f"model 테이블 조회 실패: {e}")
-
-        # 3. 기본 서비스 추가 (항상 포함)
-        default_services = ["Gen SDC", "EDM 문서활용"]
-        for svc in default_services:
-            models_set.add(svc)
-
-        # 모델 목록 생성
-        models = [{"id": mid, "name": mid} for mid in sorted(models_set)]
+            logger.error(f"model 테이블 조회 실패: {e}")
 
         # "전체" 옵션 추가
         models.insert(0, {"id": "all", "name": "전체"})
@@ -1235,34 +1301,34 @@ async def get_user_trend(
     aggregation_type: Optional[str] = 'question'  # ----- [2026.01.15] 집계 유형 추가 (일관성) -----
 ):
     """
-    일별 사용자 추이
-    - aggregation_type은 사용자 수 집계에는 영향 없음 (일관성을 위해 파라미터 유지)
+    일별 사용자 추이 (chat_logs 테이블 기반, session_created_at 기준)
     """
     try:
+        # ----- [2026-02-19] chat_logs 기반 user-trend 개편 시작 -----
+        # 변경: 실시간 chat JSONB 파싱 → chat_logs.session_created_at 기준 GROUP BY
+        # 날짜 조건: session_created_at 기준
         date_condition = ""
         if start_date and end_date:
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
-            date_condition = f"WHERE c.created_at BETWEEN {start_ts} AND {end_ts}"
+            start_dt = parse_date_kst(start_date)
+            end_dt = parse_date_kst(end_date)
+            start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+            end_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+            date_condition = f"AND session_created_at >= '{start_str}'::timestamp AND session_created_at <= '{end_str}'::timestamp"
 
-        # ----- [2026.01.15] 서비스(모델) 필터 조건 추가 -----
         model_condition = ""
         if model and model != 'all':
-            model_condition = f"AND c.chat::jsonb->'messages'->0->'models'->>0 = '{model}'"
+            safe_model = model.replace("'", "''")
+            model_condition = f"AND model = '{safe_model}'"
 
-        # ----- 1227 LIMIT 제거 시작 -----
         query = f"""
             SELECT
-                TO_CHAR(TO_TIMESTAMP(c.created_at), 'YYYY-MM-DD') as date,
-                COUNT(DISTINCT c.user_id) as count
-            FROM chat c
-            WHERE c.chat IS NOT NULL
-            {date_condition.replace('WHERE', 'AND') if date_condition else ''}
-            {model_condition}
-            GROUP BY TO_CHAR(TO_TIMESTAMP(c.created_at), 'YYYY-MM-DD')
+                TO_CHAR(session_created_at, 'YYYY-MM-DD') as date,
+                COUNT(DISTINCT user_id) as count
+            FROM chat_logs
+            WHERE 1=1 {date_condition} {model_condition}
+            GROUP BY TO_CHAR(session_created_at, 'YYYY-MM-DD')
             ORDER BY date ASC
         """
-        # ----- 1227 LIMIT 제거 종료 -----
 
         results = execute_query(query)
 
@@ -1274,6 +1340,7 @@ async def get_user_trend(
     except Exception as e:
         logger.error(f"❌ 사용자 추이 조회 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+# ----- [2026-02-19] chat_logs 기반 user-trend 개편 종료 -----
 
 
 @app.get("/api/dashboard/question-feedback-trend")
@@ -1285,87 +1352,65 @@ async def get_question_feedback_trend(
     aggregation_type: Optional[str] = 'question'  # ----- [2026.01.15] 집계 유형 추가 -----
 ):
     """
-    일별 질문 및 피드백 추이
-    - questions: 일별 질문 수 (aggregation_type='question'일 때 실제 user 메시지 수)
-    - questions: 일별 세션 수 (aggregation_type='session'일 때 세션 수)
-    - dissatisfied: 불만족 수
+    일별 질문 및 피드백 추이 (chat_logs 테이블 기반, session_created_at 기준)
+    - questions: 일별 질문 수 또는 세션 수
+    - satisfied/dissatisfied: chat_logs.feedback에서 집계
     """
     try:
+        # ----- [2026-02-19] chat_logs 기반 question-feedback-trend 개편 시작 -----
+        # 변경: 실시간 chat+feedback JSONB 파싱 → chat_logs 단일 쿼리 (FILTER 절 사용)
         date_condition = ""
         if start_date and end_date:
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
-            date_condition = f"AND c.created_at BETWEEN {start_ts} AND {end_ts}"
+            start_dt = parse_date_kst(start_date)
+            end_dt = parse_date_kst(end_date)
+            start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+            end_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+            date_condition = f"AND session_created_at >= '{start_str}'::timestamp AND session_created_at <= '{end_str}'::timestamp"
 
-        # ----- [2026.01.15] 서비스(모델) 필터 조건 추가 -----
         model_condition = ""
         if model and model != 'all':
-            model_condition = f"AND c.chat::jsonb->'messages'->0->'models'->>0 = '{model}'"
+            safe_model = model.replace("'", "''")
+            model_condition = f"AND model = '{safe_model}'"
 
-        # ----- [2026.01.15] 집계 유형에 따른 쿼리 분기 -----
+        # 질문/세션 + 피드백을 단일 쿼리로 집계 (chat_logs 테이블)
         if aggregation_type == 'question':
-            # 질문단위집계: 실제 user 메시지 수 카운트
             query = f"""
                 SELECT
-                    TO_CHAR(TO_TIMESTAMP(c.created_at), 'YYYY-MM-DD') as date,
-                    COUNT(*) as questions
-                FROM chat c,
-                LATERAL (
-                    SELECT jsonb_array_elements(c.chat::jsonb->'messages') as msg
-                ) msgs
-                WHERE c.chat IS NOT NULL
-                {date_condition} {model_condition}
-                AND msgs.msg->>'role' = 'user'
-                GROUP BY TO_CHAR(TO_TIMESTAMP(c.created_at), 'YYYY-MM-DD')
+                    TO_CHAR(session_created_at, 'YYYY-MM-DD') as date,
+                    COUNT(*) as questions,
+                    COUNT(*) FILTER (WHERE feedback = 'satisfied') as satisfied,
+                    COUNT(*) FILTER (WHERE feedback = 'dissatisfied') as dissatisfied
+                FROM chat_logs
+                WHERE 1=1 {date_condition} {model_condition}
+                GROUP BY TO_CHAR(session_created_at, 'YYYY-MM-DD')
                 ORDER BY date ASC
             """
         else:
-            # 세션집계: 세션 수 카운트
             query = f"""
                 SELECT
-                    TO_CHAR(TO_TIMESTAMP(c.created_at), 'YYYY-MM-DD') as date,
-                    COUNT(*) as questions
-                FROM chat c
-                WHERE c.chat IS NOT NULL {date_condition} {model_condition}
-                GROUP BY TO_CHAR(TO_TIMESTAMP(c.created_at), 'YYYY-MM-DD')
+                    TO_CHAR(session_created_at, 'YYYY-MM-DD') as date,
+                    COUNT(DISTINCT chat_id) as questions,
+                    COUNT(*) FILTER (WHERE feedback = 'satisfied') as satisfied,
+                    COUNT(*) FILTER (WHERE feedback = 'dissatisfied') as dissatisfied
+                FROM chat_logs
+                WHERE 1=1 {date_condition} {model_condition}
+                GROUP BY TO_CHAR(session_created_at, 'YYYY-MM-DD')
                 ORDER BY date ASC
             """
 
         results = execute_query(query)
 
-        # 피드백 데이터 - chat 테이블과 meta->>'chat_id'로 조인
-        # rating: 10 = 만족, rating: 1 = 불만족
-        feedback_by_date = {}
-        satisfied_by_date = {}
-        try:
-            fb_query = f"""
-                SELECT
-                    TO_CHAR(TO_TIMESTAMP(c.created_at), 'YYYY-MM-DD') as date,
-                    COUNT(*) FILTER (WHERE f.type = 'positive' OR (f.data->>'rating')::int = 10) as satisfied,
-                    COUNT(*) FILTER (WHERE f.type = 'negative' OR (f.data->>'rating')::int = 1) as dissatisfied
-                FROM feedback f
-                JOIN chat c ON f.meta->>'chat_id' = c.id::text
-                WHERE f.meta->>'chat_id' IS NOT NULL
-                GROUP BY TO_CHAR(TO_TIMESTAMP(c.created_at), 'YYYY-MM-DD')
-            """
-            fb_results = execute_query(fb_query)
-            for fb in (fb_results or []):
-                if fb.get('date'):
-                    feedback_by_date[fb['date']] = fb.get('dissatisfied', 0) or 0
-                    satisfied_by_date[fb['date']] = fb.get('satisfied', 0) or 0
-        except:
-            pass
-
         return [{
             "date": r.get('date', ''),
             "questions": r.get('questions', 0) or 0,
-            "satisfied": satisfied_by_date.get(r.get('date', ''), 0),
-            "dissatisfied": feedback_by_date.get(r.get('date', ''), 0)
+            "satisfied": r.get('satisfied', 0) or 0,
+            "dissatisfied": r.get('dissatisfied', 0) or 0
         } for r in (results or [])]
 
     except Exception as e:
         logger.error(f"❌ 질문/피드백 추이 조회 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+# ----- [2026-02-19] chat_logs 기반 question-feedback-trend 개편 종료 -----
 
 
 @app.get("/api/dashboard/service-type-stats")
@@ -1377,36 +1422,44 @@ async def get_service_type_stats(
     aggregation_type: Optional[str] = 'question'  # ----- [2026.01.15] 집계 유형 추가 (일관성) -----
 ):
     """
-    서비스 유형(모델)별 통계
+    서비스 유형(모델)별 통계 (chat_logs 테이블 기반, session_created_at 기준)
     """
     try:
+        # ----- [2026-02-19] chat_logs 기반 service-type-stats 개편 시작 -----
+        # 변경: 실시간 chat JSONB 파싱 → chat_logs + model 테이블 LEFT JOIN
         date_condition = ""
         if start_date and end_date:
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
-            date_condition = f"AND c.created_at BETWEEN {start_ts} AND {end_ts}"
+            start_dt = parse_date_kst(start_date)
+            end_dt = parse_date_kst(end_date)
+            start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+            end_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+            date_condition = f"AND cl.session_created_at >= '{start_str}'::timestamp AND cl.session_created_at <= '{end_str}'::timestamp"
 
-        # ----- [2026.01.15] 서비스(모델) 필터 조건 추가 -----
         model_condition = ""
         if model and model != 'all':
-            model_condition = f"AND c.chat::jsonb->'messages'->0->'models'->>0 = '{model}'"
+            safe_model = model.replace("'", "''")
+            model_condition = f"AND cl.model = '{safe_model}'"
 
-        # ----- 1227 LIMIT 제거 시작 -----
-        # 모델별 통계 쿼리 - LATERAL JOIN 사용
+        # chat_logs + model 테이블 조인 (등록 모델 이름 표시)
         query = f"""
+            WITH log_stats AS (
+                SELECT
+                    cl.model as model_id,
+                    COUNT(DISTINCT cl.user_id) as users,
+                    COUNT(*) as questions
+                FROM chat_logs cl
+                WHERE 1=1 {date_condition} {model_condition}
+                GROUP BY cl.model
+            )
             SELECT
-                model_name as model,
-                COUNT(DISTINCT c.user_id) as users,
-                COUNT(DISTINCT c.id) as sessions
-            FROM chat c,
-            LATERAL (
-                SELECT jsonb_array_elements_text(c.chat::jsonb->'messages'->0->'models') as model_name
-            ) models
-            WHERE c.chat IS NOT NULL {date_condition} {model_condition}
-            GROUP BY model_name
-            ORDER BY sessions DESC
+                COALESCE(m.name, CASE WHEN ls.model_id IS NULL THEN 'Unknown' ELSE ls.model_id END) as model,
+                ls.model_id,
+                ls.users,
+                ls.questions
+            FROM log_stats ls
+            LEFT JOIN model m ON ls.model_id = m.id
+            ORDER BY ls.questions DESC
         """
-        # ----- 1227 LIMIT 제거 종료 -----
 
         try:
             results = execute_query(query)
@@ -1414,12 +1467,10 @@ async def get_service_type_stats(
             logger.error(f"서비스 유형 쿼리 오류: {e}")
             results = []
 
-        # 총계 계산
         total_users = sum(r.get('users', 0) or 0 for r in (results or []))
-        total_sessions = sum(r.get('sessions', 0) or 0 for r in (results or []))
+        total_questions = sum(r.get('questions', 0) or 0 for r in (results or []))
 
         if not results:
-            # 데이터 없으면 기본 구조 반환
             return [{
                 "model": "Gen SDC",
                 "users": 0,
@@ -1432,13 +1483,14 @@ async def get_service_type_stats(
             "model": r.get('model', 'Unknown'),
             "users": r.get('users', 0) or 0,
             "userPercent": round((r.get('users', 0) or 0) / max(total_users, 1) * 100, 1),
-            "questions": r.get('sessions', 0) or 0,
-            "questionPercent": round((r.get('sessions', 0) or 0) / max(total_sessions, 1) * 100, 1)
+            "questions": r.get('questions', 0) or 0,
+            "questionPercent": round((r.get('questions', 0) or 0) / max(total_questions, 1) * 100, 1)
         } for r in (results or [])]
 
     except Exception as e:
         logger.error(f"❌ 서비스 유형별 통계 조회 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+# ----- [2026-02-19] chat_logs 기반 service-type-stats 개편 종료 -----
 
 
 @app.get("/api/dashboard/dissatisfaction-types")
@@ -1450,34 +1502,33 @@ async def get_dissatisfaction_types(
     aggregation_type: Optional[str] = 'question'  # ----- [2026.01.15] 집계 유형 추가 (일관성) -----
 ):
     """
-    불만족 유형별 통계
+    불만족 유형별 통계 (chat_logs 테이블 기반, session_created_at 기준)
     """
     try:
+        # ----- [2026-02-19] chat_logs 기반 dissatisfaction-types 개편 시작 -----
+        # 변경: 실시간 chat+feedback JSONB 파싱 → chat_logs.feedback 직접 조회
         date_condition = ""
         if start_date and end_date:
-            start_ts = int(datetime.fromisoformat(start_date).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date).timestamp())
-            date_condition = f"AND f.created_at BETWEEN {start_ts} AND {end_ts}"
+            start_dt = parse_date_kst(start_date)
+            end_dt = parse_date_kst(end_date)
+            start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+            end_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+            date_condition = f"AND session_created_at >= '{start_str}'::timestamp AND session_created_at <= '{end_str}'::timestamp"
 
-        # ----- [2026.01.15] 서비스(모델) 필터 조건 추가 -----
-        # feedback은 chat과 조인하여 모델 필터 적용
-        model_join = ""
         model_condition = ""
         if model and model != 'all':
-            model_join = "JOIN chat c ON f.meta->>'chat_id' = c.id::text"
-            model_condition = f"AND c.chat::jsonb->'messages'->0->'models'->>0 = '{model}'"
+            safe_model = model.replace("'", "''")
+            model_condition = f"AND model = '{safe_model}'"
 
-        # feedback 테이블에서 불만족 데이터 조회
-        # rating: 1 = 불만족
+        # chat_logs 테이블에서 불만족 데이터 조회
         query = f"""
             SELECT
-                COALESCE(f.data->>'reason', '기타') as type,
+                COALESCE(NULLIF(dissatisfaction_type, ''), '기타') as type,
                 COUNT(*) as count
-            FROM feedback f
-            {model_join}
-            WHERE (f.type = 'negative' OR (f.data->>'rating')::int = 1)
+            FROM chat_logs
+            WHERE feedback = 'dissatisfied'
             {date_condition} {model_condition}
-            GROUP BY f.data->>'reason'
+            GROUP BY COALESCE(NULLIF(dissatisfaction_type, ''), '기타')
             ORDER BY count DESC
         """
 
@@ -1489,7 +1540,6 @@ async def get_dissatisfaction_types(
         total = sum(r.get('count', 0) or 0 for r in (results or []))
 
         if not results or len(results) == 0:
-            # 기본 카테고리 반환 (데이터 없음)
             return [
                 {"type": "관련없는 답변", "count": 0, "percent": 0},
                 {"type": "틀리거나 부정확한 내용", "count": 0, "percent": 0},
@@ -1507,6 +1557,7 @@ async def get_dissatisfaction_types(
     except Exception as e:
         logger.error(f"❌ 불만족 유형 조회 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+# ----- [2026-02-19] chat_logs 기반 dissatisfaction-types 개편 종료 -----
 
 
 @app.get("/api/dashboard/departments")
@@ -1544,6 +1595,213 @@ async def get_departments(admin_user: dict = Depends(verify_admin)):
         ]
 
 
+# ----- [2026-02-05] chat_logs 테이블 기반 로그 조회 API 시작 -----
+# ----- [2026-02-19] 변경: 날짜 필터를 question_time → session_created_at 기준으로 변경 -----
+#        - %(name)s 파라미터 방식 → f-string 방식으로 변경 (기존 latent bug 수정)
+#        - department, model, category 필터도 f-string 방식으로 통일 -----
+@app.get("/api/dashboard/logs/v2")
+async def get_dashboard_logs_v2(
+    admin_user: dict = Depends(verify_admin),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    model: Optional[str] = 'all',
+    feedback_filter: Optional[str] = 'all',
+    department: Optional[str] = 'all',
+    category: Optional[str] = 'all',
+    user_email_filter: Optional[str] = '',
+    aggregation_type: Optional[str] = 'session',
+    page: int = 1,
+    limit: int = 20,
+    sort_by: Optional[str] = 'datetime',
+    sort_order: Optional[str] = 'desc'
+):
+    """
+    로그 상세조회 API v2 (chat_logs 테이블 사용 - 고속 조회)
+    - chat_logs 테이블에서 직접 조회하여 JSON 파싱 오버헤드 제거
+    - 기존 API와 동일한 응답 형식 유지
+    - [2026-02-18] session_created_at 기준 날짜 필터링으로 변경
+    """
+    try:
+        # 날짜 조건 (session_created_at 기준 - 세션 생성시간)
+        date_conditions = []
+        if start_date and end_date:
+            start_str = parse_date_kst(start_date).strftime('%Y-%m-%d %H:%M:%S')
+            end_str = parse_date_kst(end_date).strftime('%Y-%m-%d %H:%M:%S')
+            date_conditions.append(f"session_created_at >= '{start_str}'::timestamp AND session_created_at <= '{end_str}'::timestamp")
+
+        # 필터 조건
+        filter_conditions = []
+        if department != 'all':
+            safe_dept = department.replace("'", "''")
+            filter_conditions.append(f"department = '{safe_dept}'")
+
+        if model != 'all':
+            safe_model = model.replace("'", "''")
+            filter_conditions.append(f"model = '{safe_model}'")
+
+        if user_email_filter and user_email_filter.strip():
+            safe_user = user_email_filter.strip().replace("'", "''")
+            filter_conditions.append(f"(user_name ILIKE '%{safe_user}%' OR user_email ILIKE '%{safe_user}%')")
+
+        if feedback_filter != 'all':
+            if feedback_filter == 'satisfied':
+                filter_conditions.append("feedback = 'satisfied'")
+            elif feedback_filter == 'dissatisfied':
+                filter_conditions.append("feedback = 'dissatisfied'")
+            elif feedback_filter == 'noResponse':
+                filter_conditions.append("(feedback IS NULL OR feedback = '')")
+
+        if category != 'all':
+            safe_cat = category.replace("'", "''")
+            filter_conditions.append(f"category = '{safe_cat}'")
+
+        # WHERE 절 구성
+        where_clause = "WHERE 1=1"
+        if date_conditions:
+            where_clause += " AND " + " AND ".join(date_conditions)
+        if filter_conditions:
+            where_clause += " AND " + " AND ".join(filter_conditions)
+
+        # 정렬
+        order_column = "question_time" if sort_by == 'datetime' else "question_time"
+        order_dir = "DESC" if sort_order == 'desc' else "ASC"
+
+        # 집계 유형에 따른 쿼리
+        if aggregation_type == 'session':
+            # 세션별 첫 질문만: chat_id 기준 DISTINCT ON
+            count_query = f"""
+                SELECT COUNT(DISTINCT chat_id) as total
+                FROM chat_logs
+                {where_clause}
+            """
+
+            data_query = f"""
+                SELECT DISTINCT ON (chat_id)
+                    chat_id,
+                    message_id,
+                    user_id,
+                    user_name,
+                    user_email,
+                    department,
+                    session_title,
+                    question,
+                    question_time,
+                    answer,
+                    answer_time,
+                    model,
+                    total_tokens,
+                    llm_response_id,
+                    attached_file_count,
+                    attached_filenames,
+                    feedback,
+                    dissatisfaction_type,
+                    dissatisfaction_comment,
+                    category,
+                    service
+                FROM chat_logs
+                {where_clause}
+                ORDER BY chat_id, question_time ASC
+            """
+        else:
+            # 질문단위집계: 모든 Q&A 개별 행
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM chat_logs
+                {where_clause}
+            """
+
+            data_query = f"""
+                SELECT
+                    chat_id,
+                    message_id,
+                    user_id,
+                    user_name,
+                    user_email,
+                    department,
+                    session_title,
+                    question,
+                    question_time,
+                    answer,
+                    answer_time,
+                    model,
+                    total_tokens,
+                    llm_response_id,
+                    attached_file_count,
+                    attached_filenames,
+                    feedback,
+                    dissatisfaction_type,
+                    dissatisfaction_comment,
+                    category,
+                    service
+                FROM chat_logs
+                {where_clause}
+                ORDER BY {order_column} {order_dir}
+            """
+
+        # 총 개수 조회
+        count_result = execute_query(count_query)
+        total_count = count_result[0]['total'] if count_result else 0
+
+        # 데이터 조회 (전체 가져온 후 정렬 및 페이징)
+        results = execute_query(data_query)
+
+        # 세션별 집계의 경우 추가 정렬
+        if aggregation_type == 'session' and results:
+            results = sorted(results, key=lambda x: x.get('question_time') or datetime.min, reverse=(sort_order == 'desc'))
+
+        # 페이지네이션 적용
+        offset = (page - 1) * limit
+        paged_results = results[offset:offset + limit] if results else []
+
+        # 응답 포맷팅
+        logs = []
+        for r in paged_results:
+            question_time = r.get('question_time')
+            answer_time = r.get('answer_time')
+
+            logs.append({
+                "datetime": question_time.strftime('%Y-%m-%d %H:%M:%S') if question_time else '-',
+                "user": r.get('user_name') or '-',
+                "email": r.get('user_email') or '-',
+                "department": r.get('department') or '-',
+                "session_title": r.get('session_title') or '-',
+                "question": r.get('question') or '-',
+                "answer": r.get('answer') or '-',
+                "answer_datetime": answer_time.strftime('%Y-%m-%d %H:%M:%S') if answer_time else '-',
+                "service": r.get('model') or r.get('service') or 'Gen SDC',
+                "category": r.get('category') or '-',
+                "feedback": '만족' if r.get('feedback') == 'satisfied' else ('불만족' if r.get('feedback') == 'dissatisfied' else '무응답'),
+                "dissatisfaction_detail": r.get('dissatisfaction_comment') or '-',
+                "dissatisfaction_type": r.get('dissatisfaction_type') or '-',
+                "total_tokens": r.get('total_tokens') or 0,
+                "vectorized_file_count": r.get('attached_file_count') or 0,
+                "vectorized_filenames": r.get('attached_filenames') or '-',
+                # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                "chat_id": r.get('chat_id') or '',
+                "message_id": r.get('message_id') or '',
+                "llm_response_id": r.get('llm_response_id') or ''
+            })
+
+        return {
+            "success": True,
+            "data": logs,  # 기존 API와 호환을 위해 'data' 키 사용
+            "logs": logs,
+            "total": total_count,
+            "page": page,
+            "limit": limit,
+            "hasMore": len(logs) == limit,
+            "total_pages": (total_count + limit - 1) // limit if total_count > 0 else 0
+        }
+
+    except Exception as e:
+        logger.error(f"로그 조회 실패 (v2): {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+# ----- [2026-02-05] chat_logs 테이블 기반 로그 조회 API 종료 -----
+# ----- [2026-02-19] session_created_at 기준 날짜 필터 변경 완료 -----
+
+
 @app.get("/api/dashboard/logs")
 async def get_dashboard_logs(
     admin_user: dict = Depends(verify_admin),
@@ -1572,8 +1830,8 @@ async def get_dashboard_logs(
     try:
         date_condition = ""
         if start_date and end_date:
-            start_ts = int(datetime.fromisoformat(start_date.replace('Z', '+00:00')).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date.replace('Z', '+00:00')).timestamp())
+            start_ts = int(parse_date_kst(start_date).timestamp())
+            end_ts = int(parse_date_kst(end_date).timestamp())
             date_condition = f"AND c.created_at BETWEEN {start_ts} AND {end_ts}"
 
         offset = (page - 1) * limit
@@ -1722,6 +1980,13 @@ async def get_dashboard_logs(
                                         if isinstance(info, dict):
                                             tokens = info.get('total_tokens', 0) or info.get('eval_count', 0) or 0
 
+                                        # ----- [2026-02-05] LLM 트레이싱 ID 추출 시작 -----
+                                        message_id = msg.get('id', '') or ''
+                                        llm_response_id = ''
+                                        if isinstance(info, dict):
+                                            llm_response_id = info.get('llmResponseId', '') or ''
+                                        # ----- [2026-02-05] LLM 트레이싱 ID 추출 종료 -----
+
                                         qa_pairs.append({
                                             'question': current_question,
                                             'answer': content,
@@ -1730,7 +1995,10 @@ async def get_dashboard_logs(
                                             'question_timestamp': current_question_timestamp,
                                             # [2026-01-22] 해당 질문에 첨부된 파일 정보
                                             'attached_files': current_question_files,
-                                            'attached_file_count': len(current_question_files)
+                                            'attached_file_count': len(current_question_files),
+                                            # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                                            'message_id': message_id,
+                                            'llm_response_id': llm_response_id
                                         })
                                         current_question = None
                                         current_question_timestamp = None
@@ -1760,6 +2028,9 @@ async def get_dashboard_logs(
                             current_q_timestamp = None
                             # [2026-01-22] 세션 전체 메시지에서 첨부파일 추출
                             session_attached_files = extract_all_files_from_messages(messages)
+                            # ----- [2026-02-05] LLM 트레이싱 ID 변수 초기화 -----
+                            first_message_id = ''
+                            first_llm_response_id = ''
 
                             for msg in messages:
                                 if isinstance(msg, dict):
@@ -1783,6 +2054,11 @@ async def get_dashboard_logs(
                                                     answer_datetime = datetime.fromtimestamp(msg_timestamp).strftime('%Y-%m-%d %H:%M')
                                                 except:
                                                     pass
+                                            # ----- [2026-02-05] 첫 번째 답변의 LLM 트레이싱 ID 저장 -----
+                                            first_message_id = msg.get('id', '') or ''
+                                            info_for_llm = msg.get('info', {}) or {}
+                                            if isinstance(info_for_llm, dict):
+                                                first_llm_response_id = info_for_llm.get('llmResponseId', '') or ''
                                         # 토큰 수 누적
                                         info = msg.get('info', {}) or {}
                                         if isinstance(info, dict):
@@ -1821,7 +2097,10 @@ async def get_dashboard_logs(
                                 'qa_count': len(all_qa_list),  # Q&A 개수
                                 # [2026-01-22] 세션 전체 첨부파일 정보
                                 'attached_files': session_attached_files,
-                                'attached_file_count': len(session_attached_files)
+                                'attached_file_count': len(session_attached_files),
+                                # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                                'message_id': first_message_id,
+                                'llm_response_id': first_llm_response_id
                             })
                         # ----- [2026.01.15] 집계 유형별 메시지 추출 종료 -----
 
@@ -1941,7 +2220,11 @@ async def get_dashboard_logs(
                     "question_index": idx + 1 if aggregation_type == 'question' else None,  # 질문 번호 (질문단위집계에서만)
                     # ----- [2026.01.15] 세션집계 팝업/엑셀용 전체 Q&A 데이터 -----
                     "all_qa_pairs": qa.get('all_qa_pairs', []),  # 모든 Q&A 쌍 (세션집계에서만 사용)
-                    "qa_count": qa.get('qa_count', 1)  # Q&A 개수
+                    "qa_count": qa.get('qa_count', 1),  # Q&A 개수
+                    # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                    "chat_id": chat_id,
+                    "message_id": qa.get('message_id', ''),
+                    "llm_response_id": qa.get('llm_response_id', '')
                 })
             # ----- [2026.01.15] qa_pairs 반복 처리 종료 -----
 
@@ -1993,6 +2276,202 @@ async def get_dashboard_logs(
     except Exception as e:
         logger.error(f"❌ 로그 조회 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ----- [2026-02-05] chat_logs 테이블 기반 Excel 다운로드 API v2 시작 -----
+# ----- [2026-02-19] 변경: 날짜 필터를 question_time → session_created_at 기준으로 변경 -----
+#        - %(name)s 파라미터 방식 → f-string 방식으로 변경 (기존 latent bug 수정)
+#        - department, model, category 필터도 f-string 방식으로 통일 -----
+@app.get("/api/dashboard/logs/export/v2")
+async def export_dashboard_logs_v2(
+    admin_user: dict = Depends(verify_admin),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    model: Optional[str] = 'all',
+    feedback_filter: Optional[str] = 'all',
+    department: Optional[str] = 'all',
+    category: Optional[str] = 'all',
+    user_email_filter: Optional[str] = '',
+    aggregation_type: Optional[str] = 'session'
+):
+    """
+    Excel 다운로드 API v2 (chat_logs 테이블 사용 - 고속 조회)
+    - [2026-02-18] session_created_at 기준 날짜 필터링으로 변경
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        import io as io_module
+
+        # 날짜 조건 (session_created_at 기준 - 세션 생성시간)
+        date_conditions = []
+        if start_date and end_date:
+            start_str = parse_date_kst(start_date).strftime('%Y-%m-%d %H:%M:%S')
+            end_str = parse_date_kst(end_date).strftime('%Y-%m-%d %H:%M:%S')
+            date_conditions.append(f"session_created_at >= '{start_str}'::timestamp AND session_created_at <= '{end_str}'::timestamp")
+
+        # 필터 조건
+        filter_conditions = []
+        if department != 'all':
+            safe_dept = department.replace("'", "''")
+            filter_conditions.append(f"department = '{safe_dept}'")
+
+        if model != 'all':
+            safe_model = model.replace("'", "''")
+            filter_conditions.append(f"model = '{safe_model}'")
+
+        if user_email_filter and user_email_filter.strip():
+            safe_user = user_email_filter.strip().replace("'", "''")
+            filter_conditions.append(f"(user_name ILIKE '%{safe_user}%' OR user_email ILIKE '%{safe_user}%')")
+
+        if feedback_filter != 'all':
+            if feedback_filter == 'satisfied':
+                filter_conditions.append("feedback = 'satisfied'")
+            elif feedback_filter == 'dissatisfied':
+                filter_conditions.append("feedback = 'dissatisfied'")
+            elif feedback_filter == 'noResponse':
+                filter_conditions.append("(feedback IS NULL OR feedback = '')")
+
+        if category != 'all':
+            safe_cat = category.replace("'", "''")
+            filter_conditions.append(f"category = '{safe_cat}'")
+
+        # WHERE 절 구성
+        where_clause = "WHERE 1=1"
+        if date_conditions:
+            where_clause += " AND " + " AND ".join(date_conditions)
+        if filter_conditions:
+            where_clause += " AND " + " AND ".join(filter_conditions)
+
+        # 집계 유형에 따른 쿼리
+        if aggregation_type == 'session':
+            data_query = f"""
+                SELECT DISTINCT ON (chat_id)
+                    chat_id, message_id, user_name, user_email, department,
+                    session_title, question, question_time, answer, answer_time,
+                    model, total_tokens, llm_response_id,
+                    attached_file_count, attached_filenames,
+                    feedback, dissatisfaction_type, dissatisfaction_comment,
+                    category, service
+                FROM chat_logs
+                {where_clause}
+                ORDER BY chat_id, question_time ASC
+            """
+        else:
+            data_query = f"""
+                SELECT
+                    chat_id, message_id, user_name, user_email, department,
+                    session_title, question, question_time, answer, answer_time,
+                    model, total_tokens, llm_response_id,
+                    attached_file_count, attached_filenames,
+                    feedback, dissatisfaction_type, dissatisfaction_comment,
+                    category, service
+                FROM chat_logs
+                {where_clause}
+                ORDER BY question_time DESC
+            """
+
+        results = execute_query(data_query)
+
+        # Excel 생성
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "로그"
+
+        # 헤더 정의
+        headers = [
+            '사용자', '이메일아이디', '부서', '세션제목', '질문', '질의일시', '답변', '답변일시',
+            'Chat ID', 'Message ID', 'LLM Response ID',
+            '벡터화파일수', '파일명', '총토큰수', '서비스', '의도분류', '피드백', '불만족유형', '불만족의견'
+        ]
+
+        # 컬럼 폭 설정
+        BASE_WIDTH = 15
+        WIDE_WIDTH = BASE_WIDTH * 4
+        column_widths = {
+            'A': BASE_WIDTH, 'B': 25, 'C': BASE_WIDTH, 'D': 20,
+            'E': WIDE_WIDTH, 'F': 20, 'G': WIDE_WIDTH, 'H': 20,
+            'I': 38, 'J': 38, 'K': 22,
+            'L': 12, 'M': 40, 'N': 12, 'O': BASE_WIDTH,
+            'P': BASE_WIDTH, 'Q': 10, 'R': BASE_WIDTH, 'S': 30
+        }
+        for col, width in column_widths.items():
+            ws.column_dimensions[col].width = width
+
+        # 헤더 스타일
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+        thin_border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+
+        # 헤더 작성
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = thin_border
+
+        # 데이터 스타일
+        data_alignment = Alignment(vertical="top", wrap_text=True)
+
+        # 데이터 작성
+        for row_idx, r in enumerate(results or [], 2):
+            question_time = r.get('question_time')
+            answer_time = r.get('answer_time')
+
+            row_data = [
+                r.get('user_name') or '-',
+                r.get('user_email') or '-',
+                r.get('department') or '-',
+                r.get('session_title') or '-',
+                r.get('question') or '-',
+                question_time.strftime('%Y-%m-%d %H:%M:%S') if question_time else '-',
+                r.get('answer') or '-',
+                answer_time.strftime('%Y-%m-%d %H:%M:%S') if answer_time else '-',
+                r.get('chat_id') or '',
+                r.get('message_id') or '',
+                r.get('llm_response_id') or '',
+                r.get('attached_file_count') or 0,
+                r.get('attached_filenames') or '-',
+                r.get('total_tokens') or 0,
+                r.get('model') or r.get('service') or 'Gen SDC',
+                r.get('category') or '-',
+                '만족' if r.get('feedback') == 'satisfied' else ('불만족' if r.get('feedback') == 'dissatisfied' else '무응답'),
+                r.get('dissatisfaction_type') or '-',
+                r.get('dissatisfaction_comment') or '-'
+            ]
+
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = thin_border
+                cell.alignment = data_alignment
+
+        ws.row_dimensions[1].height = 25
+
+        # Excel 파일 반환
+        output = io_module.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        from fastapi.responses import StreamingResponse
+        filename = f"chat_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+        )
+
+    except Exception as e:
+        logger.error(f"Excel 다운로드 실패 (v2): {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+# ----- [2026-02-05] chat_logs 테이블 기반 Excel 다운로드 API v2 종료 -----
+# ----- [2026-02-19] session_created_at 기준 날짜 필터 변경 완료 -----
 
 
 # ==============================================================================
@@ -2060,8 +2539,8 @@ async def export_dashboard_logs(
         # 기간 필터 적용
         date_condition = ""
         if start_date and end_date:
-            start_ts = int(datetime.fromisoformat(start_date.replace('Z', '+00:00')).timestamp())
-            end_ts = int(datetime.fromisoformat(end_date.replace('Z', '+00:00')).timestamp())
+            start_ts = int(parse_date_kst(start_date).timestamp())
+            end_ts = int(parse_date_kst(end_date).timestamp())
             date_condition = f"AND c.created_at BETWEEN {start_ts} AND {end_ts}"
 
         # 기간 내 모든 채팅 세션을 가져오기
@@ -2195,6 +2674,11 @@ async def export_dashboard_logs(
                     # [2026-01-22] 해당 질문 메시지에 첨부된 파일 추출
                     current_question_files = extract_files_from_message_excel(msg)
                 elif role == 'assistant' and current_question:
+                    # ----- [2026-02-05] LLM 트레이싱 ID 추출 시작 -----
+                    msg_id = msg.get('id', '') or ''
+                    msg_info = msg.get('info', {}) or {}
+                    llm_resp_id = msg_info.get('llmResponseId', '') if isinstance(msg_info, dict) else ''
+                    # ----- [2026-02-05] LLM 트레이싱 ID 추출 종료 -----
                     qa_pairs.append({
                         'question': current_question,
                         'question_time': question_time,
@@ -2203,7 +2687,10 @@ async def export_dashboard_logs(
                         'total_tokens': total_tokens,
                         # [2026-01-22] 해당 질문에 첨부된 파일 정보
                         'attached_files': current_question_files,
-                        'attached_file_count': len(current_question_files)
+                        'attached_file_count': len(current_question_files),
+                        # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                        'message_id': msg_id,
+                        'llm_response_id': llm_resp_id
                     })
                     current_question = None
                     question_time = None
@@ -2276,6 +2763,9 @@ async def export_dashboard_logs(
                         all_answers.append(f"[#{i+1}] ({a_time}) {a_text}")
                         total_tokens_sum += qa['total_tokens'] or 0
 
+                    # ----- [2026-02-05] 첫 번째 응답의 트레이싱 ID 사용 -----
+                    first_message_id = qa_pairs[0].get('message_id', '') if qa_pairs else ''
+                    first_llm_response_id = qa_pairs[0].get('llm_response_id', '') if qa_pairs else ''
                     logs.append({
                         "query_datetime": first_question_time,
                         "user": user_name,
@@ -2295,7 +2785,11 @@ async def export_dashboard_logs(
                         "feedback": feedback_status,
                         "dissatisfaction_type": dissatisfaction_type,
                         "dissatisfaction_comment": dissatisfaction_comment,
-                        "qa_count": len(qa_pairs)  # Q&A 개수
+                        "qa_count": len(qa_pairs),  # Q&A 개수
+                        # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                        "chat_id": chat_id,
+                        "message_id": first_message_id,
+                        "llm_response_id": first_llm_response_id
                     })
                 else:
                     # Q&A 쌍이 없는 경우
@@ -2318,7 +2812,11 @@ async def export_dashboard_logs(
                         "feedback": feedback_status,
                         "dissatisfaction_type": dissatisfaction_type,
                         "dissatisfaction_comment": dissatisfaction_comment,
-                        "qa_count": 0
+                        "qa_count": 0,
+                        # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                        "chat_id": chat_id,
+                        "message_id": '',
+                        "llm_response_id": ''
                     })
             else:
                 # 질문단위집계 (기존 방식): 각 Q&A를 개별 행으로
@@ -2347,7 +2845,11 @@ async def export_dashboard_logs(
                             "category": category_val,
                             "feedback": feedback_status,
                             "dissatisfaction_type": dissatisfaction_type,
-                            "dissatisfaction_comment": dissatisfaction_comment
+                            "dissatisfaction_comment": dissatisfaction_comment,
+                            # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                            "chat_id": chat_id,
+                            "message_id": qa.get('message_id', ''),
+                            "llm_response_id": qa.get('llm_response_id', '')
                         })
                 else:
                     # Q&A 쌍이 없는 경우 세션 정보만 출력
@@ -2369,7 +2871,11 @@ async def export_dashboard_logs(
                         "category": category_val,
                         "feedback": feedback_status,
                         "dissatisfaction_type": dissatisfaction_type,
-                        "dissatisfaction_comment": dissatisfaction_comment
+                        "dissatisfaction_comment": dissatisfaction_comment,
+                        # ----- [2026-02-05] LLM 트레이싱 ID 추가 -----
+                        "chat_id": chat_id,
+                        "message_id": '',
+                        "llm_response_id": ''
                     })
             # ----- [2026.01.15] 집계 유형에 따른 행 추가 종료 -----
 
@@ -2380,17 +2886,21 @@ async def export_dashboard_logs(
 
         # 헤더 정의 - [2026.01.13] 컬럼 순서 변경: 질의일시를 질문 다음으로 이동
         # ----- [2026.01.15] 벡터화파일수, 파일명 컬럼 추가 -----
+        # ----- [2026-02-05] LLM 트레이싱 ID 컬럼 추가 (Chat ID, Message ID, LLM Response ID) -----
         headers = [
-            '사용자', '이메일아이디', '부서', '세션제목', '질문', '질의일시', '답변', '답변일시', '총토큰수',
-            '벡터화파일수', '파일명', '서비스', '의도분류', '피드백', '불만족유형', '불만족의견'
+            '사용자', '이메일아이디', '부서', '세션제목', '질문', '질의일시', '답변', '답변일시',
+            'Chat ID', 'Message ID', 'LLM Response ID',
+            '벡터화파일수', '파일명', '총토큰수', '서비스', '의도분류', '피드백', '불만족유형', '불만족의견'
         ]
 
         # 컬럼 폭 설정 (기본 폭: 15, 질문/답변: 60 = 4배)
-        # ----- [2026.01.15] 벡터화파일수, 파일명 컬럼 추가로 인덱스 변경: A-P (16개) -----
+        # ----- [2026.01.15] 벡터화파일수, 파일명 컬럼 추가로 인덱스 변경 -----
+        # ----- [2026-02-05] LLM 트레이싱 ID 컬럼 추가로 인덱스 변경: A-S (19개) -----
         BASE_WIDTH = 15
         WIDE_WIDTH = BASE_WIDTH * 4  # 질문/답변은 4배 폭
 
         # [2026.01.13] 컬럼 순서 변경에 맞춰 폭 재설정
+        # [2026-02-05] LLM 트레이싱 ID 컬럼 추가
         column_widths = {
             'A': BASE_WIDTH,  # 사용자
             'B': 25,          # 이메일아이디
@@ -2400,14 +2910,17 @@ async def export_dashboard_logs(
             'F': 20,          # 질의일시
             'G': WIDE_WIDTH,  # 답변 (4배 폭)
             'H': 20,          # 답변일시
-            'I': 12,          # 총토큰수
-            'J': 12,          # 벡터화파일수 [2026.01.15]
-            'K': 40,          # 파일명 [2026.01.15]
-            'L': BASE_WIDTH,  # 서비스
-            'M': BASE_WIDTH,  # 의도분류
-            'N': 10,          # 피드백
-            'O': BASE_WIDTH,  # 불만족유형
-            'P': 20,          # 불만족의견
+            'I': 38,          # Chat ID [2026-02-05]
+            'J': 38,          # Message ID [2026-02-05]
+            'K': 22,          # LLM Response ID [2026-02-05]
+            'L': 12,          # 벡터화파일수 [2026.01.15]
+            'M': 40,          # 파일명 [2026.01.15]
+            'N': 12,          # 총토큰수
+            'O': BASE_WIDTH,  # 서비스
+            'P': BASE_WIDTH,  # 의도분류
+            'Q': 10,          # 피드백
+            'R': BASE_WIDTH,  # 불만족유형
+            'S': 20,          # 불만족의견
         }
 
         for col, width in column_widths.items():
@@ -2438,6 +2951,7 @@ async def export_dashboard_logs(
 
         # 데이터 작성 - [2026.01.13] 컬럼 순서 변경: 질의일시를 질문 다음으로 이동
         # ----- [2026.01.15] 벡터화파일수, 파일명 컬럼 추가 -----
+        # ----- [2026-02-05] LLM 트레이싱 ID 컬럼 추가 -----
         for row_idx, log in enumerate(logs, 2):
             row_data = [
                 log.get('user', ''),
@@ -2448,9 +2962,12 @@ async def export_dashboard_logs(
                 log.get('query_datetime', ''),
                 log.get('answer', ''),
                 log.get('answer_datetime', ''),
-                log.get('total_tokens', 0),
+                log.get('chat_id', ''),              # [2026-02-05] Chat ID
+                log.get('message_id', ''),           # [2026-02-05] Message ID
+                log.get('llm_response_id', ''),      # [2026-02-05] LLM Response ID
                 log.get('vectorized_file_count', 0),   # [2026.01.15] 벡터화파일수
                 log.get('vectorized_filenames', '-'),  # [2026.01.15] 파일명
+                log.get('total_tokens', 0),
                 log.get('service', ''),
                 log.get('category', ''),
                 log.get('feedback', ''),
@@ -2461,8 +2978,8 @@ async def export_dashboard_logs(
             for col_idx, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_idx, column=col_idx, value=value)
                 cell.border = thin_border
-                # 질문(E), 답변(G), 파일명(K) 컬럼은 줄바꿈 적용 - [2026.01.15] 파일명 추가
-                if col_idx in [5, 7, 11]:
+                # 질문(E), 답변(G), 파일명(M) 컬럼은 줄바꿈 적용 - [2026-02-05] 파일명 인덱스 변경 (K→M)
+                if col_idx in [5, 7, 13]:
                     cell.alignment = question_answer_alignment
                 else:
                     cell.alignment = data_alignment

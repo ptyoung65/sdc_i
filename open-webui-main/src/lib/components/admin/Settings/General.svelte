@@ -11,11 +11,11 @@
 		updateLdapServer,
 		updateDefaultModels
 	} from '$lib/apis/auths';
-	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
+		import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import { WEBUI_BUILD_HASH, WEBUI_VERSION } from '$lib/constants';
-	import { config, showChangelog } from '$lib/stores';
+	import { config, showChangelog, helpImageFolder } from '$lib/stores';
 	import { compareVersion } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
@@ -41,6 +41,40 @@
 	let internalModels = [];
 	let externalModels = [];
 
+	// 이메일 도메인별 자동 승인 규칙
+	let domainRules = [];
+	let newDomainPattern = '';
+	let newDomainRole = 'user';
+
+	// ----- [2026.01.07] 도움말 폴더 경로 설정 시작 -----
+	let helpFolderPath = '/static/help';
+	// ----- [2026.01.07] 도움말 폴더 경로 설정 종료 -----
+
+	
+	// 도메인 규칙 추가
+	const addDomainRule = () => {
+		if (!newDomainPattern.trim()) return;
+
+		// 중복 체크
+		if (domainRules.some(r => r.pattern === newDomainPattern.trim())) {
+			toast.error('이미 등록된 도메인 패턴입니다');
+			return;
+		}
+
+		domainRules = [...domainRules, {
+			pattern: newDomainPattern.trim(),
+			role: newDomainRole
+		}];
+		newDomainPattern = '';
+		newDomainRole = 'user';
+	};
+
+	// 도메인 규칙 삭제
+	const removeDomainRule = (index) => {
+		domainRules = domainRules.filter((_, i) => i !== index);
+	};
+
+	
 	// LDAP
 	let ENABLE_LDAP = false;
 	let LDAP_SERVER = {
@@ -154,7 +188,19 @@
 
 	const updateHandler = async () => {
 		webhookUrl = await updateWebhookUrl(localStorage.token, webhookUrl);
-		const res = await updateAdminConfig(localStorage.token, adminConfig);
+
+		// adminConfig에 도메인 규칙 및 도움말 폴더 경로 추가
+		const configWithDomainRules = {
+			...adminConfig,
+			DOMAIN_AUTO_APPROVAL_RULES: domainRules,
+			HELP_IMAGE_FOLDER: helpFolderPath  // [2026.01.07] 도움말 폴더 경로 추가
+		};
+
+		const res = await updateAdminConfig(localStorage.token, configWithDomainRules);
+
+		// ----- [2026.01.07] 도움말 폴더 경로를 Store에 저장 시작 -----
+		helpImageFolder.set(helpFolderPath);
+		// ----- [2026.01.07] 도움말 폴더 경로를 Store에 저장 종료 -----
 		await updateLdapConfig(localStorage.token, ENABLE_LDAP);
 		await updateLdapServerHandler();
 
@@ -207,6 +253,23 @@
 		await Promise.all([
 			(async () => {
 				adminConfig = await getAdminConfig(localStorage.token);
+				// 도메인 규칙 로드
+				if (adminConfig?.DOMAIN_AUTO_APPROVAL_RULES) {
+					domainRules = adminConfig.DOMAIN_AUTO_APPROVAL_RULES;
+				} else {
+					// 기본 규칙 설정: @samsung.com -> user, @partner.samsung.com -> pending
+					domainRules = [
+						{ pattern: '@samsung.com', role: 'user' },
+						{ pattern: '@partner.samsung.com', role: 'pending' }
+					];
+				}
+
+				// ----- [2026.01.07] 도움말 폴더 경로 로드 시작 -----
+				if (adminConfig?.HELP_IMAGE_FOLDER) {
+					helpFolderPath = adminConfig.HELP_IMAGE_FOLDER;
+					helpImageFolder.set(helpFolderPath);
+				}
+				// ----- [2026.01.07] 도움말 폴더 경로 로드 종료 -----
 			})(),
 
 			(async () => {
@@ -356,6 +419,32 @@
 						</div>
 					</div>
 
+					<!-- ============================================ -->
+					<!-- [2026.01.07] 도움말 이미지 폴더 설정 시작 -->
+					<!-- 역할: 사용자에게 보여줄 도움말 이미지가 저장된 폴더 경로 설정 -->
+					<!-- ============================================ -->
+					<div class="mb-2.5">
+						<div class="mb-1 text-xs font-medium">도움말 이미지 폴더</div>
+						<div class="text-xs text-gray-500 mb-2">
+							네비게이션 바의 ? 아이콘 클릭 시 표시될 도움말 이미지 폴더 경로를 설정하세요
+						</div>
+
+						<div class="flex items-center gap-2">
+							<input
+								type="text"
+								class="flex-1 rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-none border border-gray-200 dark:border-gray-700"
+								placeholder="/static/help"
+								bind:value={helpFolderPath}
+							/>
+						</div>
+						<div class="text-xs text-gray-400 mt-1">
+							예시: /static/help (static 폴더 내 help 디렉토리에 이미지 저장)
+						</div>
+					</div>
+					<!-- ============================================ -->
+					<!-- [2026.01.07] 도움말 이미지 폴더 설정 종료 -->
+					<!-- ============================================ -->
+
 					{#if false}
 					<!-- Help section - Hidden as requested -->
 					<div class="mb-2.5">
@@ -480,6 +569,77 @@
 								<option value="user">{$i18n.t('user')}</option>
 								<option value="admin">{$i18n.t('admin')}</option>
 							</select>
+						</div>
+					</div>
+
+					<!-- 이메일 도메인별 자동 승인 규칙 -->
+					<div class="mb-3 p-3 bg-gray-50 dark:bg-gray-850 rounded-lg">
+						<div class="mb-2 text-xs font-medium">
+							이메일 도메인별 자동 승인 규칙
+						</div>
+						<div class="text-xs text-gray-500 mb-3">
+							신규 사용자 가입 시 이메일 도메인에 따라 자동으로 역할을 부여합니다.
+							위에 있는 규칙이 우선 적용됩니다.
+						</div>
+
+						<!-- 현재 규칙 목록 -->
+						{#if domainRules.length > 0}
+							<div class="mb-3 space-y-2">
+								{#each domainRules as rule, index}
+									<div class="flex items-center justify-between bg-white dark:bg-gray-900 rounded-lg px-3 py-2">
+										<div class="flex items-center space-x-3">
+											<span class="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+												{rule.pattern}
+											</span>
+											<span class="text-xs text-gray-500">→</span>
+											<span class="text-xs px-2 py-1 rounded {rule.role === 'user' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : rule.role === 'pending' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'}">
+												{rule.role === 'user' ? '자동 승인' : rule.role === 'pending' ? '보류' : '관리자'}
+											</span>
+										</div>
+										<button
+											type="button"
+											class="text-red-500 hover:text-red-700 text-xs px-2"
+											on:click={() => removeDomainRule(index)}
+										>
+											삭제
+										</button>
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<div class="mb-3 text-xs text-gray-400 text-center py-2">
+								등록된 규칙이 없습니다. 기본 역할(Default User Role)이 적용됩니다.
+							</div>
+						{/if}
+
+						<!-- 새 규칙 추가 -->
+						<div class="flex items-center space-x-2">
+							<input
+								type="text"
+								class="flex-1 rounded-lg py-2 px-3 text-sm bg-white dark:bg-gray-900 dark:text-gray-300 outline-none border border-gray-200 dark:border-gray-700"
+								placeholder="@samsung.com"
+								bind:value={newDomainPattern}
+								on:keydown={(e) => e.key === 'Enter' && (e.preventDefault(), addDomainRule())}
+							/>
+							<select
+								class="rounded-lg py-2 px-3 text-sm bg-white dark:bg-gray-900 dark:text-gray-300 outline-none border border-gray-200 dark:border-gray-700"
+								bind:value={newDomainRole}
+							>
+								<option value="user">자동 승인 (user)</option>
+								<option value="pending">보류 (pending)</option>
+								<option value="admin">관리자 (admin)</option>
+							</select>
+							<button
+								type="button"
+								class="px-3 py-2 text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition"
+								on:click={addDomainRule}
+							>
+								추가
+							</button>
+						</div>
+
+						<div class="mt-2 text-xs text-gray-400">
+							예시: @samsung.com (자동 승인), @partner.samsung.com (보류)
 						</div>
 					</div>
 
@@ -909,7 +1069,8 @@
 						</div>
 					</div>
 				</div>
-			</div>
+
+							</div>
 		{/if}
 	</div>
 
