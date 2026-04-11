@@ -42,6 +42,65 @@ from vector_graph_rag import VectorGraphRAG
 from vector_graph_rag.config import Settings
 from vector_graph_rag.storage.milvus import MilvusStore
 
+# ─── 한국어 호환 패치 ─────────────────────────────────────────────────────────
+# processing_phrases: 원본은 [A-Za-z0-9]만 유지하여 한글이 삭제됨 → 유니코드 문자 허용
+import re as _re
+import vector_graph_rag.llm.extractor as _extractor_mod
+
+def _processing_phrases_ko(phrase: str) -> str:
+    """한국어/CJK 문자를 보존하는 processing_phrases."""
+    if not phrase:
+        return ""
+    # dict인 경우 (gemma4가 {"entity":"...", "type":"..."} 형태 반환 시)
+    if isinstance(phrase, dict):
+        phrase = phrase.get("entity", phrase.get("name", str(phrase)))
+    phrase = str(phrase)
+    # 유니코드 알파벳+숫자+공백 보존 (한글, CJK, 라틴 모두 유지)
+    return _re.sub(r'[^\w\s]', ' ', phrase, flags=_re.UNICODE).strip().lower()
+
+_extractor_mod.processing_phrases = _processing_phrases_ko
+
+# GraphBuilder 도 동일 함수를 from import 로 가져오므로 별도 패치
+import vector_graph_rag.graph.builder as _builder_mod
+_builder_mod.processing_phrases = _processing_phrases_ko
+
+# LLMReranker: stop=['\n\n'] 제거 — gemma4 등 로컬 모델은 thought_process에 \n\n을
+# 포함하여 응답이 중간에 잘림. stop 파라미터를 제거하여 전체 JSON 응답을 받도록 함.
+import vector_graph_rag.llm.reranker as _reranker_mod
+_orig_reranker_call = _reranker_mod.LLMReranker._call_llm
+
+def _patched_reranker_call(self, query, relation_descriptions):
+    """stop=[\\n\\n] 제거 패치."""
+    import json as _json
+    prompt = _reranker_mod.RERANK_PROMPT_TEMPLATE.format(
+        question=query, relation_descriptions=relation_descriptions,
+    )
+    cache_key = self._build_prompt(query, relation_descriptions)
+    if self.cache:
+        cached = self.cache.get(self.model, cache_key, temperature=0)
+        if cached is not None:
+            return cached
+    messages = [
+        {"role": "user", "content": _reranker_mod.RERANK_EXAMPLE_1_INPUT},
+        {"role": "assistant", "content": _reranker_mod.RERANK_EXAMPLE_1_OUTPUT},
+        {"role": "user", "content": _reranker_mod.RERANK_EXAMPLE_2_INPUT},
+        {"role": "assistant", "content": _reranker_mod.RERANK_EXAMPLE_2_OUTPUT},
+        {"role": "user", "content": _reranker_mod.RERANK_EXAMPLE_3_INPUT},
+        {"role": "assistant", "content": _reranker_mod.RERANK_EXAMPLE_3_OUTPUT},
+        {"role": "user", "content": prompt},
+    ]
+    response = self.client.chat.completions.create(
+        model=self.model, messages=messages,
+        response_format={"type": "json_object"}, temperature=0,
+    )
+    result = response.choices[0].message.content or "{}"
+    if self.cache:
+        self.cache.set(self.model, cache_key, result, temperature=0)
+    return result
+
+_reranker_mod.LLMReranker._call_llm = _patched_reranker_call
+# ─── 패치 끝 ──────────────────────────────────────────────────────────────────
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -480,14 +539,46 @@ async def upload_files(
 
                 def _process_file(path=tmp_path, fname=upload_file.filename):
                     try:
-                        from vector_graph_rag.loaders import DocumentImporter
-                        from vector_graph_rag.loaders.chunker import TextChunker
-                        importer = DocumentImporter()
-                        result = importer.load([path])
-                        docs = [d.page_content for d in result.documents]
-                        if chunk_documents:
-                            chunker = TextChunker(chunk_size=chunk_size, chunk_overlap=200)
-                            docs = chunker.chunk_batch(docs)
+                        # 텍스트 파일은 직접 읽기, PDF/DOCX는 MarkItDown 시도
+                        ext = os.path.splitext(fname or "")[-1].lower()
+                        if ext in (".txt", ".md", ".html", ".htm", ""):
+                            with open(path, "r", encoding="utf-8") as f:
+                                text = f.read()
+                        else:
+                            from markitdown import MarkItDown
+                            md = MarkItDown(enable_plugins=False)
+                            result = md.convert(path)
+                            text = result.text_content
+
+                        # 자체 청킹 (trafilatura 의존 없음)
+                        if chunk_documents and len(text) > chunk_size:
+                            docs = []
+                            separators = ["\n\n", "\n", ". ", " "]
+                            parts, sep = None, " "
+                            for s in separators:
+                                if s in text:
+                                    parts = text.split(s)
+                                    sep = s
+                                    break
+                            if parts is None:
+                                step = max(chunk_size - 200, 100)
+                                docs = [text[i:i+chunk_size] for i in range(0, len(text), step)]
+                            else:
+                                chunk = ""
+                                for part in parts:
+                                    test = chunk + (sep if chunk else "") + part
+                                    if len(test) <= chunk_size:
+                                        chunk = test
+                                    else:
+                                        if chunk:
+                                            docs.append(chunk)
+                                        chunk = part
+                                if chunk:
+                                    docs.append(chunk)
+                        else:
+                            docs = [text]
+
+                        docs = [d for d in docs if d.strip()]
                         rag.add_texts(docs)
                         return len(docs)
                     finally:
