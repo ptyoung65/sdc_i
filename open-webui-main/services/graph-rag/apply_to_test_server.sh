@@ -24,7 +24,8 @@
 #     configure    3단계: 서비스 설정
 #     start        4단계: 서비스 시작
 #     verify       5단계: 동작 검증
-#     systemd      6단계: systemd 서비스 등록 (부팅 자동 시작)
+#     ui           6단계: 프론트엔드 UI 설치 및 시작 (포트 3016)
+#     systemd      7단계: systemd 서비스 등록 (부팅 자동 시작)
 #
 # 원복 방법:
 #   git reset --hard c091da2   ← push 전 마지막 커밋으로 원복
@@ -314,6 +315,53 @@ echo "  git reset --hard c091da2"
 echo "  git push --force origin feature/apply-default-model"
 echo ""
 
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 6: 프론트엔드 UI 설치 및 시작
+# ─────────────────────────────────────────────────────────────────────────────
+step_ui() {
+    log_section "STEP 6: 프론트엔드 UI (포트 3016)"
+
+    FRONTEND_DIR="${SCRIPT_DIR}/frontend"
+
+    if [ ! -d "${FRONTEND_DIR}" ]; then
+        log_error "frontend/ 디렉토리 없음: ${FRONTEND_DIR}"
+        log_error "git pull 또는 서비스 디렉토리 동기화 필요"
+        return 1
+    fi
+
+    # Node.js 확인
+    if ! command -v node &>/dev/null; then
+        log_error "Node.js 없음. 설치 필요:"
+        echo "    sudo dnf install nodejs npm   # RHEL/CentOS"
+        echo "    sudo apt install nodejs npm   # Ubuntu/Debian"
+        return 1
+    fi
+    log_info "Node.js: $(node --version), npm: $(npm --version)"
+
+    # npm install
+    if [ ! -d "${FRONTEND_DIR}/node_modules" ]; then
+        log_info "npm 패키지 설치 중..."
+        cd "${FRONTEND_DIR}" && npm install --prefer-offline 2>&1 | tail -5
+        cd "${SCRIPT_DIR}"
+    else
+        log_info "node_modules 이미 존재 (건너뜀)"
+    fi
+
+    # UI 시작
+    chmod +x "${SCRIPT_DIR}/start-ui.sh" "${SCRIPT_DIR}/stop-ui.sh"
+    "${SCRIPT_DIR}/start-ui.sh" --daemon
+
+    log_info ""
+    log_info "UI 접속 주소:"
+    HOST_IP=$(hostname -I | awk '{print $1}')
+    echo "    http://${HOST_IP}:3016"
+    echo ""
+    echo "    ※ 그래프 RAG 사용 방법:"
+    echo "    1. 우상단 [Import] 버튼 → 텍스트/URL/파일 업로드"
+    echo "    2. 검색창에 질문 입력 → 그래프 시각화 및 답변 확인"
+    echo "    3. 노드 클릭 → 연결된 관계/패시지 탐색"
+}
+
 case "${STEP}" in
     all)
         step_check
@@ -321,18 +369,23 @@ case "${STEP}" in
         step_configure
         step_start
         step_verify
+        step_ui
         echo ""
         log_info "=== 모든 단계 완료 ==="
+        log_info "백엔드 API: http://$(hostname -I | awk '{print $1}'):8015"
+        log_info "프론트엔드: http://$(hostname -I | awk '{print $1}'):3016"
+        log_info "API 문서:   http://$(hostname -I | awk '{print $1}'):8015/docs"
         ;;
     check)     step_check ;;
     install)   step_install ;;
     configure) step_configure ;;
     start)     step_start ;;
     verify)    step_verify ;;
+    ui)        step_ui ;;
     systemd)   step_systemd ;;
     *)
         echo "알 수 없는 STEP: ${STEP}"
-        echo "사용법: $0 [all|check|install|configure|start|verify|systemd]"
+        echo "사용법: $0 [all|check|install|configure|start|verify|ui|systemd]"
         exit 1
         ;;
 esac
