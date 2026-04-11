@@ -722,19 +722,27 @@ async def check_with_filter_type(request: FilterCheckRequest, background_tasks: 
     # 2. 동적 카테고리 검사 (모든 등록된 카테고리 자동 검사)
     # ========================================
     # 카테고리별 설정 (심각도, 액션 등)
+    # [2026-04-07] DB 정책유형 정리에 맞춰 category_config 수정
+    #   - 삭제: personal → privacy, corporate → company, toxicity → content에 통합
+    #   - 추가: company, privacy, content, compliance (DB guardrail_policy_types와 일치)
     category_config = {
-        # 유해성 관련 카테고리 (높은 심각도)
-        'basic': {'name': '기본 유해성', 'severity': 'high', 'score': 0.85, 'auto_block': True},
+        # 기본 금지어 카테고리 (높은 심각도)
+        'basic': {'name': '기본 금지어', 'severity': 'high', 'score': 0.85, 'auto_block': True},
         'basic_profanity': {'name': '욕설/비속어', 'severity': 'high', 'score': 0.85, 'auto_block': True},
         'basic_sexual': {'name': '성적 콘텐츠', 'severity': 'high', 'score': 0.85, 'auto_block': True},
         'basic_violence': {'name': '폭력적 콘텐츠', 'severity': 'high', 'score': 0.85, 'auto_block': True},
         'basic_hate': {'name': '혐오 표현', 'severity': 'high', 'score': 0.85, 'auto_block': True},
-        'toxicity': {'name': '유해성 탐지', 'severity': 'high', 'score': 0.85, 'auto_block': True},
-        # 개인/기업 정보 보호 카테고리 (높은 심각도)
-        'personal': {'name': '개인정보 보호', 'severity': 'high', 'score': 0.8, 'auto_block': True},
-        'corporate': {'name': '기업정보 보호', 'severity': 'high', 'score': 0.8, 'auto_block': True},
-        'security': {'name': '보안 정보', 'severity': 'high', 'score': 0.8, 'auto_block': True},
-        # 커스텀 카테고리 (중간 심각도)
+        # 정책유형 카테고리 (DB guardrail_policy_types 기준)
+        'company': {'name': '회사정보', 'severity': 'high', 'score': 0.8, 'auto_block': True},
+        'privacy': {'name': '개인정보', 'severity': 'high', 'score': 0.8, 'auto_block': True},
+        'content': {'name': '컨텐츠', 'severity': 'high', 'score': 0.85, 'auto_block': True},
+        'compliance': {'name': '컴플라이언스', 'severity': 'high', 'score': 0.8, 'auto_block': True},
+        'security': {'name': '보안', 'severity': 'high', 'score': 0.8, 'auto_block': True},
+        # 하위 호환 (구 코드 → 신 코드 매핑)
+        'personal': {'name': '개인정보', 'severity': 'high', 'score': 0.8, 'auto_block': True},
+        'corporate': {'name': '회사정보', 'severity': 'high', 'score': 0.8, 'auto_block': True},
+        'toxicity': {'name': '컨텐츠', 'severity': 'high', 'score': 0.85, 'auto_block': True},
+        # 리스트 카테고리
         'blacklist': {'name': '블랙리스트', 'severity': 'medium', 'score': 0.7, 'auto_block': False},
         'whitelist': {'name': '화이트리스트', 'severity': 'low', 'score': 0.5, 'auto_block': False},
         'custom': {'name': '사용자 정의', 'severity': 'medium', 'score': 0.7, 'auto_block': False},
@@ -2189,10 +2197,16 @@ async def get_all_master_data():
     """모든 기준 데이터 조회"""
     # ----- 1227 기본 데이터 반환 수정 시작 -----
     # 테이블이 없거나 비어있으면 기본 데이터 반환
+    # [2026-04-07] DB guardrail_policy_types 정리에 맞춰 기본값 수정
+    #   - personal → privacy, corporate → company 변경
+    #   - content, compliance, security 추가
     default_policy_types = [
         {"code": "basic", "id": "basic", "name": "기본 금지어"},
-        {"code": "personal", "id": "personal", "name": "개인정보"},
-        {"code": "corporate", "id": "corporate", "name": "회사정보"},
+        {"code": "company", "id": "company", "name": "회사정보"},
+        {"code": "privacy", "id": "privacy", "name": "개인정보"},
+        {"code": "content", "id": "content", "name": "컨텐츠"},
+        {"code": "compliance", "id": "compliance", "name": "컴플라이언스"},
+        {"code": "security", "id": "security", "name": "보안"},
         {"code": "blacklist", "id": "blacklist", "name": "블랙리스트"},
         {"code": "whitelist", "id": "whitelist", "name": "화이트리스트"}
     ]
@@ -2270,14 +2284,17 @@ async def get_guardrails_logs(
         where_clause = " AND ".join(conditions)
 
         # [2026-01-23 수정] user_email 컬럼 추가
+        # [2026-04-07 수정] action_taken, model_id 컬럼 추가 (차단 상세 로그 표시용)
         query = f"""
             SELECT
                 l.id,
                 l.request_id,
                 l.user_id,
                 l.user_email,
+                l.model_id,
                 l.policy_id,
                 l.check_result,
+                l.action_taken,
                 l.original_text,
                 l.detection_score,
                 l.detected_keywords,
@@ -2318,9 +2335,11 @@ async def get_guardrails_logs(
                 "request_id": l.get('request_id', ''),
                 "user_id": l.get('user_id', ''),
                 "user_email": l.get('user_email', ''),  # [2026-01-23 추가]
+                "model_id": l.get('model_id', ''),  # [2026-04-07 추가]
                 "policy_id": l.get('policy_id', ''),
                 "policy_name": l.get('policy_name', ''),
                 "check_result": l.get('check_result', ''),
+                "action_taken": l.get('action_taken', ''),  # [2026-04-07 추가]
                 "severity": l.get('severity', 'medium'),
                 "original_text": l.get('original_text', '')[:100] if l.get('original_text') else '',
                 "detected_keywords": detected_kws if detected_kws else [],

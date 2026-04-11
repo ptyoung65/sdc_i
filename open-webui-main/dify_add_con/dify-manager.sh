@@ -11,6 +11,8 @@
 # - PostgreSQL 초기 테이블 생성
 # - 초기 사용자 생성
 # - 컨테이너 순차적 실행
+# - 로컬 Plugin Daemon 컨테이너 실행
+# - 로컬 템플릿 프록시 서비스 실행
 #
 # 사용법:
 #   ./dify-manager.sh <COMMAND> [OPTIONS]
@@ -25,6 +27,35 @@
 #   clean     - 전체 삭제
 #   init-db   - DB 초기화만 수행
 #   test-mcp  - MCP 서버 연결 테스트
+#
+# [2026-03-31] 수정 내용:
+#   1. Plugin Daemon을 원격(192.168.122.178:5003)에서 로컬 컨테이너로 변경
+#      - 원격 REMOTE_PLUGIN_DAEMON_IP/PORT 설정 제거
+#      - 로컬 PLUGIN_DAEMON_PORT/IMAGE 설정 추가
+#      - start_plugin_daemon() 함수 신규 추가
+#      - 컨테이너 시작/중지 순서에 plugin-daemon 추가
+#      - PLUGIN_DAEMON_URL을 호스트 IP 기반으로 설정 (podman 기본 네트워크 DNS 미지원)
+#   2. 로컬 템플릿 프록시 서비스 추가
+#      - tmpl.dify.ai 한국어 템플릿 미제공 문제 해결
+#      - 영어 템플릿을 로컬 캐시하여 모든 언어에서 제공
+#      - start_template_proxy() 함수 추가 (포트 5080)
+#      - dify-api에 HOSTED_FETCH_APP_TEMPLATES_REMOTE_DOMAIN 환경변수 추가
+#      - stop_all()에 템플릿 프록시 종료 로직 추가
+#
+# [2026-04-08] 수정 내용:
+#   1. 템플릿 프록시 시작 로직 안정화
+#      - nohup → disown 방식으로 변경 (백그라운드 프로세스 안정화)
+#      - PID 기반 생존 확인 + curl 응답 대기 (최대 15초)
+#      - 기존 프로세스 종료 시 kill -9 + 포트 해제 대기
+#      - 실패 시 3회 재시도 로직 추가
+#   2. 템플릿 프록시 IP 자동 감지
+#      - LOCAL_HOST_IP 의존 제거 → hostname -I 자동 감지 (TEMPLATE_PROXY_HOST)
+#      - 별도 IP 설정 없이 동일 서버에서 실행
+#   3. dify-template-proxy.py SO_REUSEADDR/SO_REUSEPORT 적용
+#      - 포트 재사용 문제 해결 (Address already in use 방지)
+#      - SIGTERM 시그널 핸들링 추가 (graceful shutdown)
+#   4. 수동 템플릿 프록시 관리 스크립트 추가
+#      - scripts/start-template-proxy.sh (start/stop/restart/status)
 ################################################################################
 
 set -e
@@ -86,10 +117,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/.dify-config"
 
 # ============================================
-# 원격 Plugin Daemon 설정 (고정)
+# 로컬 Plugin Daemon 설정
 # ============================================
-REMOTE_PLUGIN_DAEMON_IP="192.168.122.178"
-REMOTE_PLUGIN_DAEMON_PORT="5003"
+PLUGIN_DAEMON_PORT="5003"
+PLUGIN_DAEMON_IMAGE="docker.io/langgenius/dify-plugin-daemon:0.5.3-local"
+
+# ============================================
+# 로컬 템플릿 프록시 설정 (동일 서버에서 실행, IP 자동 감지)
+# ============================================
+TEMPLATE_PROXY_PORT="5080"
+TEMPLATE_PROXY_HOST="$(hostname -I | awk '{print $1}')"
 
 # ============================================
 # MCP 서버 설정 (기본값)
@@ -149,14 +186,14 @@ MCP_SSL_VERIFY="${MCP_SSL_VERIFY}"
 MCP_SSL_CERT_PATH="${MCP_SSL_CERT_PATH}"
 
 # ------------------------------------------------------------
-# 원격 Plugin Daemon 설정 (11.93.32.30 서버)
+# 로컬 Plugin Daemon 설정
 # ------------------------------------------------------------
 
-# 원격 Plugin Daemon 서버 IP (고정값)
-REMOTE_PLUGIN_DAEMON_IP="${REMOTE_PLUGIN_DAEMON_IP}"
+# Plugin Daemon 포트
+PLUGIN_DAEMON_PORT="${PLUGIN_DAEMON_PORT}"
 
-# 원격 Plugin Daemon 포트
-REMOTE_PLUGIN_DAEMON_PORT="${REMOTE_PLUGIN_DAEMON_PORT}"
+# Plugin Daemon 이미지
+PLUGIN_DAEMON_IMAGE="${PLUGIN_DAEMON_IMAGE}"
 
 # ------------------------------------------------------------
 # 네트워크 설정
@@ -239,11 +276,10 @@ interactive_config() {
     echo -e "${BOLD}필수 정보를 입력해주세요:${NC}"
     echo ""
 
-    # 원격 Plugin Daemon 정보 표시
-    echo -e "${BOLD}${GREEN}원격 Plugin Daemon 서버 정보:${NC}"
-    echo "  IP: ${REMOTE_PLUGIN_DAEMON_IP}"
-    echo "  Port: ${REMOTE_PLUGIN_DAEMON_PORT}"
-    echo "  URL: http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+    # 로컬 Plugin Daemon 정보 표시
+    echo -e "${BOLD}${GREEN}로컬 Plugin Daemon 설정:${NC}"
+    echo "  Port: ${PLUGIN_DAEMON_PORT}"
+    echo "  Image: ${PLUGIN_DAEMON_IMAGE}"
     echo ""
 
     # MCP 서버 설정
@@ -413,7 +449,7 @@ interactive_config() {
         echo "  ${BOLD}[MCP 서버]${NC}            사용 안함"
     fi
 
-    echo "  ${BOLD}[원격 Plugin Daemon]${NC}  http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+    echo "  ${BOLD}[로컬 Plugin Daemon]${NC}  localhost:${PLUGIN_DAEMON_PORT} (컨테이너)"
     echo "  ${BOLD}[웹 접근]${NC}             http://$WEB_ACCESS_IP:$WEB_PORT"
     echo "  ${BOLD}[원격 DB 서버]${NC}        $REMOTE_DB_IP"
     echo ""
@@ -473,7 +509,6 @@ setup_environment() {
     # Secret Keys
     SECRET_KEY="sk-9f73s3ljTXVcMT3Blbkdfsx_adsfaflafasd"
     SANDBOX_API_KEY="dify-sandbox-$(openssl rand -hex 16)"
-    PLUGIN_DAEMON_KEY="sk-plugin-daemon-$(openssl rand -hex 16)"
     INNER_API_KEY="sk-inner-api-key-$(openssl rand -hex 16)"
 
     # MCP 서버 URL 생성
@@ -483,9 +518,10 @@ setup_environment() {
         MCP_SERVER_URL=""
     fi
 
-    # 컨테이너 리스트 (Plugin Daemon은 원격 서버 사용, Redis는 로컬 기존 컨테이너 사용)
+    # 컨테이너 리스트 (Plugin Daemon 로컬 실행, Redis는 로컬 기존 컨테이너 사용)
     CONTAINERS_ORDER=(
         "${CONTAINER_PREFIX}-sandbox"
+        "${CONTAINER_PREFIX}-plugin-daemon"
         "${CONTAINER_PREFIX}-api"
         "${CONTAINER_PREFIX}-worker"
         "${CONTAINER_PREFIX}-web"
@@ -495,6 +531,7 @@ setup_environment() {
         "${CONTAINER_PREFIX}-web"
         "${CONTAINER_PREFIX}-worker"
         "${CONTAINER_PREFIX}-api"
+        "${CONTAINER_PREFIX}-plugin-daemon"
         "${CONTAINER_PREFIX}-sandbox"
     )
 }
@@ -557,7 +594,7 @@ EOF
 check_and_free_ports() {
     log_section "포트 사용 확인 및 정리"
 
-    local PORTS=(${WEB_PORT} 5001 8194)
+    local PORTS=(${WEB_PORT} 5001 5003 8194)
 
     for port in "${PORTS[@]}"; do
         local PID=$(lsof -ti :$port 2>/dev/null || true)
@@ -698,13 +735,12 @@ test_mcp_search() {
 test_remote_connection() {
     log_section "원격 서버 연결 테스트"
 
-    # Plugin Daemon 연결 테스트 (로컬/원격)
-    log_info "Plugin Daemon 연결 테스트: ${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
-    if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${REMOTE_PLUGIN_DAEMON_IP}/${REMOTE_PLUGIN_DAEMON_PORT}" 2>/dev/null; then
-        log_success "Plugin Daemon 연결 성공 ✓"
+    # Plugin Daemon 이미지 확인 (로컬 실행)
+    log_info "Plugin Daemon 이미지 확인: ${PLUGIN_DAEMON_IMAGE}"
+    if podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "langgenius/dify-plugin-daemon"; then
+        log_success "Plugin Daemon 이미지 존재 ✓"
     else
-        log_warning "Plugin Daemon 연결 실패: ${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
-        log_warning "Plugin Daemon이 아직 시작되지 않았을 수 있습니다. 계속 진행합니다."
+        log_warning "Plugin Daemon 이미지가 없습니다. 이미지를 로드하세요."
     fi
 
     # MCP 서버 연결 테스트 (활성화된 경우)
@@ -847,9 +883,10 @@ check_images() {
     log_section "Docker 이미지 확인"
 
     local REQUIRED_IMAGES=(
-        "docker.io/langgenius/dify-api:latest"
-        "docker.io/langgenius/dify-web:latest"
-        "docker.io/langgenius/dify-sandbox:0.2.12"
+        "docker.io/langgenius/dify-api:1.13.3"
+        "docker.io/langgenius/dify-web:1.13.3"
+        "docker.io/langgenius/dify-sandbox:0.2.14"
+        "${PLUGIN_DAEMON_IMAGE}"
     )
 
     local ALL_PRESENT=true
@@ -980,6 +1017,69 @@ create_network() {
 }
 
 # ============================================
+# 함수: 템플릿 프록시 시작
+# ============================================
+start_template_proxy() {
+    log_info "템플릿 프록시 시작 중... (포트: ${TEMPLATE_PROXY_PORT})"
+
+    local PROXY_SCRIPT="${SCRIPT_DIR}/scripts/dify-template-proxy.py"
+    local CACHE_DIR="${SCRIPT_DIR}/volumes/template-cache"
+    local LOG_FILE="${SCRIPT_DIR}/volumes/template-proxy.log"
+
+    if [ ! -f "$PROXY_SCRIPT" ]; then
+        log_error "템플릿 프록시 스크립트가 없습니다: $PROXY_SCRIPT"
+        return 1
+    fi
+
+    if [ ! -d "$CACHE_DIR" ] || [ ! -f "${CACHE_DIR}/apps_list.json" ]; then
+        log_error "템플릿 캐시 데이터가 없습니다: $CACHE_DIR"
+        return 1
+    fi
+
+    # 이미 실행 중이면 응답 확인 후 스킵
+    if lsof -ti :${TEMPLATE_PROXY_PORT} > /dev/null 2>&1; then
+        if curl -s --connect-timeout 3 "http://localhost:${TEMPLATE_PROXY_PORT}/apps" | grep -q "recommended_apps" 2>/dev/null; then
+            log_success "✓ 템플릿 프록시가 이미 정상 실행 중입니다 (포트: ${TEMPLATE_PROXY_PORT})"
+            return 0
+        else
+            log_warning "포트 ${TEMPLATE_PROXY_PORT}에 프로세스가 있으나 응답 비정상. 재시작합니다."
+            lsof -ti :${TEMPLATE_PROXY_PORT} | xargs kill 2>/dev/null || true
+            sleep 2
+            lsof -ti :${TEMPLATE_PROXY_PORT} | xargs kill -9 2>/dev/null || true
+            sleep 2
+        fi
+    fi
+
+    TEMPLATE_CACHE_DIR="$CACHE_DIR" TEMPLATE_PROXY_PORT="${TEMPLATE_PROXY_PORT}" \
+        python3 "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
+    local PROXY_PID=$!
+    disown $PROXY_PID
+
+    # PID 생존 확인 후 응답 대기 (최대 15초)
+    sleep 2
+    if ! kill -0 $PROXY_PID 2>/dev/null; then
+        log_error "템플릿 프록시 프로세스가 즉시 종료되었습니다"
+        if [ -f "$LOG_FILE" ]; then
+            tail -5 "$LOG_FILE"
+        fi
+        return 1
+    fi
+
+    local WAIT=0
+    while [ $WAIT -lt 15 ]; do
+        if curl -s --connect-timeout 2 "http://localhost:${TEMPLATE_PROXY_PORT}/apps" | grep -q "recommended_apps" 2>/dev/null; then
+            log_success "✓ 템플릿 프록시 시작 완료 (PID: ${PROXY_PID}, 포트: ${TEMPLATE_PROXY_PORT})"
+            return 0
+        fi
+        sleep 1
+        WAIT=$((WAIT + 1))
+    done
+
+    log_error "템플릿 프록시 응답 없음. 수동 시작: ./scripts/start-template-proxy.sh start"
+    return 1
+}
+
+# ============================================
 # 함수: Sandbox 시작
 # ============================================
 start_sandbox() {
@@ -990,6 +1090,7 @@ start_sandbox() {
     podman run -d \
         --name "${CONTAINER_NAME}" \
         --network "${NETWORK_NAME}" \
+        -v /etc/localtime:/etc/localtime:ro \
         -p 8194:8194 \
         --restart unless-stopped \
         -e API_KEY="${SANDBOX_API_KEY}" \
@@ -998,18 +1099,76 @@ start_sandbox() {
         --security-opt seccomp=unconfined \
         --security-opt apparmor=unconfined \
         --cap-add SYS_ADMIN \
-        docker.io/langgenius/dify-sandbox:latest
+        docker.io/langgenius/dify-sandbox:0.2.14
 
     log_success "Sandbox 시작 완료 (포트: 8194)"
 }
 
 # ============================================
-# 함수: API 시작 (원격 Plugin Daemon + MCP 서버 연동)
+# 함수: Plugin Daemon 시작 (로컬 컨테이너)
+# ============================================
+start_plugin_daemon() {
+    local CONTAINER_NAME="${CONTAINER_PREFIX}-plugin-daemon"
+
+    log_info "Plugin Daemon 시작 중... (로컬, 포트: ${PLUGIN_DAEMON_PORT})"
+
+    mkdir -p "${VOLUMES_DIR}/plugin-daemon-storage"
+
+    podman run -d \
+        --name "${CONTAINER_NAME}" \
+        --network "${NETWORK_NAME}" \
+        -v /etc/localtime:/etc/localtime:ro \
+        -p ${PLUGIN_DAEMON_PORT}:5003 \
+        --restart unless-stopped \
+        -v "${VOLUMES_DIR}/plugin-daemon-storage:/app/storage:z" \
+        -e DB_USERNAME="${DB_USERNAME}" \
+        -e DB_PASSWORD="${DB_PASSWORD}" \
+        -e DB_HOST="${DB_HOST}" \
+        -e DB_PORT="${DB_PORT}" \
+        -e DB_DATABASE="${DB_DATABASE}" \
+        -e DB_DEFAULT_DATABASE="${DB_DATABASE}" \
+        -e DB_SSL_MODE=disable \
+        -e SERVER_PORT=5003 \
+        -e SERVER_KEY="${SECRET_KEY}" \
+        -e DIFY_INNER_API_URL="http://${CONTAINER_PREFIX}-api:5001" \
+        -e DIFY_INNER_API_KEY="${SECRET_KEY}" \
+        -e PLUGIN_STORAGE_TYPE=local \
+        -e PLUGIN_STORAGE_LOCAL_ROOT=/app/storage \
+        -e PLUGIN_INSTALLED_PATH=/app/storage/plugins \
+        -e PLUGIN_PACKAGE_CACHE_PATH=/app/storage/plugin_packages \
+        -e PLUGIN_MEDIA_CACHE_PATH=/app/storage/plugin_media_cache \
+        -e PLUGIN_WORKING_PATH=/app/storage/plugin_working \
+        -e PLATFORM=local \
+        -e MAX_PLUGIN_PACKAGE_SIZE=52428800 \
+        -e MAX_BUNDLE_PACKAGE_SIZE=52428800 \
+        -e PLUGIN_MAX_EXECUTION_TIMEOUT=600 \
+        -e PLUGIN_LOCAL_LAUNCHING_CONCURRENT=10 \
+        -e PYTHON_ENV_INIT_TIMEOUT=120 \
+        -e ROUTINE_POOL_SIZE=100 \
+        -e DIFY_INVOCATION_CONNECTION_IDLE_TIMEOUT=120 \
+        -e LIFETIME_COLLECTION_HEARTBEAT_INTERVAL=30 \
+        -e LIFETIME_COLLECTION_GC_INTERVAL=60 \
+        -e LIFETIME_STATE_GC_INTERVAL=60 \
+        -e FORCE_VERIFYING_SIGNATURE=false \
+        -e ENFORCE_LANGGENIUS_PLUGIN_SIGNATURES=false \
+        -e PLUGIN_REMOTE_INSTALLING_ENABLED=false \
+        -e PLUGIN_REMOTE_INSTALLING_HOST=localhost \
+        -e PLUGIN_REMOTE_INSTALLING_PORT=5003 \
+        -e REDIS_HOST="${REDIS_HOST}" \
+        -e REDIS_PORT="${REDIS_PORT}" \
+        -e REDIS_PASSWORD="${REDIS_PASSWORD}" \
+        "${PLUGIN_DAEMON_IMAGE}"
+
+    log_success "✓ Plugin Daemon 시작 완료 (포트: ${PLUGIN_DAEMON_PORT})"
+}
+
+# ============================================
+# 함수: API 시작 (로컬 Plugin Daemon + MCP 서버 연동)
 # ============================================
 start_api() {
     local CONTAINER_NAME="${CONTAINER_PREFIX}-api"
 
-    log_info "API 시작 중... (원격 Plugin Daemon: ${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT})"
+    log_info "API 시작 중... (로컬 Plugin Daemon: ${CONTAINER_PREFIX}-plugin-daemon:5003)"
 
     if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
         log_info "MCP 서버 연동: ${MCP_SERVER_URL}"
@@ -1038,6 +1197,7 @@ start_api() {
     podman run -d \
         --name "${CONTAINER_NAME}" \
         --network "${NETWORK_NAME}" \
+        -v /etc/localtime:/etc/localtime:ro \
         -p 5001:5001 \
         --restart unless-stopped \
         -v "${VOLUMES_DIR}/api-storage:/app/api/storage:z" \
@@ -1074,25 +1234,27 @@ start_api() {
         -e STORAGE_LOCAL_PATH=storage \
         -e MIGRATION_ENABLED=true \
         -e INNER_API_KEY="${SECRET_KEY}" \
-        -e PLUGIN_DAEMON_URL="http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}" \
+        -e PLUGIN_DAEMON_URL="http://${LOCAL_HOST_IP}:${PLUGIN_DAEMON_PORT}" \
         -e PLUGIN_DAEMON_KEY="${SECRET_KEY}" \
         -e INNER_API_KEY_FOR_PLUGIN="${SECRET_KEY}" \
         -e MCP_SERVER_ENABLED="${MCP_SERVER_ENABLED}" \
         -e MCP_SERVER_URL="${MCP_SERVER_URL}" \
         -e MCP_SSL_VERIFY="${MCP_SSL_VERIFY}" \
+        -e HOSTED_FETCH_APP_TEMPLATES_MODE=remote \
+        -e HOSTED_FETCH_APP_TEMPLATES_REMOTE_DOMAIN="http://${TEMPLATE_PROXY_HOST}:${TEMPLATE_PROXY_PORT}" \
         ${MCP_CERT_ENV_OPTS} \
-        docker.io/langgenius/dify-api:latest
+        docker.io/langgenius/dify-api:1.13.3
 
-    log_success "✓ API 시작 완료 (포트: 5001, 원격 Plugin Daemon 연동)"
+    log_success "✓ API 시작 완료 (포트: 5001, 로컬 Plugin Daemon 연동)"
 }
 
 # ============================================
-# 함수: Worker 시작 (원격 Plugin Daemon + MCP 서버 연동)
+# 함수: Worker 시작 (로컬 Plugin Daemon + MCP 서버 연동)
 # ============================================
 start_worker() {
     local CONTAINER_NAME="${CONTAINER_PREFIX}-worker"
 
-    log_info "Worker 시작 중... (원격 Plugin Daemon: ${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT})"
+    log_info "Worker 시작 중... (로컬 Plugin Daemon: ${CONTAINER_PREFIX}-plugin-daemon:5003)"
 
     # MCP SSL 인증서 설정 (API와 동일)
     local MCP_VOLUME_OPTS=""
@@ -1107,6 +1269,7 @@ start_worker() {
     podman run -d \
         --name "${CONTAINER_NAME}" \
         --network "${NETWORK_NAME}" \
+        -v /etc/localtime:/etc/localtime:ro \
         --restart unless-stopped \
         -v "${VOLUMES_DIR}/api-storage:/app/api/storage:z" \
         -v "${VOLUMES_DIR}/api-logs:/app/api/logs:z" \
@@ -1130,16 +1293,16 @@ start_worker() {
         -e MILVUS_PORT="${MILVUS_PORT}" \
         -e STORAGE_TYPE=local \
         -e STORAGE_LOCAL_PATH=storage \
-        -e PLUGIN_DAEMON_URL="http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}" \
+        -e PLUGIN_DAEMON_URL="http://${LOCAL_HOST_IP}:${PLUGIN_DAEMON_PORT}" \
         -e PLUGIN_DAEMON_KEY="${SECRET_KEY}" \
         -e INNER_API_KEY_FOR_PLUGIN="${SECRET_KEY}" \
         -e MCP_SERVER_ENABLED="${MCP_SERVER_ENABLED}" \
         -e MCP_SERVER_URL="${MCP_SERVER_URL}" \
         -e MCP_SSL_VERIFY="${MCP_SSL_VERIFY}" \
         ${MCP_CERT_ENV_OPTS} \
-        docker.io/langgenius/dify-api:latest
+        docker.io/langgenius/dify-api:1.13.3
 
-    log_success "✓ Worker 시작 완료 (원격 Plugin Daemon 연동)"
+    log_success "✓ Worker 시작 완료 (로컬 Plugin Daemon 연동)"
 }
 
 # ============================================
@@ -1153,11 +1316,12 @@ start_web() {
     podman run -d \
         --name "${CONTAINER_NAME}" \
         --network "${NETWORK_NAME}" \
+        -v /etc/localtime:/etc/localtime:ro \
         -p ${WEB_PORT}:3000 \
         --restart unless-stopped \
         -e CONSOLE_API_URL="http://${WEB_ACCESS_IP}:5001" \
         -e APP_API_URL="http://${WEB_ACCESS_IP}:5001" \
-        docker.io/langgenius/dify-web:latest
+        docker.io/langgenius/dify-web:1.13.3
 
     log_success "Web 시작 완료 (포트: ${WEB_PORT})"
 }
@@ -1194,16 +1358,40 @@ check_environment() {
 start_all_containers() {
     log_section "Dify 컨테이너 순차 시작"
 
-    log_info "Plugin Daemon은 원격 서버 사용: http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+    log_info "Plugin Daemon은 로컬 컨테이너로 실행합니다 (포트: ${PLUGIN_DAEMON_PORT})"
     log_info "Redis는 로컬 서버의 기존 ${REDIS_CONTAINER_NAME} 컨테이너를 사용합니다"
+    log_info "템플릿 프록시: http://${TEMPLATE_PROXY_HOST}:${TEMPLATE_PROXY_PORT} (자동 감지)"
 
     if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
         log_info "MCP 서버: ${MCP_SERVER_URL}"
     fi
     echo ""
 
+    # 템플릿 프록시 시작 (필수 - 성공할 때까지 재시도)
+    local RETRY=0
+    local MAX_RETRY=3
+    while [ $RETRY -lt $MAX_RETRY ]; do
+        if start_template_proxy; then
+            break
+        fi
+        RETRY=$((RETRY + 1))
+        if [ $RETRY -lt $MAX_RETRY ]; then
+            log_warning "템플릿 프록시 재시도 중... (${RETRY}/${MAX_RETRY})"
+            # 포트 점유 프로세스 강제 종료 후 재시도
+            kill $(lsof -ti :${TEMPLATE_PROXY_PORT} 2>/dev/null) 2>/dev/null || true
+            sleep 2
+        else
+            log_error "템플릿 프록시를 시작할 수 없습니다. (${MAX_RETRY}회 시도)"
+            log_info "Dify는 계속 시작하지만 템플릿 기능이 동작하지 않을 수 있습니다."
+            log_info "수동 시작: TEMPLATE_CACHE_DIR=${SCRIPT_DIR}/volumes/template-cache TEMPLATE_PROXY_PORT=${TEMPLATE_PROXY_PORT} python3 ${SCRIPT_DIR}/scripts/dify-template-proxy.py &"
+        fi
+    done
+
     start_sandbox
     sleep 3
+
+    start_plugin_daemon
+    sleep 5
 
     start_api
     sleep 5
@@ -1331,6 +1519,14 @@ stop_all() {
             log_success "${container} 중지됨"
         fi
     done
+
+    # 템플릿 프록시 종료
+    local PROXY_PID=$(lsof -ti :${TEMPLATE_PROXY_PORT} 2>/dev/null || true)
+    if [ -n "$PROXY_PID" ]; then
+        log_info "템플릿 프록시 종료 중..."
+        kill $PROXY_PID 2>/dev/null || true
+        log_success "템플릿 프록시 종료됨"
+    fi
 
     echo ""
     log_success "Dify 중지 완료"
@@ -1471,11 +1667,11 @@ show_access_info() {
     echo "  ${BOLD}API:${NC}         http://${LOCAL_HOST_IP}:5001"
 
     echo ""
-    log_section "원격 Plugin Daemon"
+    log_section "로컬 Plugin Daemon"
     echo ""
-    echo "  ${BOLD}서버 IP:${NC}     ${REMOTE_PLUGIN_DAEMON_IP}"
-    echo "  ${BOLD}포트:${NC}        ${REMOTE_PLUGIN_DAEMON_PORT}"
-    echo "  ${BOLD}URL:${NC}         http://${REMOTE_PLUGIN_DAEMON_IP}:${REMOTE_PLUGIN_DAEMON_PORT}"
+    echo "  ${BOLD}컨테이너:${NC}   ${CONTAINER_PREFIX}-plugin-daemon"
+    echo "  ${BOLD}포트:${NC}        ${PLUGIN_DAEMON_PORT}"
+    echo "  ${BOLD}이미지:${NC}      ${PLUGIN_DAEMON_IMAGE}"
 
     # MCP 서버 정보
     if [[ "$MCP_SERVER_ENABLED" =~ ^[Yy][Ee][Ss]$ ]]; then
@@ -1574,4 +1770,6 @@ case "${COMMAND}" in
         ;;
 esac
 
+# [2026-04-08] 스크립트 종료
+# 수정사항: Plugin Daemon 로컬 실행, 템플릿 프록시 안정화, IP 자동 감지
 exit 0

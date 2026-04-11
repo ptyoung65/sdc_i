@@ -403,6 +403,7 @@ podman run -d \
     --replace \
     --security-opt label=disable \
     --network podman \
+    -v /etc/localtime:/etc/localtime:ro \
     -v sdc-redis-data:/data \
     -p 0.0.0.0:6380:6379 \
     --health-cmd "redis-cli ping || exit 1" \
@@ -428,6 +429,7 @@ podman run -d \
     --replace \
     --security-opt label=disable \
     --network podman \
+    -v /etc/localtime:/etc/localtime:ro \
     -p 0.0.0.0:9099:9099 \
     -v ${SCRIPT_DIR}/pipelines:/app/pipelines:z \
     -e PIPELINES_DIR=/app/pipelines \
@@ -460,6 +462,7 @@ podman run -d \
     --replace \
     --security-opt label=disable \
     --network podman \
+    -v /etc/localtime:/etc/localtime:ro \
     -p 0.0.0.0:13010:8001 \
     -v ${SCRIPT_DIR}/services/arthur-guardrails:/app:Z \
     -w /app \
@@ -519,6 +522,7 @@ podman run -d \
     --replace \
     --security-opt label=disable \
     --network host \
+    -v /etc/localtime:/etc/localtime:ro \
     -v ${SCRIPT_DIR}/services/monitoring-backend:/app:Z \
     -w /app \
     -e CORS_ORIGINS="http://${HOST_IP}:3000,http://localhost:3000,http://${HOST_IP_SECONDARY}:3000" \
@@ -541,12 +545,17 @@ echo ""
 ##############################################################################
 echo -e "${YELLOW}🌐 Open WebUI 준비 중 (원격 DB 연결)...${NC}"
 
+V0634_IMAGE="ghcr.io/open-webui/open-webui:0.6.34"
+V0810_IMAGE="ghcr.io/open-webui/open-webui:0.8.10"
 FIXED_IMAGE="localhost/open-webui:fixed-db"
 OFFICIAL_IMAGE="ghcr.io/open-webui/open-webui:main"
 OPENWEBUI_IMAGE=""
 
-# 수정된 이미지 우선 사용 (원격 DB 연결 버그 수정)
-if podman image exists ${FIXED_IMAGE} 2>/dev/null; then
+# v0.6.34 이미지 우선 사용 (원래 버전)
+if podman image exists ${V0634_IMAGE} 2>/dev/null; then
+    echo -e "${GREEN}✅ v0.6.34 이미지 사용: ${V0634_IMAGE}${NC}"
+    OPENWEBUI_IMAGE=${V0634_IMAGE}
+elif podman image exists ${FIXED_IMAGE} 2>/dev/null; then
     echo -e "${GREEN}✅ 수정된 이미지 사용: ${FIXED_IMAGE}${NC}"
     echo -e "${BLUE}   (원격 DB 연결 버그 수정 버전)${NC}"
     OPENWEBUI_IMAGE=${FIXED_IMAGE}
@@ -677,6 +686,7 @@ podman run -d \
     -e PIPELINES_URLS="http://localhost:9099" \
     -e PIPELINES_API_KEY="0p3n-w3bu!" \
     ${SSL_ENV_VARS} \
+    -v /etc/localtime:/etc/localtime:ro \
     -v ${OPENWEBUI_VOLUME}:/app/backend/data \
     ${CERT_MOUNT} \
     -v $(pwd)/build:/app/build:Z \

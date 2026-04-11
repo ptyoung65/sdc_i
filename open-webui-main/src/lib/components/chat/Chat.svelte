@@ -1012,6 +1012,7 @@ ${conversationText}
 	const navigateHandler = async () => {
 		loading = true;
 
+		// ----- [2026-03-26] 메시지 초기화 시작 (채팅 전환/세션 이동 시) -----
 		prompt = "";
 		messageInput?.setText("");
 
@@ -1020,6 +1021,7 @@ ${conversationText}
 		selectedFilterIds = [];
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
+		// ----- [2026-03-26] 메시지 초기화 완료 (채팅 전환/세션 이동 시) -----
 
 		const storageChatInput = sessionStorage.getItem(
 			`chat-input${chatIdProp ? `-${chatIdProp}` : ""}`,
@@ -2487,7 +2489,9 @@ ${conversationText}
 	};
 
 	const createMessagePair = async (userPrompt) => {
+		// ----- [2026-03-26] 메시지 초기화 시작 (메시지 페어 생성 시) -----
 		messageInput?.setText("");
+		// ----- [2026-03-26] 메시지 초기화 완료 (메시지 페어 생성 시) -----
 		if (selectedModels.length === 0) {
 			toast.error($i18n.t("Model not selected"));
 		} else {
@@ -3493,8 +3497,10 @@ ${conversationText}
 			}
 		}
 
+		// ----- [2026-03-26] 메시지 초기화 시작 (메시지 전송 시) -----
 		messageInput?.setText("");
 		prompt = "";
+		// ----- [2026-03-26] 메시지 초기화 완료 (메시지 전송 시) -----
 
 		const messages = createMessagesList(history, history.currentId);
 		const _files = JSON.parse(JSON.stringify(files));
@@ -3546,8 +3552,10 @@ ${conversationText}
 				) === index,
 		);
 
+		// ----- [2026-03-26] 메시지 초기화 시작 (파일 및 입력창 최종 정리) -----
 		files = [];
 		messageInput?.setText("");
+		// ----- [2026-03-26] 메시지 초기화 완료 (파일 및 입력창 최종 정리) -----
 
 		// Create user message
 		let userMessageId = uuidv4();
